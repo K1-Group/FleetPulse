@@ -38,7 +38,7 @@ def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | N
     else:
         severity = AlertSeverity.LOW
 
-    uid = hashlib.md5(f"{dev_id}{rule_name}{ts}".encode()).hexdigest()[:12]
+    uid = hashlib.sha256(f"{dev_id}{rule_name}{ts}".encode()).hexdigest()[:12]
 
     return Alert(
         id=uid,
