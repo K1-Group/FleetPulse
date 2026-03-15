@@ -1,8 +1,14 @@
-"""Data Connector endpoints – pre-aggregated fleet KPIs via Geotab OData."""
+"""Data Connector endpoints – pre-aggregated fleet KPIs via Geotab OData.
+
+Demo mode: when the real Geotab OData server is unreachable or the add-in is not
+activated (HTTP 503 / 412), every endpoint falls back to seeded mock data so the
+UI is always functional without a live Geotab subscription.
+"""
 
 from __future__ import annotations
 
-import os
+import random
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -64,6 +70,135 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
     return results
 
 
+# ---------------------------------------------------------------------------
+# Demo / mock data helpers
+# ---------------------------------------------------------------------------
+
+_DEMO_VEHICLE_NAMES = [
+    "K1-FTW-001", "K1-FTW-002", "K1-FTW-003", "K1-FTW-004", "K1-FTW-005",
+    "K1-JST-001", "K1-JST-002", "K1-JST-003",
+    "K1-OKC-001", "K1-OKC-002",
+    "K1-KC-001", "K1-KC-002",
+]
+
+# Fault codes that are common in commercial fleets (SAE J1939 / OBD-II)
+_DEMO_FAULT_CODES = [
+    ("P0401", "EGR Flow Insufficient", "medium"),
+    ("P0420", "Catalyst System Efficiency Below Threshold", "high"),
+    ("P0128", "Coolant Temp Below Thermostat Regulating Temp", "low"),
+    ("SPN 3226", "NOx Sensor 1 - Out of Range", "high"),
+    ("SPN 157", "Fuel Rail Pressure - High", "critical"),
+    ("P0087", "Fuel Rail/System Pressure - Too Low", "critical"),
+    ("SPN 110", "Engine Coolant Temperature - Warning", "medium"),
+    ("P0299", "Turbocharger/Supercharger Underboost Condition", "high"),
+    ("SPN 4334", "Aftertreatment 1 DEF Level Low", "medium"),
+    ("P0471", "Exhaust Pressure Sensor Range/Performance", "low"),
+]
+
+
+def _demo_vehicle_kpis(days: int) -> dict:
+    """Return seeded mock vehicle KPI data for demo mode."""
+    rng = random.Random(42)
+    scale = days / 14  # normalise to 14-day baseline
+    vehicles = []
+    for name in _DEMO_VEHICLE_NAMES:
+        base_dist = rng.uniform(180, 580)
+        distance_km = round(base_dist * scale, 1)
+        avg_speed_kmh = rng.uniform(38, 62)
+        drive_hours = round(distance_km / avg_speed_kmh, 1)
+        idle_ratio = rng.uniform(0.10, 0.40)
+        idle_hours = round(drive_hours * idle_ratio, 1)
+        trips = max(1, int(drive_hours / rng.uniform(0.5, 1.8)))
+        fuel_l = round(distance_km * rng.uniform(0.12, 0.18), 1)
+        vehicles.append({
+            "vehicle_name": name,
+            "distance_km": distance_km,
+            "drive_hours": drive_hours,
+            "idle_hours": idle_hours,
+            "trips": trips,
+            "fuel_litres": fuel_l,
+        })
+
+    vehicles.sort(key=lambda v: v["distance_km"], reverse=True)
+    total_dist = sum(v["distance_km"] for v in vehicles)
+    total_drive = sum(v["drive_hours"] for v in vehicles)
+    total_idle = sum(v["idle_hours"] for v in vehicles)
+    util_pct = round(total_drive / (total_drive + total_idle) * 100, 1) if (total_drive + total_idle) > 0 else 0
+
+    return {
+        "vehicles": vehicles,
+        "summary": {
+            "total_vehicles": len(vehicles),
+            "total_distance_km": round(total_dist, 1),
+            "total_drive_hours": round(total_drive, 1),
+            "total_idle_hours": round(total_idle, 1),
+            "utilization_pct": util_pct,
+        },
+        "period_days": days,
+        "demo": True,
+    }
+
+
+def _demo_safety_scores(days: int) -> dict:
+    """Return seeded mock safety score data for demo mode."""
+    rng = random.Random(42)
+    vehicle_scores = []
+    for name in _DEMO_VEHICLE_NAMES:
+        score = round(rng.uniform(68, 98), 1)
+        vehicle_scores.append({
+            "VehicleName": name,
+            "SafetyScore": score,
+            "Trend": rng.choice(["improving", "stable", "declining"]),
+            "SpeedingEvents": rng.randint(0, 6),
+            "HarshBrakingEvents": rng.randint(0, 4),
+            "HarshAccelerationEvents": rng.randint(0, 5),
+            "HarshCorneringEvents": rng.randint(0, 3),
+        })
+
+    fleet_avg = round(sum(v["SafetyScore"] for v in vehicle_scores) / len(vehicle_scores), 1)
+    fleet_daily = [
+        {"Date": (datetime.now(timezone.utc) - timedelta(days=d)).strftime("%Y-%m-%d"),
+         "FleetSafetyScore": round(fleet_avg + rng.uniform(-3, 3), 1)}
+        for d in range(min(days, 14), 0, -1)
+    ]
+
+    return {
+        "fleet_daily": fleet_daily,
+        "vehicle_scores": vehicle_scores,
+        "fleet_avg_score": fleet_avg,
+        "period_days": days,
+        "demo": True,
+    }
+
+
+def _demo_fault_trends(days: int) -> dict:
+    """Return seeded mock fault trend data for demo mode."""
+    rng = random.Random(42)
+    faults = []
+    for vehicle in _DEMO_VEHICLE_NAMES:
+        # Each vehicle gets 0-3 random fault codes
+        num_faults = rng.randint(0, 3)
+        chosen_faults = rng.sample(_DEMO_FAULT_CODES, min(num_faults, len(_DEMO_FAULT_CODES)))
+        for code, description, severity in chosen_faults:
+            count = rng.randint(1, 8)
+            day_offset = rng.randint(0, days - 1)
+            faults.append({
+                "VehicleName": vehicle,
+                "FaultCode": code,
+                "DiagnosticName": description,
+                "Severity": severity,
+                "Count": count,
+                "Date": (datetime.now(timezone.utc) - timedelta(days=day_offset)).strftime("%Y-%m-%d"),
+            })
+    # Sort by count descending so most frequent faults appear first
+    faults.sort(key=lambda f: f["Count"], reverse=True)
+    return {"faults": faults, "period_days": days, "demo": True}
+
+
+# ---------------------------------------------------------------------------
+# OData helpers
+# ---------------------------------------------------------------------------
+
 @router.get("/tables")
 async def list_tables():
     """List available Data Connector tables."""
@@ -78,14 +213,21 @@ async def list_tables():
 
 @router.get("/vehicle-kpis")
 async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
-    """Fleet utilization KPIs per vehicle."""
-    search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
-    rows = await _odata_get("VehicleKpi_Daily", search=search)
+    """Fleet utilization KPIs per vehicle.
+
+    Returns live Geotab OData values when the Data Connector add-in is active;
+    falls back to seeded demo data otherwise so the dashboard always renders.
+    """
+    try:
+        search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
+        rows = await _odata_get("VehicleKpi_Daily", search=search)
+    except HTTPException:
+        return _demo_vehicle_kpis(days)
+
     if not rows:
-        return {"vehicles": [], "summary": {}}
+        return _demo_vehicle_kpis(days)
 
     # Aggregate per vehicle
-    from collections import defaultdict
     agg: dict[str, dict] = defaultdict(lambda: {
         "distance_km": 0, "drive_hours": 0, "idle_hours": 0, "trips": 0, "fuel_litres": 0
     })
@@ -119,25 +261,50 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
 
 @router.get("/safety-scores")
 async def safety_scores(days: int = Query(14, ge=1, le=90)):
-    """Aggregated safety scores from Data Connector."""
-    search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
+    """Aggregated safety scores from Data Connector.
 
-    # Try fleet-level first, then vehicle-level
-    fleet_rows = await _odata_get("FleetSafety_Daily", search=search)
-    vehicle_rows = await _odata_get("VehicleSafety_Daily", search=search)
+    Falls back to demo data when the OData server is unreachable.
+    """
+    try:
+        search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
+        # Try fleet-level first, then vehicle-level
+        fleet_rows = await _odata_get("FleetSafety_Daily", search=search)
+        vehicle_rows = await _odata_get("VehicleSafety_Daily", search=search)
+    except HTTPException:
+        return _demo_safety_scores(days)
+
+    if not fleet_rows and not vehicle_rows:
+        return _demo_safety_scores(days)
+
+    fleet_avg: float | None = None
+    if vehicle_rows:
+        scores = [r.get("SafetyScore") or r.get("Score") for r in vehicle_rows if r.get("SafetyScore") or r.get("Score")]
+        if scores:
+            fleet_avg = round(sum(scores) / len(scores), 1)
 
     return {
         "fleet_daily": fleet_rows[:30],
         "vehicle_scores": vehicle_rows[:100],
+        "fleet_avg_score": fleet_avg,
         "period_days": days,
     }
 
 
 @router.get("/fault-trends")
 async def fault_trends(days: int = Query(14, ge=1, le=90)):
-    """Fault code trends from Data Connector."""
-    search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
-    rows = await _odata_get("FaultCode_Daily", search=search)
+    """Fault code trends from Data Connector.
+
+    Falls back to demo data when the OData server is unreachable.
+    """
+    try:
+        search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
+        rows = await _odata_get("FaultCode_Daily", search=search)
+    except HTTPException:
+        return _demo_fault_trends(days)
+
+    if not rows:
+        return _demo_fault_trends(days)
+
     return {"faults": rows[:200], "period_days": days}
 
 
