@@ -47,10 +47,33 @@ export default function DataConnector() {
   useEffect(() => {
     setLoading(true)
     setError(null)
+    // Helper: turn a fetch into either parsed JSON or a thrown Error so a
+    // FastAPI 4xx body like { detail: "...Jurisdiction Mismatch..." } can no
+    // longer slip past the .catch and crash downstream renders.
+    const safeFetch = async <T,>(url: string): Promise<T> => {
+      const res = await fetch(url)
+      let body: any = null
+      try { body = await res.json() } catch { /* non-JSON body */ }
+      if (!res.ok) {
+        const detail = (body && (body.detail || body.error)) || `${res.status} ${res.statusText}`
+        const err: any = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+        err.status = res.status
+        err.body = body
+        throw err
+      }
+      // Defensive: even on 200, if the body looks like an error envelope, treat as error.
+      if (body && typeof body === 'object' && 'detail' in body && !('vehicles' in body) && !('faults' in body) && !('vehicle_scores' in body)) {
+        const err: any = new Error(String(body.detail))
+        err.status = res.status
+        err.body = body
+        throw err
+      }
+      return body as T
+    }
     Promise.all([
-      fetch(`/api/data-connector/vehicle-kpis?days=${days}`).then(r => r.json()),
-      fetch(`/api/data-connector/safety-scores?days=${days}`).then(r => r.json()),
-      fetch(`/api/data-connector/fault-trends?days=${days}`).then(r => r.json()),
+      safeFetch<VehicleKpiResponse>(`/api/data-connector/vehicle-kpis?days=${days}`),
+      safeFetch<SafetyResponse>(`/api/data-connector/safety-scores?days=${days}`),
+      safeFetch<FaultResponse>(`/api/data-connector/fault-trends?days=${days}`),
     ])
       .then(([k, s, f]) => {
         setKpis(k)
@@ -136,7 +159,7 @@ export default function DataConnector() {
           )}
 
           {/* Vehicle Utilization Table */}
-          {kpis && kpis.vehicles.length > 0 && (
+          {kpis && Array.isArray(kpis.vehicles) && kpis.vehicles.length > 0 && (
             <motion.div
               className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"
               initial={{ opacity: 0 }}
@@ -188,7 +211,7 @@ export default function DataConnector() {
           )}
 
           {/* Safety Scores */}
-          {safety && safety.vehicle_scores.length > 0 && (
+          {safety && Array.isArray(safety.vehicle_scores) && safety.vehicle_scores.length > 0 && (
             <motion.div
               className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"
               initial={{ opacity: 0 }}
@@ -211,7 +234,7 @@ export default function DataConnector() {
           )}
 
           {/* Fault Trends */}
-          {faults && faults.faults.length > 0 && (
+          {faults && Array.isArray(faults.faults) && faults.faults.length > 0 && (
             <motion.div
               className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"
               initial={{ opacity: 0 }}
@@ -248,7 +271,7 @@ export default function DataConnector() {
           )}
 
           {/* Empty state */}
-          {kpis && kpis.vehicles.length === 0 && (
+          {kpis && Array.isArray(kpis.vehicles) && kpis.vehicles.length === 0 && (
             <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-8 text-center">
               <Database className="w-10 h-10 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400">No Data Connector data available yet.</p>
