@@ -38,6 +38,7 @@ _ROUTERS = [
     ("compliance", "/api/compliance", ["Compliance & ELD"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),
+    ("zapier", "/api/zapier", ["Zapier"]),
 ]
 for _name, _prefix, _tags in _ROUTERS:
     try:

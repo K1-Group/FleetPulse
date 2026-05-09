@@ -255,6 +255,11 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `POST /api/ai/config` | Set Anthropic API key (memory only) |
 | `POST /api/ai/query` | Legacy natural language queries (pattern matching fallback) |
 | `GET /api/ai/insights` | AI-generated recommendations |
+| **🔁 Zapier Endpoints** |
+| `GET /api/zapier/status` | Zapier readiness without exposing secrets |
+| `GET /api/zapier/triggers/fleet-snapshot` | Zapier polling trigger: one FleetPulse snapshot row |
+| `GET /api/zapier/triggers/risk-vehicles` | Zapier polling trigger: vehicles below safety threshold |
+| `POST /api/zapier/actions/push-snapshot` | Optional feature-flagged push to a Zapier Catch Hook |
 
 ## 🛠️ Tech Stack
 
@@ -262,6 +267,47 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 - **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Leaflet, Recharts
 - **Telemetry:** GeoTab API (50 vehicles, real-time DeviceStatusInfo, Trips, ExceptionEvents)
 - **Architecture:** REST API with background agentic monitoring thread
+
+## 🔁 Zapier Integration
+
+FleetPulse exposes a Zapier-safe integration surface under `/api/zapier`.
+Zapier remains an orchestration layer only; FleetPulse does not accept writes
+from Zapier and does not overwrite Geotab.
+
+### Recommended Zaps
+
+1. **Fleet snapshot report**
+   - Trigger: Schedule by Zapier
+   - Action: Webhooks by Zapier `GET`
+   - URL: `https://k1-fleetpulse.azurewebsites.net/api/zapier/triggers/fleet-snapshot`
+   - Follow-up: send Teams/email summary, write to Sheets, or store in Power BI helper table.
+
+2. **Risk vehicle alert**
+   - Trigger: Schedule by Zapier
+   - Action: Webhooks by Zapier `GET`
+   - URL: `https://k1-fleetpulse.azurewebsites.net/api/zapier/triggers/risk-vehicles?max_score=85&min_events=1`
+   - Follow-up: send to Teams first for operator validation.
+
+3. **Catch Hook push**
+   - Configure a Zapier Catch Hook URL in `FLEETPULSE_ZAPIER_WEBHOOK_URL`
+   - Set `FLEETPULSE_ZAPIER_ENABLED=true`
+   - Call `POST /api/zapier/actions/push-snapshot` from an approved scheduler or operator tool.
+
+### Zapier Environment Variables
+
+```env
+FLEETPULSE_ZAPIER_ENABLED=false
+FLEETPULSE_ZAPIER_WEBHOOK_URL=
+FLEETPULSE_ZAPIER_API_KEY=
+FLEETPULSE_ZAPIER_SHARED_SECRET=
+FLEETPULSE_ZAPIER_TIMEOUT_SECONDS=15
+```
+
+Security notes:
+
+- `FLEETPULSE_ZAPIER_API_KEY` protects the push endpoint when configured.
+- `FLEETPULSE_ZAPIER_SHARED_SECRET` signs outbound Catch Hook payloads with `X-FleetPulse-Signature`.
+- Polling trigger endpoints are read-only Geotab projections.
 
 ## 📂 Project Structure
 
