@@ -15,7 +15,8 @@ const cards = [
     icon: '🚗', 
     color: 'from-blue-500 to-blue-700',
     sparkline: [48, 49, 50, 49, 50, 50],
-    trend: 'stable'
+    trend: 'stable',
+    decimals: 0
   },
   { 
     key: 'active', 
@@ -23,7 +24,8 @@ const cards = [
     icon: '🟢', 
     color: 'from-emerald-500 to-emerald-700',
     sparkline: [32, 35, 28, 42, 38, 40],
-    trend: 'up'
+    trend: 'up',
+    decimals: 0
   },
   { 
     key: 'idle', 
@@ -31,7 +33,8 @@ const cards = [
     icon: '🟡', 
     color: 'from-amber-500 to-amber-700',
     sparkline: [8, 6, 12, 4, 7, 5],
-    trend: 'down'
+    trend: 'down',
+    decimals: 0
   },
   { 
     key: 'parked', 
@@ -39,15 +42,26 @@ const cards = [
     icon: '🔵', 
     color: 'from-slate-500 to-slate-700',
     sparkline: [10, 9, 10, 4, 5, 5],
-    trend: 'stable'
+    trend: 'stable',
+    decimals: 0
   },
   { 
     key: 'total_trips_today', 
-    label: 'Trips Today', 
+    label: 'Driver Trips',
     icon: '📊', 
     color: 'from-purple-500 to-purple-700',
     sparkline: [125, 138, 142, 155, 167, 172],
-    trend: 'up'
+    trend: 'up',
+    decimals: 0
+  },
+  {
+    key: 'total_stops_today',
+    label: 'Stops >5m',
+    icon: '🛑',
+    color: 'from-orange-500 to-orange-700',
+    sparkline: [18, 16, 21, 19, 24, 22],
+    trend: 'stable',
+    decimals: 0
   },
   { 
     key: 'total_distance_miles', 
@@ -55,15 +69,17 @@ const cards = [
     icon: '🛣️', 
     color: 'from-cyan-500 to-cyan-700',
     sparkline: [1200, 1350, 1450, 1380, 1520, 1680],
-    trend: 'up'
+    trend: 'up',
+    decimals: 1
   },
   { 
-    key: 'avg_trip_duration_min', 
-    label: 'Avg Duration (min)', 
+    key: 'avg_trip_duration_hours',
+    label: 'Avg Trip Hrs',
     icon: '⏱️', 
     color: 'from-rose-500 to-rose-700',
-    sparkline: [45, 42, 48, 44, 41, 43],
-    trend: 'stable'
+    sparkline: [9.8, 10.4, 11.2, 10.7, 11.5, 12.1],
+    trend: 'up',
+    decimals: 1
   },
   { 
     key: 'avg_trip_distance_miles', 
@@ -71,7 +87,26 @@ const cards = [
     icon: '📏', 
     color: 'from-indigo-500 to-indigo-700',
     sparkline: [12, 11, 13, 12, 14, 13],
-    trend: 'stable'
+    trend: 'stable',
+    decimals: 1
+  },
+  {
+    key: 'trips_meeting_target',
+    label: 'Trips 12h+',
+    icon: '✅',
+    color: 'from-teal-500 to-teal-700',
+    sparkline: [4, 5, 6, 5, 7, 8],
+    trend: 'up',
+    decimals: 0
+  },
+  {
+    key: 'trips_under_target',
+    label: 'Under 12h',
+    icon: '⚠️',
+    color: 'from-red-500 to-red-700',
+    sparkline: [11, 10, 9, 8, 7, 6],
+    trend: 'down',
+    decimals: 0
   },
 ] as const
 
@@ -120,7 +155,7 @@ export default function Dashboard({ overview, loading }: Props) {
 
   return (
     <motion.div 
-      className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4"
+      className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
@@ -152,7 +187,8 @@ export default function Dashboard({ overview, loading }: Props) {
                 <div className="animate-pulse bg-white/20 rounded h-6 w-12" />
               ) : (
                 <CountUp
-                  end={(overview as any)?.[c.key] ?? 0}
+                  end={Number((overview as any)?.[c.key] ?? 0)}
+                  decimals={c.decimals}
                   duration={1.2}
                   delay={index * 0.1}
                   preserveValue

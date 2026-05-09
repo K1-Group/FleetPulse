@@ -89,11 +89,14 @@ class GeotabClient:
     ) -> list[dict[str, Any]]:
         to_date = to_date or datetime.now(timezone.utc)
         from_date = from_date or (to_date - timedelta(days=1))
+        search = {
+            "fromDate": from_date.isoformat(),
+            "toDate": to_date.isoformat(),
+        }
         return self._call(
             self.api.get,
             "Trip",
-            from_date=from_date.isoformat(),
-            to_date=to_date.isoformat(),
+            search=search,
         )
 
     def get_exception_events(

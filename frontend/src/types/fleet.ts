@@ -26,9 +26,15 @@ export interface FleetOverview {
   parked: number
   offline: number
   total_trips_today: number
+  total_stops_today: number
   total_distance_miles: number
   avg_trip_duration_min: number
+  avg_trip_duration_hours: number
   avg_trip_distance_miles: number
+  target_trip_duration_hours: number
+  trips_meeting_target: number
+  trips_under_target: number
+  trip_definition: string
 }
 
 export interface LocationStats {

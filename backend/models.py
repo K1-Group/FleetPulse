@@ -56,9 +56,15 @@ class FleetOverview(BaseModel):
     parked: int = 0
     offline: int = 0
     total_trips_today: int = 0
+    total_stops_today: int = 0
     total_distance_miles: float = 0
     avg_trip_duration_min: float = 0
+    avg_trip_duration_hours: float = 0
     avg_trip_distance_miles: float = 0
+    target_trip_duration_hours: float = 12
+    trips_meeting_target: int = 0
+    trips_under_target: int = 0
+    trip_definition: str = "geotab_trip_segment"
 
 
 class LocationStats(BaseModel):
