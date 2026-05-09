@@ -40,18 +40,24 @@ jobs:
 
       - name: Smoke test
         run: |
-          echo "Waiting 30s for container to start..."
-          sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.APP_NAME }}.azurewebsites.net/api/health)
-          echo "Health check status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed!"
-            exit 1
-          fi
-          POWERBI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.APP_NAME }}.azurewebsites.net/api/powerbi/dashboard-preview)
-          echo "Power BI dashboard preview status: $POWERBI_STATUS"
-          if [ "$POWERBI_STATUS" != "200" ]; then
-            echo "Power BI dashboard preview smoke test failed!"
-            exit 1
-          fi
+          check_url() {
+            local name="$1"
+            local url="$2"
+            local status=""
+
+            for attempt in $(seq 1 12); do
+              status=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
+              echo "$name attempt $attempt status: $status"
+              if [ "$status" = "200" ]; then
+                return 0
+              fi
+              sleep 15
+            done
+
+            echo "$name smoke test failed after warm-up retries. Last status: $status"
+            return 1
+          }
+
+          check_url "Health check" "https://${{ env.APP_NAME }}.azurewebsites.net/api/health"
+          check_url "Power BI dashboard preview" "https://${{ env.APP_NAME }}.azurewebsites.net/api/powerbi/dashboard-preview"
           echo "Deployment successful!"
