@@ -48,4 +48,10 @@ jobs:
             echo "Health check failed!"
             exit 1
           fi
+          POWERBI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.APP_NAME }}.azurewebsites.net/api/powerbi/dashboard-preview)
+          echo "Power BI dashboard preview status: $POWERBI_STATUS"
+          if [ "$POWERBI_STATUS" != "200" ]; then
+            echo "Power BI dashboard preview smoke test failed!"
+            exit 1
+          fi
           echo "Deployment successful!"

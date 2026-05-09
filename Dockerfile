@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir -r requirements.txt python-dotenv
 
 # Copy backend source
 COPY backend/ ./backend/
+COPY powerbi/ ./powerbi/
 COPY .env.example ./.env.example
 
 # Copy built frontend into backend static dir
