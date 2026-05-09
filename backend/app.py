@@ -37,6 +37,7 @@ _ROUTERS = [
     ("fuel", "/api/fuel", ["Fuel Analytics"]),
     ("compliance", "/api/compliance", ["Compliance & ELD"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
+    ("powerbi", "/api/powerbi", ["Power BI"]),
 ]
 for _name, _prefix, _tags in _ROUTERS:
     try:
