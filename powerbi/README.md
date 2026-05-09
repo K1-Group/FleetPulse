@@ -60,3 +60,40 @@ The script verifies:
 - `source_authority = Geotab`.
 - Snapshot row counts align with the individual endpoint counts.
 
+## Publish To Power BI Workspace
+
+The API publisher creates/refreshes a Push semantic model in the selected Power BI workspace, pushes the live FleetPulse rows, creates a dashboard shell, and publishes a native PBIR report bound to the new model.
+
+Report cloning is intentionally disabled by default because cloned reports can retain old field bindings. Enable it only when the source report schema is confirmed compatible.
+
+Default workspace:
+
+```text
+K1 Operations Hub
+Workspace ID: b801f80d-5303-4121-abd1-1163639ef58b
+```
+
+Run:
+
+```bash
+python3 powerbi/publish_to_powerbi.py
+```
+
+Optional environment overrides:
+
+```bash
+POWERBI_WORKSPACE_ID=<workspace-guid>
+POWERBI_WORKSPACE_NAME="Workspace Name"
+POWERBI_DATASET_NAME="FleetPulse Live Operations"
+POWERBI_DASHBOARD_NAME="FleetPulse Live Operations Dashboard"
+POWERBI_NATIVE_REPORT_NAME="FleetPulse Live Operations Native Report"
+POWERBI_CLONE_REPORT_NAME="FleetPulse Live Operations Report"
+POWERBI_SOURCE_REPORT_ID=<existing-report-guid>
+POWERBI_ENABLE_CLONE=false
+```
+
+Authentication:
+
+- Preferred local operator path: Azure CLI signed in as a Power BI workspace contributor.
+- Alternative automation path: set `POWERBI_ACCESS_TOKEN` from a secure CI identity.
+- Do not commit or print Power BI tokens.
