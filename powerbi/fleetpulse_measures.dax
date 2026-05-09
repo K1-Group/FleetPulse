@@ -1,0 +1,85 @@
+Total Vehicles =
+SUM ( FleetPulseOverview[total_vehicles] )
+
+Active Vehicles =
+SUM ( FleetPulseOverview[active] )
+
+Idle Vehicles =
+SUM ( FleetPulseOverview[idle] )
+
+Parked Vehicles =
+SUM ( FleetPulseOverview[parked] )
+
+Offline Vehicles =
+SUM ( FleetPulseOverview[offline] )
+
+Active Vehicle % =
+DIVIDE ( [Active Vehicles], [Total Vehicles], 0 )
+
+Trips Today =
+SUM ( FleetPulseOverview[total_trips_today] )
+
+Stops Today =
+SUM ( FleetPulseOverview[total_stops_today] )
+
+Miles Today =
+SUM ( FleetPulseOverview[total_distance_miles] )
+
+Average Trip Duration Hours =
+AVERAGE ( FleetPulseOverview[avg_trip_duration_hours] )
+
+Target Trip Duration Hours =
+AVERAGE ( FleetPulseOverview[target_trip_duration_hours] )
+
+Trips Meeting Target =
+SUM ( FleetPulseOverview[trips_meeting_target] )
+
+Trips Under Target =
+SUM ( FleetPulseOverview[trips_under_target] )
+
+Trip Target Attainment % =
+DIVIDE ( [Trips Meeting Target], [Trips Today], 0 )
+
+Average Safety Score =
+AVERAGE ( FleetPulseSafetyScores[score] )
+
+High Risk Vehicles =
+CALCULATE (
+    DISTINCTCOUNT ( FleetPulseSafetyScores[vehicle_id] ),
+    FleetPulseSafetyScores[score] < 70
+)
+
+Total Safety Events =
+SUM ( FleetPulseSafetyScores[event_count] )
+
+Speeding Events =
+SUM ( FleetPulseSafetyScores[speeding_events] )
+
+Harsh Braking Events =
+SUM ( FleetPulseSafetyScores[harsh_braking_events] )
+
+Harsh Acceleration Events =
+SUM ( FleetPulseSafetyScores[harsh_acceleration_events] )
+
+Harsh Cornering Events =
+SUM ( FleetPulseSafetyScores[harsh_cornering_events] )
+
+Vehicles With Coordinates =
+CALCULATE (
+    DISTINCTCOUNT ( FleetPulseVehicles[id] ),
+    NOT ISBLANK ( FleetPulseVehicles[latitude] ),
+    NOT ISBLANK ( FleetPulseVehicles[longitude] )
+)
+
+Location Count =
+DISTINCTCOUNT ( FleetPulseLocations[name] )
+
+Empty Terminals =
+CALCULATE (
+    DISTINCTCOUNT ( FleetPulseLocations[name] ),
+    FleetPulseLocations[vehicle_count] = 0
+)
+
+Last FleetPulse Export =
+MAX ( FleetPulseOverview[exported_at] )
+

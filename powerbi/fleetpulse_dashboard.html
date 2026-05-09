@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FleetPulse Power BI Dashboard Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #637083;
+      --line: #dbe2ea;
+      --blue: #1f6feb;
+      --green: #16803c;
+      --amber: #b7791f;
+      --red: #b42318;
+      --purple: #6f42c1;
+      --shadow: 0 10px 24px rgba(23, 32, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    header {
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+      padding: 18px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 13px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--amber);
+    }
+
+    .dot.ok {
+      background: var(--green);
+    }
+
+    .dot.error {
+      background: var(--red);
+    }
+
+    main {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 22px 28px 36px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .kpi-grid {
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .section-grid {
+      grid-template-columns: 1.3fr 1fr;
+      align-items: start;
+    }
+
+    .wide-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .panel, .kpi {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .kpi {
+      padding: 16px;
+      min-height: 118px;
+      display: grid;
+      align-content: space-between;
+      gap: 10px;
+    }
+
+    .kpi-label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 700;
+    }
+
+    .kpi-value {
+      font-size: 30px;
+      font-weight: 750;
+      line-height: 1;
+    }
+
+    .kpi-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .panel {
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .panel-meta {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .bars {
+      display: grid;
+      gap: 12px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 92px 1fr 70px;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .bar-shell {
+      height: 12px;
+      background: #edf2f7;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #d9e2ec;
+    }
+
+    .bar-fill {
+      height: 100%;
+      min-width: 2px;
+      border-radius: 999px;
+    }
+
+    .bar-active { background: var(--green); }
+    .bar-idle { background: var(--amber); }
+    .bar-parked { background: var(--blue); }
+    .bar-offline { background: var(--red); }
+    .bar-safety { background: var(--purple); }
+
+    .target-wrap {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .gauge {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, #fff 0 58%, transparent 59%),
+        conic-gradient(var(--green) var(--target-angle), #e5eaf0 0);
+      border: 1px solid var(--line);
+    }
+
+    .gauge span {
+      font-size: 30px;
+      font-weight: 760;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      padding: 9px 8px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 750;
+      background: #f8fafc;
+    }
+
+    tbody tr:hover {
+      background: #f8fbff;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 650;
+      background: #edf2f7;
+      color: var(--muted);
+    }
+
+    .status.active { background: #e7f7ec; color: var(--green); }
+    .status.idle { background: #fff7e6; color: var(--amber); }
+    .status.parked { background: #eaf2ff; color: var(--blue); }
+    .status.offline { background: #fdeceb; color: var(--red); }
+
+    .risk-high {
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    .risk-mid {
+      color: var(--amber);
+      font-weight: 700;
+    }
+
+    .risk-good {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .error-box {
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border: 1px solid #f2b8b5;
+      background: #fff4f2;
+      color: #8a1f17;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    footer {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 0 28px 28px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .kpi-grid {
+        grid-template-columns: repeat(2, minmax(150px, 1fr));
+      }
+
+      .section-grid, .wide-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 700px) {
+      header, main, footer {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .header-grid, .target-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      .status-pill {
+        justify-content: center;
+      }
+
+      .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        font-size: 12px;
+      }
+
+      th, td {
+        padding: 8px 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-grid">
+      <div>
+        <h1>FleetPulse Power BI Dashboard Preview</h1>
+        <div class="subtitle">Read-only operational reporting from FleetPulse, sourced from Geotab telemetry.</div>
+      </div>
+      <div class="status-pill" id="loadStatus">
+        <span class="dot"></span>
+        <span>Loading live FleetPulse data</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="error-box" id="errorBox"></div>
+
+    <section class="grid kpi-grid" id="kpiGrid"></section>
+
+    <section class="grid section-grid">
+      <div class="panel">
+        <div class="panel-title">
+          <h2>Vehicle Status</h2>
+          <div class="panel-meta" id="overviewExport"></div>
+        </div>
+        <div class="bars" id="statusBars"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          <h2>Trip Target Performance</h2>
+          <div class="panel-meta">Target: 12.0 hours</div>
+        </div>
+        <div class="target-wrap">
+          <div class="gauge" id="targetGauge" style="--target-angle:0deg">
+            <span id="targetPct">0%</span>
+          </div>
+          <div>
+            <table>
+              <tbody id="tripTargetRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid wide-grid" style="margin-top:16px">
+      <div class="panel">
+        <div class="panel-title">
+          <h2>Terminal Coverage</h2>
+          <div class="panel-meta">Vehicles and active count by terminal</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Terminal</th>
+              <th>Vehicles</th>
+              <th>Active</th>
+              <th>Safety</th>
+            </tr>
+          </thead>
+          <tbody id="locationRows"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          <h2>Safety Risk</h2>
+          <div class="panel-meta">Lowest safety scores, 7 day period</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Score</th>
+              <th>Trend</th>
+              <th>Events</th>
+            </tr>
+          </thead>
+          <tbody id="safetyRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:16px">
+      <div class="panel-title">
+        <h2>Active And Recently Reporting Vehicles</h2>
+        <div class="panel-meta">Top 25 sorted by status and last contact</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Vehicle</th>
+            <th>Status</th>
+            <th>Location</th>
+            <th>Speed</th>
+            <th>Last Contact</th>
+          </tr>
+        </thead>
+        <tbody id="vehicleRows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    This preview consumes the same read-only endpoints used by the Power BI report. Power BI remains the analytics layer and does not write back to FleetPulse or Geotab.
+  </footer>
+
+  <script>
+    const BASE_URL = "https://k1-fleetpulse.azurewebsites.net";
+    const endpoints = {
+      overview: "/api/powerbi/overview",
+      locations: "/api/powerbi/locations",
+      vehicles: "/api/powerbi/vehicles",
+      safety: "/api/powerbi/safety-scores?days=7",
+      snapshot: "/api/powerbi/fleetpulse-snapshot?days=7"
+    };
+
+    const numberFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+    const wholeFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+    const percentFmt = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatDate(value) {
+      if (!value) return "No contact";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString([], {
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    async function fetchJson(path) {
+      const response = await fetch(BASE_URL + path, { headers: { "Accept": "application/json" } });
+      if (!response.ok) {
+        throw new Error(`${path} returned HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+
+    function setStatus(kind, text) {
+      const status = byId("loadStatus");
+      const dot = status.querySelector(".dot");
+      dot.className = `dot ${kind}`;
+      status.querySelector("span:last-child").textContent = text;
+    }
+
+    function renderKpis(overview, safetyRows) {
+      const avgSafety = safetyRows.length
+        ? safetyRows.reduce((sum, row) => sum + Number(row.score || 0), 0) / safetyRows.length
+        : 0;
+      const highRisk = safetyRows.filter((row) => Number(row.score || 0) < 70).length;
+      const targetPct = overview.total_trips_today
+        ? overview.trips_meeting_target / overview.total_trips_today
+        : 0;
+      const kpis = [
+        ["Total Vehicles", wholeFmt.format(overview.total_vehicles || 0), "Fleet size in Geotab projection"],
+        ["Active", wholeFmt.format(overview.active || 0), "Currently moving or active"],
+        ["Offline", wholeFmt.format(overview.offline || 0), "No current contact signal"],
+        ["Trips Today", wholeFmt.format(overview.total_trips_today || 0), `${wholeFmt.format(overview.total_stops_today || 0)} stops tracked`],
+        ["Trip Target", percentFmt.format(targetPct), `${wholeFmt.format(overview.trips_meeting_target || 0)} of ${wholeFmt.format(overview.total_trips_today || 0)} trips`],
+        ["Miles Today", numberFmt.format(overview.total_distance_miles || 0), "Total trip distance"],
+        ["Avg Trip Hours", numberFmt.format(overview.avg_trip_duration_hours || 0), "Target is 12.0 hours"],
+        ["Avg Trip Miles", numberFmt.format(overview.avg_trip_distance_miles || 0), "Distance per completed trip"],
+        ["Avg Safety", numberFmt.format(avgSafety), `${wholeFmt.format(highRisk)} high risk vehicles`],
+        ["Locations", wholeFmt.format((window.fleetpulseData.locations || []).length), "Terminal coverage rows"]
+      ];
+
+      byId("kpiGrid").innerHTML = kpis.map(([label, value, note]) => `
+        <article class="kpi">
+          <div class="kpi-label">${escapeHtml(label)}</div>
+          <div class="kpi-value">${escapeHtml(value)}</div>
+          <div class="kpi-note">${escapeHtml(note)}</div>
+        </article>
+      `).join("");
+    }
+
+    function renderStatusBars(overview) {
+      const total = Number(overview.total_vehicles || 0) || 1;
+      const rows = [
+        ["Active", overview.active || 0, "bar-active"],
+        ["Idle", overview.idle || 0, "bar-idle"],
+        ["Parked", overview.parked || 0, "bar-parked"],
+        ["Offline", overview.offline || 0, "bar-offline"]
+      ];
+
+      byId("statusBars").innerHTML = rows.map(([label, count, cls]) => {
+        const pct = Math.max(0, Math.min(100, (Number(count) / total) * 100));
+        return `
+          <div class="bar-row">
+            <div>${escapeHtml(label)}</div>
+            <div class="bar-shell"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+            <div>${wholeFmt.format(count)} (${Math.round(pct)}%)</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderTripTarget(overview) {
+      const trips = Number(overview.total_trips_today || 0);
+      const meeting = Number(overview.trips_meeting_target || 0);
+      const pct = trips ? meeting / trips : 0;
+      byId("targetGauge").style.setProperty("--target-angle", `${Math.round(pct * 360)}deg`);
+      byId("targetPct").textContent = percentFmt.format(pct);
+      const rows = [
+        ["Trips today", wholeFmt.format(trips)],
+        ["Trips meeting target", wholeFmt.format(meeting)],
+        ["Trips under target", wholeFmt.format(overview.trips_under_target || 0)],
+        ["Average duration", `${numberFmt.format(overview.avg_trip_duration_hours || 0)} hours`],
+        ["Trip definition", overview.trip_definition || "driver session"]
+      ];
+      byId("tripTargetRows").innerHTML = rows.map(([label, value]) => `
+        <tr>
+          <td><strong>${escapeHtml(label)}</strong></td>
+          <td>${escapeHtml(value)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderLocations(locations) {
+      byId("locationRows").innerHTML = locations
+        .slice()
+        .sort((a, b) => Number(b.vehicle_count || 0) - Number(a.vehicle_count || 0))
+        .map((row) => `
+          <tr>
+            <td>${escapeHtml(row.name)}</td>
+            <td>${wholeFmt.format(row.vehicle_count || 0)}</td>
+            <td>${wholeFmt.format(row.active || 0)}</td>
+            <td>${numberFmt.format(row.safety_score || 0)}</td>
+          </tr>
+        `).join("");
+    }
+
+    function scoreClass(score) {
+      const numeric = Number(score || 0);
+      if (numeric < 70) return "risk-high";
+      if (numeric < 85) return "risk-mid";
+      return "risk-good";
+    }
+
+    function renderSafety(safety) {
+      byId("safetyRows").innerHTML = safety
+        .slice()
+        .sort((a, b) => Number(a.score || 0) - Number(b.score || 0))
+        .slice(0, 15)
+        .map((row) => `
+          <tr>
+            <td>${escapeHtml(row.vehicle_name)}</td>
+            <td class="${scoreClass(row.score)}">${numberFmt.format(row.score || 0)}</td>
+            <td>${escapeHtml(row.trend)}</td>
+            <td>${wholeFmt.format(row.event_count || 0)}</td>
+          </tr>
+        `).join("");
+    }
+
+    function statusRank(status) {
+      return { active: 1, idle: 2, parked: 3, offline: 4 }[String(status).toLowerCase()] || 5;
+    }
+
+    function renderVehicles(vehicles) {
+      byId("vehicleRows").innerHTML = vehicles
+        .slice()
+        .sort((a, b) => {
+          const statusDiff = statusRank(a.status) - statusRank(b.status);
+          if (statusDiff !== 0) return statusDiff;
+          return String(b.last_contact || "").localeCompare(String(a.last_contact || ""));
+        })
+        .slice(0, 25)
+        .map((row) => {
+          const status = String(row.status || "unknown").toLowerCase();
+          return `
+            <tr>
+              <td>${escapeHtml(row.name)}</td>
+              <td><span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span></td>
+              <td>${escapeHtml(row.location_name || "Unassigned")}</td>
+              <td>${row.speed == null ? "No GPS" : `${numberFmt.format(row.speed)} mph`}</td>
+              <td>${escapeHtml(formatDate(row.last_contact))}</td>
+            </tr>
+          `;
+        }).join("");
+    }
+
+    async function loadDashboard() {
+      try {
+        const [overviewRows, locations, vehicles, safety, snapshot] = await Promise.all([
+          fetchJson(endpoints.overview),
+          fetchJson(endpoints.locations),
+          fetchJson(endpoints.vehicles),
+          fetchJson(endpoints.safety),
+          fetchJson(endpoints.snapshot)
+        ]);
+        const overview = overviewRows[0] || {};
+        window.fleetpulseData = { overview, locations, vehicles, safety, snapshot };
+
+        renderKpis(overview, safety);
+        renderStatusBars(overview);
+        renderTripTarget(overview);
+        renderLocations(locations);
+        renderSafety(safety);
+        renderVehicles(vehicles);
+
+        byId("overviewExport").textContent = `Exported ${formatDate(overview.exported_at)}`;
+        setStatus("ok", `Live data loaded: ${wholeFmt.format(vehicles.length)} vehicles, ${wholeFmt.format(safety.length)} safety rows`);
+      } catch (error) {
+        console.error(error);
+        byId("errorBox").style.display = "block";
+        byId("errorBox").textContent = `Dashboard load failed: ${error.message}`;
+        setStatus("error", "Live data failed to load");
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>
+

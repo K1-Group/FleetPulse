@@ -156,3 +156,11 @@ def test_powerbi_fleetpulse_snapshot_connection(monkeypatch):
         "safety_scores": 1,
     }
     assert payload["tables"]["vehicles"][0]["id"] == "b1"
+
+
+def test_powerbi_dashboard_preview_serves_html(monkeypatch):
+    response = _client(monkeypatch).get("/api/powerbi/dashboard-preview")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "FleetPulse Power BI Dashboard Preview" in response.text

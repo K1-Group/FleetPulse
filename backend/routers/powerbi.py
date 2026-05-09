@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
 from services.safety_service import get_safety_scores
 
 router = APIRouter()
+POWERBI_DIR = Path(__file__).resolve().parents[2] / "powerbi"
 
 
 def _now_iso() -> str:
@@ -111,3 +114,10 @@ async def powerbi_fleetpulse_snapshot(days: int = Query(7, ge=1, le=90)) -> dict
             "safety_scores": len(safety_scores),
         },
     }
+
+
+@router.get("/dashboard-preview", response_class=HTMLResponse)
+async def powerbi_dashboard_preview() -> HTMLResponse:
+    """Serve the read-only FleetPulse Power BI dashboard preview."""
+    dashboard_path = POWERBI_DIR / "fleetpulse_dashboard.html"
+    return HTMLResponse(dashboard_path.read_text(encoding="utf-8"))
