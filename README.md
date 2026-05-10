@@ -261,6 +261,7 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/zapier/triggers/risk-vehicles` | Zapier polling trigger: vehicles below safety threshold |
 | `POST /api/zapier/actions/push-snapshot` | Optional feature-flagged push to a Zapier Catch Hook |
 | `POST /api/zapier/actions/verify-snapshot` | Verify a pushed Catch Hook payload signature without exposing the signing secret |
+| `POST /api/zapier/actions/verify-message` | Verify the compact signed Teams message before Zapier sends it |
 
 ## 🛠️ Tech Stack
 
@@ -296,6 +297,9 @@ from Zapier and does not overwrite Geotab.
    - Add a guard step before Teams/email that calls
      `POST https://k1-fleetpulse.azurewebsites.net/api/zapier/actions/verify-snapshot`
      with the Catch Hook payload. Continue only when `valid=true`.
+   - If Zapier cannot pass the full nested payload cleanly, use the compact guard:
+     call `POST /api/zapier/actions/verify-message` with `teams_message` and
+     `teams_message_signature`, then send only the verified `teams_message`.
 
 ### Zapier Environment Variables
 
@@ -311,7 +315,8 @@ Security notes:
 
 - `FLEETPULSE_ZAPIER_API_KEY` protects the push endpoint when configured.
 - `FLEETPULSE_ZAPIER_SHARED_SECRET` signs outbound Catch Hook payloads with `payload_signature`
-  and `X-FleetPulse-Signature`; Zapier can verify via FleetPulse without storing this secret.
+  and `X-FleetPulse-Signature`; it also signs a compact `teams_message`.
+  Zapier can verify via FleetPulse without storing this secret.
 - Polling trigger endpoints are read-only Geotab projections.
 
 ## 📂 Project Structure

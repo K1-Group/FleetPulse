@@ -199,17 +199,29 @@ def test_payload_signature_validates_and_rejects_tampering(monkeypatch):
         "source_system": "FleetPulse",
         "source_authority": "Geotab",
         "projection_mode": "read_only",
+        "exported_at": "2026-05-10T15:02:34+00:00",
+        "row_counts": {"vehicles": 759, "locations": 4, "safety_scores": 759},
+        "overview": {"active": 14, "parked": 177, "offline": 567},
+        "top_risk_vehicle_name": "Ho1403",
+        "top_risk_score": 58,
     }
 
     signed = zapier._attach_payload_signature(payload)
 
     assert signed["signature_algorithm"] == zapier.SIGNATURE_ALGORITHM
     assert signed["payload_signature"].startswith("sha256=")
+    assert signed["teams_message"].startswith("FleetPulse Snapshot")
+    assert signed["teams_message_signature"].startswith("sha256=")
     assert zapier._verify_payload_signature(signed)
+    assert zapier._verify_message_signature(signed["teams_message"], signed["teams_message_signature"])
     assert "payload_signature" not in payload
 
     tampered = {**signed, "source_authority": "Manual"}
     assert not zapier._verify_payload_signature(tampered)
+    assert not zapier._verify_message_signature(
+        signed["teams_message"].replace("Ho1403", "Other Vehicle"),
+        signed["teams_message_signature"],
+    )
 
 
 def test_verify_snapshot_action_returns_valid_for_signed_payload(monkeypatch):
@@ -255,3 +267,35 @@ def test_verify_snapshot_action_rejects_unsigned_payload(monkeypatch):
     assert response.status_code == 200
     assert response.json()["valid"] is False
     assert response.json()["status"] == "invalid"
+
+
+def test_verify_message_action_returns_message_when_signature_valid(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ZAPIER_SHARED_SECRET", "signing-secret")
+    message = "FleetPulse Snapshot\nPayload: fleetpulse-snapshot-test"
+    signature = zapier._message_signature(message)
+
+    response = _client(monkeypatch).post(
+        "/api/zapier/actions/verify-message",
+        json={"message": message, "signature": signature},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    assert result["teams_message"] == message
+
+
+def test_verify_message_action_rejects_tampered_message(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ZAPIER_SHARED_SECRET", "signing-secret")
+    message = "FleetPulse Snapshot\nPayload: fleetpulse-snapshot-test"
+    signature = zapier._message_signature(message)
+
+    response = _client(monkeypatch).post(
+        "/api/zapier/actions/verify-message",
+        json={"message": message + "\nVehicles: 9999", "signature": signature},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is False
+    assert result["teams_message"] == ""
