@@ -1,5 +1,7 @@
 """AI Chat Router - Intelligent fleet query processing."""
 
+from __future__ import annotations
+
 import os
 import json
 import re
@@ -20,6 +22,8 @@ router = APIRouter()
 
 # Provider type definition
 ProviderType = Literal["anthropic", "openrouter", "demo"]
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-4"
 
 # In-memory storage for API configurations (not persisted to disk for security)
 _ai_config = {
@@ -27,6 +31,42 @@ _ai_config = {
     "api_key": None,
     "client": None
 }
+
+
+def _get_anthropic_model() -> str:
+    """Return the configured Anthropic model."""
+    configured = os.getenv("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL).strip()
+    return configured or DEFAULT_ANTHROPIC_MODEL
+
+
+def _get_openrouter_model() -> str:
+    """Return the configured OpenRouter model."""
+    configured = os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip()
+    return configured or DEFAULT_OPENROUTER_MODEL
+
+
+def _get_openrouter_headers() -> dict[str, str] | None:
+    """Return optional OpenRouter attribution headers."""
+    headers = {}
+    site_url = os.getenv("OPENROUTER_SITE_URL", "").strip()
+    app_name = os.getenv("OPENROUTER_APP_NAME", "").strip()
+    if site_url:
+        headers["HTTP-Referer"] = site_url
+    if app_name:
+        headers["X-Title"] = app_name
+    return headers or None
+
+
+def _build_openrouter_client(api_key: str) -> openai.OpenAI:
+    """Build an OpenRouter client with optional attribution headers."""
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "base_url": "https://openrouter.ai/api/v1",
+    }
+    headers = _get_openrouter_headers()
+    if headers:
+        kwargs["default_headers"] = headers
+    return openai.OpenAI(**kwargs)
 
 # Initialize from environment variables if available
 def _initialize_from_env():
@@ -60,7 +100,7 @@ def _set_api_key(api_key: str, provider: ProviderType) -> bool:
             # Test Anthropic API key
             test_client = anthropic.Anthropic(api_key=api_key)
             test_response = test_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=_get_anthropic_model(),
                 max_tokens=10,
                 messages=[{"role": "user", "content": "Test"}]
             )
@@ -74,14 +114,11 @@ def _set_api_key(api_key: str, provider: ProviderType) -> bool:
             
         elif provider == "openrouter":
             # Test OpenRouter API key
-            test_client = openai.OpenAI(
-                api_key=api_key,
-                base_url="https://openrouter.ai/api/v1"
-            )
+            test_client = _build_openrouter_client(api_key)
             
             # Test with a minimal request
             test_response = test_client.chat.completions.create(
-                model="anthropic/claude-sonnet-4-20250514",
+                model=_get_openrouter_model(),
                 messages=[{"role": "user", "content": "Test"}],
                 max_tokens=10
             )
@@ -97,7 +134,9 @@ def _set_api_key(api_key: str, provider: ProviderType) -> bool:
             return False
         
     except Exception as e:
-        print(f"API key validation failed for {provider}: {e}")
+        status_code = getattr(e, "status_code", None)
+        status_text = f" status={status_code}" if status_code else ""
+        print(f"API key validation failed for {provider}: {type(e).__name__}{status_text}")
         return False
 
 
@@ -120,9 +159,9 @@ def _get_model_name() -> str:
     """Get the model name based on provider."""
     provider = _get_provider()
     if provider == "anthropic":
-        return "claude-sonnet-4-20250514"
+        return _get_anthropic_model()
     elif provider == "openrouter":
-        return "anthropic/claude-sonnet-4-20250514"
+        return _get_openrouter_model()
     else:
         return "pattern-matching"
 
@@ -622,7 +661,7 @@ Please analyze this question in the context of the current fleet data and provid
         if provider == "anthropic":
             # Direct Anthropic API
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=_get_anthropic_model(),
                 max_tokens=2000,
                 system=CLAUDE_SYSTEM_PROMPT,
                 messages=messages
@@ -634,7 +673,7 @@ Please analyze this question in the context of the current fleet data and provid
             openai_messages = [{"role": "system", "content": CLAUDE_SYSTEM_PROMPT}] + messages
             
             response = client.chat.completions.create(
-                model="anthropic/claude-sonnet-4-20250514",
+                model=_get_openrouter_model(),
                 messages=openai_messages,
                 max_tokens=2000,
                 temperature=0.7
@@ -785,7 +824,7 @@ Please analyze this question in the context of the current fleet data and provid
             if provider == "anthropic":
                 # Stream from Anthropic
                 with client.messages.stream(
-                    model="claude-sonnet-4-20250514",
+                    model=_get_anthropic_model(),
                     max_tokens=2000,
                     system=CLAUDE_SYSTEM_PROMPT,
                     messages=messages
@@ -802,7 +841,7 @@ Please analyze this question in the context of the current fleet data and provid
                 openai_messages = [{"role": "system", "content": CLAUDE_SYSTEM_PROMPT}] + messages
                 
                 stream = client.chat.completions.create(
-                    model="anthropic/claude-sonnet-4-20250514",
+                    model=_get_openrouter_model(),
                     messages=openai_messages,
                     max_tokens=2000,
                     temperature=0.7,

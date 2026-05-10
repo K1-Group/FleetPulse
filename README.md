@@ -83,10 +83,17 @@ GEOTAB_SERVER=my.geotab.com
 ```env
 # Option 1: OpenRouter (connects Claude Max/Pro subscriptions)
 OPENROUTER_API_KEY=your-key-here
+OPENROUTER_MODEL=anthropic/claude-sonnet-4
+OPENROUTER_SITE_URL=https://k1-fleetpulse.azurewebsites.net
+OPENROUTER_APP_NAME=FleetPulse
 
 # Option 2: Anthropic Direct API (pay-per-use)  
 ANTHROPIC_API_KEY=your-key-here
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
 ```
+
+For production, store API keys in Azure Key Vault/App Settings. Do not commit
+provider keys into `.env` files.
 
 ### Backend
 ```bash
