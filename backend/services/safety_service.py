@@ -6,10 +6,13 @@ import random
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from geotab_client import GeotabClient
 from models import SafetyBreakdown, TrendDirection, VehicleSafetyScore
+
+logger = logging.getLogger(__name__)
 
 
 # K1 speeding policy: counts after 6 mph over posted speed limit
@@ -45,7 +48,14 @@ def _compute_score(breakdown: SafetyBreakdown) -> float:
 def get_safety_scores(days: int = 7) -> list[VehicleSafetyScore]:
     """Get safety scores from real Geotab ExceptionEvents."""
     if not _use_demo_safety_scores():
-        return _get_geotab_safety_scores(days)
+        try:
+            return _get_geotab_safety_scores(days)
+        except TimeoutError as exc:
+            logger.warning("safety_scores_unavailable_geotab_timeout", extra={"error": str(exc)})
+            return []
+        except Exception as exc:
+            logger.warning("safety_scores_unavailable", extra={"error": str(exc)})
+            return []
     return _get_demo_safety_scores()
 
 

@@ -1,8 +1,11 @@
 """FleetPulse — FastAPI main application."""
 
+import logging
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
+
 logger = logging.getLogger("fleetpulse")
 
 
@@ -50,6 +53,15 @@ for _name, _prefix, _tags in _ROUTERS:
 
 @app.on_event("startup")
 async def startup_event():
+    monitor_enabled = os.getenv("FLEETPULSE_MONITOR_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not monitor_enabled:
+        logger.info("Monitor startup skipped: FLEETPULSE_MONITOR_ENABLED is not true")
+        return
     try:
         from services.monitor_service import start_monitor
         start_monitor()

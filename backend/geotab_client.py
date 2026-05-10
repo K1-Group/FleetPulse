@@ -16,8 +16,25 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for timeout-wrapping blocking Geotab calls
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+# Thread pool for timeout-wrapping blocking Geotab calls. Keep this bounded so
+# slow upstream calls cannot consume unbounded App Service threads.
+_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=max(1, _int_env("FLEETPULSE_GEOTAB_MAX_WORKERS", 12))
+)
 
 # Try loading creds from the openclaw env file, fall back to project .env
 _env_geotab = Path.home() / ".openclaw" / ".env.geotab"
@@ -69,12 +86,14 @@ class GeotabClient:
         return self.authenticate()
 
     # ── timeout helper ─────────────────────────────────────────
-    def _call(self, fn, *args, timeout: float = 5.0, **kwargs):
+    def _call(self, fn, *args, timeout: float | None = None, **kwargs):
         """Run a blocking Geotab call with a timeout (default 5s)."""
+        timeout = timeout or _float_env("FLEETPULSE_GEOTAB_TIMEOUT_SECONDS", 10.0)
         future = _executor.submit(fn, *args, **kwargs)
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
+            future.cancel()
             logger.warning(f"Geotab API call timed out after {timeout}s: {fn.__name__ if hasattr(fn, '__name__') else fn}")
             raise TimeoutError(f"Geotab API call timed out after {timeout}s")
 
