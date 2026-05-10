@@ -182,14 +182,14 @@ async def _fetch_fleet_context() -> str:
     try:
         # Import here to avoid circular imports
         from services.fleet_service import get_fleet_overview
-        from services.alert_service import get_current_alerts
+        from services.alert_service import get_recent_alerts
         from services.safety_service import get_safety_scores
         
         # Fetch current data (with fallback to mock data)
         try:
-            fleet_overview = await get_fleet_overview()
-            alerts = await get_current_alerts()
-            safety_scores = await get_safety_scores()
+            fleet_overview = get_fleet_overview()
+            alerts = get_recent_alerts()
+            safety_scores = get_safety_scores()
         except:
             # Fallback to mock data if services aren't available
             fleet_overview = {

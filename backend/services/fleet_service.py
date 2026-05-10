@@ -14,6 +14,9 @@ KM_TO_MILES = 0.621371
 DEFAULT_STOP_THRESHOLD_MINUTES = 5
 DEFAULT_DRIVER_LOGOUT_GAP_MINUTES = 10 * 60
 DEFAULT_TARGET_TRIP_HOURS = 12
+DEFAULT_DEVICE_GROUP_IDS = "GroupVehicleId"
+DEFAULT_EXCLUDED_DEVICE_GROUP_IDS = "GroupTrailerId"
+DEFAULT_STATUS_STALE_HOURS = 24
 
 # K1 Logistics / K1 Group locations (FTW, Justin, OKC, Kansas City)
 LOCATIONS = [
@@ -47,6 +50,18 @@ def _int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _csv_env(name: str, default: str) -> set[str]:
+    raw = os.getenv(name, default)
+    return {item.strip() for item in raw.split(",") if item.strip()}
 
 
 def _to_utc(value: Any) -> datetime | None:
@@ -89,6 +104,59 @@ def _entity_name(payload: dict[str, Any], field: str) -> str | None:
         value = entity.get("name") or entity.get("id")
         return str(value) if value else None
     return str(entity) if entity else None
+
+
+def _device_group_ids(device: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for group in device.get("groups") or []:
+        if isinstance(group, dict):
+            value = group.get("id") or group.get("name")
+            if value:
+                ids.add(str(value))
+        elif group:
+            ids.add(str(group))
+    return ids
+
+
+def _device_lifecycle_active(device: dict[str, Any], now: datetime) -> bool:
+    active_from = _to_utc(device.get("activeFrom"))
+    active_to = _to_utc(device.get("activeTo"))
+    if active_from and active_from > now:
+        return False
+    if active_to and active_to <= now:
+        return False
+    return True
+
+
+def _is_scoped_fleet_device(device: dict[str, Any], now: datetime) -> bool:
+    """Return true for devices that should count as operational fleet vehicles."""
+    if _bool_env("FLEETPULSE_REQUIRE_ACTIVE_LIFECYCLE", True) and not _device_lifecycle_active(
+        device, now
+    ):
+        return False
+
+    group_ids = _device_group_ids(device)
+    include_groups = _csv_env("FLEETPULSE_DEVICE_GROUP_IDS", DEFAULT_DEVICE_GROUP_IDS)
+    exclude_groups = _csv_env("FLEETPULSE_EXCLUDED_DEVICE_GROUP_IDS", DEFAULT_EXCLUDED_DEVICE_GROUP_IDS)
+    if include_groups and not group_ids.intersection(include_groups):
+        return False
+    if exclude_groups and group_ids.intersection(exclude_groups):
+        return False
+    return True
+
+
+def _status_datetime(status: dict[str, Any]) -> datetime | None:
+    return _to_utc(status.get("dateTime"))
+
+
+def _is_status_stale(status: dict[str, Any] | None, now: datetime) -> bool:
+    if not status:
+        return True
+    timestamp = _status_datetime(status)
+    if not timestamp:
+        return True
+    stale_hours = _int_env("FLEETPULSE_STATUS_STALE_HOURS", DEFAULT_STATUS_STALE_HOURS)
+    return (now - timestamp).total_seconds() > stale_hours * 3600
 
 
 def _trip_distance_km(trip: dict[str, Any]) -> float:
@@ -270,22 +338,30 @@ def _nearest_location(lat: float, lon: float) -> str | None:
 
 def get_fleet_overview() -> FleetOverview:
     client = GeotabClient.get()
-    devices = client.get_devices()
+    raw_devices = client.get_devices()
+    now = datetime.now(timezone.utc)
+    devices = [dev for dev in raw_devices if _is_scoped_fleet_device(dev, now)]
+    scoped_device_ids = {dev.get("id") for dev in devices if dev.get("id")}
     statuses = client.get_device_status_info()
     status_map = {s.get("device", {}).get("id"): s for s in statuses}
 
     counts = {"active": 0, "idle": 0, "parked": 0, "offline": 0}
+    stale_status_count = 0
     for dev in devices:
         sid = dev.get("id")
         st = status_map.get(sid)
-        if st:
+        if st and not _is_status_stale(st, now):
             c = _classify_status(st).value
             counts[c] = counts.get(c, 0) + 1
         else:
+            stale_status_count += 1
             counts["offline"] += 1
 
-    now = datetime.now(timezone.utc)
-    trips = client.get_trips(now - timedelta(days=1), now)
+    trips = [
+        trip
+        for trip in client.get_trips(now - timedelta(days=1), now)
+        if _entity_key(trip, "device", "") in scoped_device_ids
+    ]
     trip_metrics = summarize_driver_trip_sessions(trips, now=now)
     return FleetOverview(
         total_vehicles=len(devices),
@@ -303,11 +379,16 @@ def get_fleet_overview() -> FleetOverview:
         trips_meeting_target=trip_metrics["trips_meeting_target"],
         trips_under_target=trip_metrics["trips_under_target"],
         trip_definition="driver_session_with_stops_over_5_min",
+        raw_device_count=len(raw_devices),
+        scoped_device_count=len(devices),
+        raw_status_count=len(statuses),
+        stale_status_count=stale_status_count,
     )
 
 def get_vehicles() -> list[Vehicle]:
     client = GeotabClient.get()
-    devices = client.get_devices()
+    now = datetime.now(timezone.utc)
+    devices = [dev for dev in client.get_devices() if _is_scoped_fleet_device(dev, now)]
     statuses = client.get_device_status_info()
     status_map = {s.get("device", {}).get("id"): s for s in statuses}
 
@@ -315,22 +396,23 @@ def get_vehicles() -> list[Vehicle]:
     for dev in devices:
         sid = dev.get("id")
         st = status_map.get(sid, {})
+        stale = _is_status_stale(st, now)
         lat = st.get("latitude", 0) or 0
         lon = st.get("longitude", 0) or 0
         vehicles.append(
             Vehicle(
                 id=sid or "",
                 name=dev.get("name", "Unknown"),
-                status=_classify_status(st) if st else VehicleStatus.OFFLINE,
+                status=_classify_status(st) if st and not stale else VehicleStatus.OFFLINE,
                 position=VehiclePosition(
                     latitude=lat,
                     longitude=lon,
                     bearing=st.get("bearing", 0) or 0,
                     speed=st.get("speed", 0) or 0,
                 )
-                if lat and lon
+                if lat and lon and not stale
                 else None,
-                location_name=_nearest_location(lat, lon) if lat and lon else None,
+                location_name=_nearest_location(lat, lon) if lat and lon and not stale else None,
                 last_contact=st.get("dateTime"),
             )
         )

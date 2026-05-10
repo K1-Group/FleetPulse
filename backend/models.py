@@ -65,6 +65,13 @@ class FleetOverview(BaseModel):
     trips_meeting_target: int = 0
     trips_under_target: int = 0
     trip_definition: str = "geotab_trip_segment"
+    source_authority: str = "Geotab"
+    source_mode: str = "live_filtered"
+    raw_device_count: int = 0
+    scoped_device_count: int = 0
+    raw_status_count: int = 0
+    stale_status_count: int = 0
+    device_scope: str = "active_lifecycle_group_vehicle"
 
 
 class LocationStats(BaseModel):

@@ -95,6 +95,20 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514
 For production, store API keys in Azure Key Vault/App Settings. Do not commit
 provider keys into `.env` files.
 
+#### Live Fleet Data Scope
+```env
+# Count active Geotab power units, not inactive historical devices or trailers.
+FLEETPULSE_DEVICE_GROUP_IDS=GroupVehicleId
+FLEETPULSE_EXCLUDED_DEVICE_GROUP_IDS=GroupTrailerId
+FLEETPULSE_REQUIRE_ACTIVE_LIFECYCLE=true
+FLEETPULSE_STATUS_STALE_HOURS=24
+FLEETPULSE_SAFETY_DEMO_MODE=false
+```
+
+The dashboard response includes source metadata such as `raw_device_count`,
+`scoped_device_count`, and `stale_status_count` so operators can tell whether a
+KPI is live and business-scoped.
+
 ### Backend
 ```bash
 # Create virtual environment
