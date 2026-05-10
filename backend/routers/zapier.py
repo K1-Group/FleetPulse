@@ -23,6 +23,14 @@ from services.safety_service import get_safety_scores
 
 router = APIRouter()
 
+SIGNATURE_ALGORITHM = "hmac-sha256-canonical-json-v1"
+SIGNATURE_FIELDS = {"payload_signature", "signature_algorithm"}
+
+
+class ZapierVerifyRequest(BaseModel):
+    payload: dict[str, Any]
+    signature: str | None = None
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -156,12 +164,36 @@ def _signature(body: str) -> str | None:
     return f"sha256={digest}"
 
 
+def _canonical_payload_body(payload: dict[str, Any]) -> str:
+    unsigned_payload = {key: value for key, value in payload.items() if key not in SIGNATURE_FIELDS}
+    return json.dumps(unsigned_payload, sort_keys=True, separators=(",", ":"))
+
+
+def _attach_payload_signature(payload: dict[str, Any]) -> dict[str, Any]:
+    signed_payload = dict(payload)
+    body = _canonical_payload_body(signed_payload)
+    signature = _signature(body)
+    if signature:
+        signed_payload["signature_algorithm"] = SIGNATURE_ALGORITHM
+        signed_payload["payload_signature"] = signature
+    return signed_payload
+
+
+def _verify_payload_signature(payload: dict[str, Any], signature: str | None = None) -> bool:
+    expected = _signature(_canonical_payload_body(payload))
+    provided = signature or payload.get("payload_signature")
+    if not expected or not isinstance(provided, str):
+        return False
+    return hmac.compare_digest(provided, expected)
+
+
 async def _post_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     webhook_url = os.getenv("FLEETPULSE_ZAPIER_WEBHOOK_URL")
     if not webhook_url:
         raise HTTPException(status_code=409, detail="zapier_webhook_not_configured")
 
-    body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    signed_payload = _attach_payload_signature(payload)
+    body = json.dumps(signed_payload, sort_keys=True, separators=(",", ":"))
     headers = {"Content-Type": "application/json"}
     signature = _signature(body)
     if signature:
@@ -182,7 +214,7 @@ async def _post_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "sent",
         "zapier_status_code": response.status_code,
-        "payload_id": payload.get("id"),
+        "payload_id": signed_payload.get("id"),
     }
 
 
@@ -200,6 +232,7 @@ async def zapier_status() -> dict[str, Any]:
             "poll_snapshot": "/api/zapier/triggers/fleet-snapshot",
             "poll_risk_vehicles": "/api/zapier/triggers/risk-vehicles",
             "push_snapshot": "/api/zapier/actions/push-snapshot",
+            "verify_snapshot": "/api/zapier/actions/verify-snapshot",
         },
     }
 
@@ -233,3 +266,19 @@ async def push_snapshot_action(
     _require_api_key(x_fleetpulse_zapier_key, x_api_key)
     payload = _build_snapshot(days)
     return await _post_webhook(payload)
+
+
+@router.post("/actions/verify-snapshot")
+async def verify_snapshot_action(request: ZapierVerifyRequest) -> dict[str, Any]:
+    """Verify a pushed FleetPulse Catch Hook payload without exposing the signing secret."""
+    valid = _verify_payload_signature(request.payload, request.signature)
+    return {
+        "status": "ok" if valid else "invalid",
+        "valid": valid,
+        "source_system": request.payload.get("source_system"),
+        "source_authority": request.payload.get("source_authority"),
+        "projection_mode": request.payload.get("projection_mode"),
+        "event_type": request.payload.get("event_type"),
+        "payload_id": request.payload.get("id"),
+        "signature_algorithm": request.payload.get("signature_algorithm"),
+    }

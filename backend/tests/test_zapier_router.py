@@ -189,3 +189,69 @@ def test_push_snapshot_sends_to_configured_webhook(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "sent"
     assert sent[0]["event_type"] == "fleetpulse.snapshot"
+
+
+def test_payload_signature_validates_and_rejects_tampering(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ZAPIER_SHARED_SECRET", "signing-secret")
+    payload = {
+        "id": "fleetpulse-snapshot-test",
+        "event_type": "fleetpulse.snapshot",
+        "source_system": "FleetPulse",
+        "source_authority": "Geotab",
+        "projection_mode": "read_only",
+    }
+
+    signed = zapier._attach_payload_signature(payload)
+
+    assert signed["signature_algorithm"] == zapier.SIGNATURE_ALGORITHM
+    assert signed["payload_signature"].startswith("sha256=")
+    assert zapier._verify_payload_signature(signed)
+    assert "payload_signature" not in payload
+
+    tampered = {**signed, "source_authority": "Manual"}
+    assert not zapier._verify_payload_signature(tampered)
+
+
+def test_verify_snapshot_action_returns_valid_for_signed_payload(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ZAPIER_SHARED_SECRET", "signing-secret")
+    payload = zapier._attach_payload_signature(
+        {
+            "id": "fleetpulse-snapshot-test",
+            "event_type": "fleetpulse.snapshot",
+            "source_system": "FleetPulse",
+            "source_authority": "Geotab",
+            "projection_mode": "read_only",
+        }
+    )
+
+    response = _client(monkeypatch).post(
+        "/api/zapier/actions/verify-snapshot",
+        json={"payload": payload},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    assert result["status"] == "ok"
+    assert result["payload_id"] == "fleetpulse-snapshot-test"
+
+
+def test_verify_snapshot_action_rejects_unsigned_payload(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ZAPIER_SHARED_SECRET", "signing-secret")
+
+    response = _client(monkeypatch).post(
+        "/api/zapier/actions/verify-snapshot",
+        json={
+            "payload": {
+                "id": "fleetpulse-snapshot-test",
+                "event_type": "fleetpulse.snapshot",
+                "source_system": "FleetPulse",
+                "source_authority": "Geotab",
+                "projection_mode": "read_only",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert response.json()["status"] == "invalid"
