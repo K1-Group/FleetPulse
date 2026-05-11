@@ -33,7 +33,7 @@ def _float_env(name: str, default: float) -> float:
 # Thread pool for timeout-wrapping blocking Geotab calls. Keep this bounded so
 # slow upstream calls cannot consume unbounded App Service threads.
 _executor = concurrent.futures.ThreadPoolExecutor(
-    max_workers=max(1, _int_env("FLEETPULSE_GEOTAB_MAX_WORKERS", 12))
+    max_workers=max(1, _int_env("FLEETPULSE_GEOTAB_MAX_WORKERS", 4))
 )
 
 # Try loading creds from the openclaw env file, fall back to project .env

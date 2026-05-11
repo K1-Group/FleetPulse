@@ -69,4 +69,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
 WORKDIR /app/backend
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+# Basic B1 App Service is memory-constrained; keep one process and use bounded
+# Geotab worker threads for upstream concurrency.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
