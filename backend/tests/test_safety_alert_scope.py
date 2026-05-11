@@ -91,6 +91,11 @@ class ScopedGeotabClient:
                 "rule": {"name": "Posted Speeding"},
                 "activeFrom": datetime(2026, 5, 10, 12, tzinfo=timezone.utc),
             },
+            {
+                "device": {"id": "truck-b"},
+                "rule": {"name": ""},
+                "activeFrom": datetime(2026, 5, 10, 12, tzinfo=timezone.utc),
+            },
         ]
 
 
@@ -112,3 +117,4 @@ def test_recent_alerts_use_operational_fleet_scope(monkeypatch):
 
     assert [alert.vehicle_id for alert in alerts] == ["truck-a"]
     assert alerts[0].vehicle_name == "Truck A"
+    assert alerts[0].alert_type == "Posted Speeding"

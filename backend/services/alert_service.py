@@ -63,6 +63,8 @@ def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | N
     if dev_id not in devices:
         return None
     rule_name = event.get("rule", {}).get("name", "")
+    if not str(rule_name).strip():
+        return None
     ts = event.get("activeFrom") or event.get("dateTime") or datetime.now(timezone.utc)
 
     # Determine severity from rule name
