@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -118,3 +120,34 @@ def test_openrouter_env_key_initializes_on_import(monkeypatch):
     assert ai_chat._is_ai_enabled() is True
     assert ai_chat._get_provider() == "openrouter"
     assert captured["model"] == "anthropic/claude-sonnet-4"
+
+
+def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    class FakeOverview:
+        def model_dump(self, **_kwargs):
+            return {
+                "total_vehicles": 45,
+                "raw_device_count": 759,
+                "scoped_device_count": 45,
+                "source_authority": "Geotab",
+            }
+
+    class FakeSafety:
+        def model_dump(self, **_kwargs):
+            return {"vehicle_id": "truck-1", "vehicle_name": "Truck 1", "score": 100}
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: FakeOverview())
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [FakeSafety()])
+
+    context = asyncio.run(ai_chat._fetch_fleet_context())
+    parsed = json.loads(context)
+
+    assert parsed["fleet_overview"]["total_vehicles"] == 45
+    assert parsed["fleet_overview"]["raw_device_count"] == 759
+    assert parsed["safety_scores"][0]["vehicle_id"] == "truck-1"
+    assert "V018" not in context
+    assert "Fort Worth" not in context
+    assert "180" not in context

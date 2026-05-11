@@ -188,56 +188,66 @@ def _get_provider_display_name() -> str:
         return "Demo Mode"
 
 
+def _to_jsonable(value: Any) -> Any:
+    """Convert Pydantic/domain objects into prompt-safe JSON values."""
+
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_jsonable(item) for key, item in value.items()}
+    return value
+
+
+def _ai_unavailable_response() -> ChatResponse:
+    """Return a truthful non-AI response without demo fleet facts."""
+
+    return ChatResponse(
+        response=(
+            "AI is not currently available. The live FleetPulse dashboard remains the "
+            "source of truth for vehicle counts, safety scores, alerts, and trip metrics."
+        ),
+        confidence=0.0,
+        model="ai-unavailable",
+        is_ai_powered=False,
+    )
+
+
 async def _fetch_fleet_context() -> str:
     """Fetch current fleet data to provide context to Claude."""
+    # Import here to avoid circular imports
+    from services.fleet_service import get_fleet_overview
+    from services.alert_service import get_recent_alerts
+    from services.safety_service import get_safety_scores
+
+    context: dict[str, Any] = {
+        "source_authority": "Geotab",
+        "data_policy": (
+            "Use only the values in this JSON. Do not infer, invent, or use "
+            "sample/demo fleet values when a field is unavailable."
+        ),
+    }
+
     try:
-        # Import here to avoid circular imports
-        from services.fleet_service import get_fleet_overview
-        from services.alert_service import get_recent_alerts
-        from services.safety_service import get_safety_scores
-        
-        # Fetch current data (with fallback to mock data)
-        try:
-            fleet_overview = get_fleet_overview()
-            alerts = get_recent_alerts()
-            safety_scores = get_safety_scores()
-        except:
-            # Fallback to mock data if services aren't available
-            fleet_overview = {
-                "total_vehicles": 50,
-                "active_vehicles": 42,
-                "idle_vehicles": 8,
-                "avg_utilization": 74,
-                "fuel_efficiency": 8.2
-            }
-            alerts = [
-                {"type": "maintenance", "priority": "high", "message": "Vehicle V023 needs brake service in 3 days"},
-                {"type": "idle", "priority": "medium", "message": "8 vehicles idle > 2 hours at Fort Worth"},
-                {"type": "safety", "priority": "low", "message": "New driver training module available"}
-            ]
-            safety_scores = FLEET_DATA["safety_scores"]
-        
-        context = f"""CURRENT FLEET STATUS:
-Fleet Overview: {fleet_overview}
+        context["fleet_overview"] = _to_jsonable(get_fleet_overview())
+    except Exception as exc:
+        context["fleet_overview_error"] = type(exc).__name__
 
-Active Alerts: {alerts}
+    try:
+        context["active_alerts"] = _to_jsonable(get_recent_alerts())[:20]
+    except Exception as exc:
+        context["active_alerts_error"] = type(exc).__name__
 
-Safety Scores by Location: {safety_scores}
+    try:
+        context["safety_scores"] = _to_jsonable(get_safety_scores())[:20]
+    except Exception as exc:
+        context["safety_scores_error"] = type(exc).__name__
 
-Recent Performance Data:
-- Idle Time Analysis: {FLEET_DATA['idle_analysis'][:3]}  
-- Fuel Efficiency: {FLEET_DATA['fuel_efficiency'][-3:]}
-- Maintenance Predictions: {FLEET_DATA['maintenance_predictions']}
-"""
-        
-        return context
-        
-    except Exception as e:
-        print(f"Error fetching fleet context: {e}")
-        return "Fleet data temporarily unavailable."
+    return json.dumps(context, default=str)
 
 
-CLAUDE_SYSTEM_PROMPT = """You are FleetPulse AI, an advanced fleet management intelligence assistant for K1 Logistics. You help fleet managers optimize operations across 4 locations with 50+ vehicles.
+CLAUDE_SYSTEM_PROMPT = """You are FleetPulse AI, an advanced fleet management intelligence assistant for K1 Logistics.
 
 ABOUT FLEETPULSE:
 FleetPulse is a GeoTab-powered fleet management platform that provides real-time analytics for:
@@ -256,6 +266,8 @@ YOUR ROLE:
 - Provide specific recommendations with estimated ROI
 - Explain complex fleet metrics in simple terms
 - Suggest optimizations based on data patterns
+- Never invent fleet metrics, vehicle IDs, costs, maintenance predictions, or location facts.
+- If a value is unavailable in the supplied current fleet data, say it is unavailable instead of using demo/sample data.
 
 RESPONSE FORMAT:
 Always provide:
@@ -713,12 +725,8 @@ Please analyze this question in the context of the current fleet data and provid
                 insights.append(line.lstrip('•-* ').lstrip('0123456789. '))
         
         # If AI suggested a specific visualization, try to provide relevant data
-        if chart_type and any(keyword in message.lower() for keyword in ['safety', 'score']):
-            data = [{"location": loc["location"], "score": loc["score"], "color": "#10b981" if loc["score"] >= 90 else "#f59e0b" if loc["score"] >= 85 else "#ef4444"} for loc in FLEET_DATA["safety_scores"]]
-        elif chart_type and "idle" in message.lower():
-            data = [{"location": loc["location"], "minutes": loc["avg_idle_minutes"], "color": "#ef4444" if loc["avg_idle_minutes"] > 120 else "#f59e0b" if loc["avg_idle_minutes"] > 60 else "#10b981"} for loc in FLEET_DATA["idle_analysis"]]
-        elif chart_type and "fuel" in message.lower():
-            data = [{"day": day["date"][-5:], "efficiency": day["efficiency"]} for day in FLEET_DATA["fuel_efficiency"]]
+        # Do not attach sample chart payloads. The model response should only
+        # describe values that were present in the live context above.
         
         return ChatResponse(
             response=response_text,
@@ -732,8 +740,7 @@ Please analyze this question in the context of the current fleet data and provid
         
     except Exception as e:
         print(f"{provider} API error: {e}")
-        # Fall back to pattern matching
-        return await _process_fallback_query(message)
+        return _ai_unavailable_response()
 
 
 async def _process_fallback_query(message: str) -> ChatResponse:
@@ -774,7 +781,7 @@ async def process_chat_query(chat_message: ChatMessage):
                 chat_message.conversation_history or []
             )
         else:
-            return await _process_fallback_query(chat_message.message)
+            return _ai_unavailable_response()
         
     except Exception as e:
         print(f"Error in chat processing: {e}")
@@ -801,8 +808,7 @@ async def process_chat_stream(chat_message: ChatMessage):
     async def stream_response():
         _ensure_env_initialized()
         if not _is_ai_enabled():
-            # For non-AI responses, just yield the complete response
-            response = await _process_fallback_query(chat_message.message)
+            response = _ai_unavailable_response()
             yield f"data: {json.dumps(response.dict())}\n\n"
             return
         
@@ -888,13 +894,8 @@ Please analyze this question in the context of the current fleet data and provid
                     line.startswith('*') or re.match(r'^\d+\.', line)):
                     insights.append(line.lstrip('•-* ').lstrip('0123456789. '))
             
-            # Provide relevant data for charts
-            if chart_type and "safety" in chat_message.message.lower():
-                data = [{"location": loc["location"], "score": loc["score"], "color": "#10b981" if loc["score"] >= 90 else "#f59e0b" if loc["score"] >= 85 else "#ef4444"} for loc in FLEET_DATA["safety_scores"]]
-            elif chart_type and "idle" in chat_message.message.lower():
-                data = [{"location": loc["location"], "minutes": loc["avg_idle_minutes"], "color": "#ef4444" if loc["avg_idle_minutes"] > 120 else "#f59e0b" if loc["avg_idle_minutes"] > 60 else "#10b981"} for loc in FLEET_DATA["idle_analysis"]]
-            elif chart_type and "fuel" in chat_message.message.lower():
-                data = [{"day": day["date"][-5:], "efficiency": day["efficiency"]} for day in FLEET_DATA["fuel_efficiency"]]
+            # Do not attach sample chart payloads. The model response should
+            # only describe values present in the live context above.
             
             # Send final metadata
             final_data = {
