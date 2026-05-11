@@ -10,6 +10,14 @@ export async function registerServiceWorker(): Promise<void> {
 
       console.log('FleetPulse: Service worker registered successfully:', registration);
 
+      registration.update().catch((error) => {
+        console.error('FleetPulse: Service worker update check failed:', error);
+      });
+
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+
       // Handle service worker updates
       registration.addEventListener('updatefound', () => {
         const newWorker = registration.installing;
@@ -18,12 +26,8 @@ export async function registerServiceWorker(): Promise<void> {
           
           newWorker.addEventListener('statechange', () => {
             if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              console.log('FleetPulse: New content available, will refresh on next visit');
-              
-              // Optionally show a user notification about the update
-              if (window.confirm('FleetPulse has been updated! Refresh to get the latest features?')) {
-                window.location.reload();
-              }
+              console.log('FleetPulse: New content available, activating now');
+              newWorker.postMessage({ type: 'SKIP_WAITING' });
             }
           });
         }

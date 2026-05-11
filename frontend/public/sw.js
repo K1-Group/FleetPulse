@@ -1,10 +1,8 @@
-const CACHE_NAME = 'fleetpulse-v1.0.0';
+const CACHE_NAME = 'fleetpulse-v1.0.1';
 const OFFLINE_URL = '/offline.html';
 
 // Assets to cache immediately
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/offline.html',
   '/manifest.json',
   '/icon-192.png',
@@ -27,6 +25,13 @@ self.addEventListener('install', (event) => {
         return self.skipWaiting();
       })
   );
+});
+
+// Allow the app to activate a freshly installed worker immediately.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 // Activate event - clean up old caches
@@ -61,28 +66,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API calls - Network First strategy
+  // API calls must stay live; do not serve stale telemetry or AI config.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Clone the response before caching
-          const responseClone = response.clone();
-          
-          // Cache successful API responses
-          if (response.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-          }
-          
-          return response;
-        })
-        .catch(() => {
-          // Fallback to cache if network fails
-          return caches.match(request);
-        })
-    );
+    event.respondWith(fetch(request));
     return;
   }
 
@@ -129,27 +115,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Cache successful page responses
-          if (response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-          }
-          
           return response;
         })
         .catch(() => {
-          // Try cached version first
-          return caches.match(request)
-            .then((cachedResponse) => {
-              if (cachedResponse) {
-                return cachedResponse;
-              }
-              
-              // Fallback to offline page
-              return caches.match(OFFLINE_URL);
-            });
+          return caches.match(OFFLINE_URL);
         })
     );
     return;
