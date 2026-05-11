@@ -151,3 +151,23 @@ def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
     assert "V018" not in context
     assert "Fort Worth" not in context
     assert "180" not in context
+
+
+def test_ai_system_prompt_does_not_embed_demo_locations(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    assert "Fort Worth" not in ai_chat.CLAUDE_SYSTEM_PROMPT
+    assert "OKC" not in ai_chat.CLAUDE_SYSTEM_PROMPT
+    assert "static dataset" not in ai_chat.CLAUDE_SYSTEM_PROMPT.lower()
+    assert "demo data" in ai_chat.CLAUDE_SYSTEM_PROMPT.lower()
+
+
+def test_current_message_frames_context_as_live_not_static(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    prompt = ai_chat._build_current_message('{"total_vehicles": 45}', "refresh data")
+
+    assert "CURRENT LIVE FLEETPULSE CONTEXT" in prompt
+    assert "fetched for this request" in prompt
+    assert "It is not static, sample, or demo data" in prompt
+    assert "USER QUESTION: refresh data" in prompt

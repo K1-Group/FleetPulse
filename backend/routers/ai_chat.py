@@ -174,7 +174,7 @@ def _get_model_name() -> str:
     elif provider == "openrouter":
         return _get_openrouter_model()
     else:
-        return "pattern-matching"
+        return "ai-unavailable"
 
 
 def _get_provider_display_name() -> str:
@@ -185,7 +185,7 @@ def _get_provider_display_name() -> str:
     elif provider == "openrouter":
         return "OpenRouter (Claude Max/Pro)"
     else:
-        return "Demo Mode"
+        return "AI unavailable"
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -215,7 +215,7 @@ def _ai_unavailable_response() -> ChatResponse:
 
 
 async def _fetch_fleet_context() -> str:
-    """Fetch current fleet data to provide context to Claude."""
+    """Fetch current fleet data to provide model context."""
     # Import here to avoid circular imports
     from services.fleet_service import get_fleet_overview
     from services.alert_service import get_recent_alerts
@@ -253,28 +253,28 @@ ABOUT FLEETPULSE:
 FleetPulse is a GeoTab-powered fleet management platform that provides real-time analytics for:
 - Vehicle tracking and utilization
 - Safety scoring and incident management  
-- Fuel efficiency monitoring
-- Predictive maintenance
-- Route optimization
+- Fuel and route metrics when present in the supplied context
+- Maintenance and diagnostics when present in the supplied context
 - Driver behavior analysis
-- Cost optimization recommendations
+- Cost optimization only when the supplied data supports it
 
 YOUR ROLE:
-- Analyze fleet data and provide actionable insights
-- Answer questions about vehicle performance, safety, maintenance, and costs
-- Generate charts and visualizations (specify chart_type: bar, line, pie)
-- Provide specific recommendations with estimated ROI
+- Analyze the current FleetPulse context supplied with each request
+- Answer questions about vehicle performance, safety, utilization, alerts, and trips
+- Generate charts and visualizations when the supplied context contains enough data
+- Provide specific recommendations grounded in the supplied context
 - Explain complex fleet metrics in simple terms
-- Suggest optimizations based on data patterns
 - Never invent fleet metrics, vehicle IDs, costs, maintenance predictions, or location facts.
 - If a value is unavailable in the supplied current fleet data, say it is unavailable instead of using demo/sample data.
+- Do not describe the supplied FleetPulse context as a static dataset, sample data, or demo data.
+- If the user asks to refresh data, explain that this response uses the latest available FleetPulse context fetched for the current request.
 
 RESPONSE FORMAT:
 Always provide:
 1. Direct answer to the question
 2. Supporting data (if relevant) 
 3. Actionable insights or recommendations
-4. Potential cost impact/savings
+4. Potential cost impact/savings only when supported by the supplied context
 
 For visualizations, structure your response with:
 - response: Main answer text
@@ -282,17 +282,22 @@ For visualizations, structure your response with:
 - chart_type: "bar", "line", or "pie"  
 - insights: Array of key takeaways
 
-FLEET LOCATIONS:
-1. Fort Worth - Main hub, highest safety scores
-2. Fort Worth - Efficient operations, good maintenance compliance
-3. Justin TX - Airport location, high utilization
-4. Kansas City - Residential area, moderate traffic
-5. OKC - Business district, peak 9-5 demand
-6. Justin TX - Tourism area, 24/7 operations
-7. Fort Worth - High idle times, needs optimization
-8. OKC - Growing market, infrastructure challenges
-
 Be data-driven, specific, and focus on operational improvements that save money or improve safety."""
+
+
+def _build_current_message(fleet_context: str, message: str) -> str:
+    """Build a prompt chunk that clearly frames FleetPulse data as live context."""
+
+    return f"""CURRENT LIVE FLEETPULSE CONTEXT:
+The JSON below was fetched for this request from Geotab-backed FleetPulse services.
+It is not static, sample, or demo data. Use only these values.
+
+{fleet_context}
+
+USER QUESTION: {message}
+
+Analyze the question using the current FleetPulse context. If a requested metric is
+not in the context, say it is unavailable instead of guessing."""
 
 
 class ChatMessage(BaseModel):
@@ -329,323 +334,8 @@ class ConfigResponse(BaseModel):
     ai_enabled: bool
     model: Optional[str] = None
     provider: ProviderType = "demo"
-    provider_name: str = "Demo Mode"
+    provider_name: str = "AI unavailable"
 
-
-# Mock fleet data for intelligent responses
-FLEET_DATA = {
-    "safety_scores": [
-        {"location": "Fort Worth", "score": 94, "incidents": 1, "trend": "improving"},
-        {"location": "Fort Worth", "score": 93, "incidents": 1, "trend": "stable"},
-        {"location": "Justin TX", "score": 92, "incidents": 2, "trend": "stable"},
-        {"location": "Kansas City", "score": 91, "incidents": 2, "trend": "improving"},
-        {"location": "OKC", "score": 89, "incidents": 3, "trend": "declining"},
-        {"location": "Justin TX", "score": 88, "incidents": 4, "trend": "stable"},
-        {"location": "Fort Worth", "score": 87, "incidents": 4, "trend": "concerning"},
-        {"location": "OKC", "score": 85, "incidents": 5, "trend": "needs_attention"},
-    ],
-    "idle_analysis": [
-        {"location": "Fort Worth", "avg_idle_minutes": 180, "vehicles_affected": 8, "cost_impact": 2400},
-        {"location": "OKC", "avg_idle_minutes": 165, "vehicles_affected": 6, "cost_impact": 1980},
-        {"location": "Justin TX", "avg_idle_minutes": 120, "vehicles_affected": 9, "cost_impact": 1620},
-        {"location": "OKC", "avg_idle_minutes": 95, "vehicles_affected": 7, "cost_impact": 950},
-        {"location": "Justin TX", "avg_idle_minutes": 75, "vehicles_affected": 5, "cost_impact": 750},
-        {"location": "Kansas City", "avg_idle_minutes": 65, "vehicles_affected": 4, "cost_impact": 520},
-        {"location": "Fort Worth", "avg_idle_minutes": 45, "vehicles_affected": 3, "cost_impact": 360},
-        {"location": "Fort Worth", "avg_idle_minutes": 35, "vehicles_affected": 2, "cost_impact": 280},
-    ],
-    "fuel_efficiency": [
-        {"date": "2024-02-05", "efficiency": 8.2, "cost_per_100km": 12.30},
-        {"date": "2024-02-06", "efficiency": 7.8, "cost_per_100km": 11.70},
-        {"date": "2024-02-07", "efficiency": 8.5, "cost_per_100km": 12.75},
-        {"date": "2024-02-08", "efficiency": 8.1, "cost_per_100km": 12.15},
-        {"date": "2024-02-09", "efficiency": 7.9, "cost_per_100km": 11.85},
-        {"date": "2024-02-10", "efficiency": 8.3, "cost_per_100km": 12.45},
-        {"date": "2024-02-11", "efficiency": 8.6, "cost_per_100km": 12.90},
-    ],
-    "maintenance_predictions": [
-        {"vehicle_id": "V023", "type": "brake_pads", "days_until_service": 5, "confidence": 0.92, "cost_estimate": 280},
-        {"vehicle_id": "V045", "type": "oil_change", "days_until_service": 2, "confidence": 0.98, "cost_estimate": 65},
-        {"vehicle_id": "V031", "type": "tire_rotation", "days_until_service": 12, "confidence": 0.87, "cost_estimate": 120},
-        {"vehicle_id": "V018", "type": "transmission", "days_until_service": 15, "confidence": 0.74, "cost_estimate": 850},
-    ],
-    "utilization_patterns": [
-        {"hour": "06:00", "utilization": 24, "demand": "low", "cost_per_hour": 45},
-        {"hour": "08:00", "utilization": 56, "demand": "medium", "cost_per_hour": 78},
-        {"hour": "10:00", "utilization": 70, "demand": "medium", "cost_per_hour": 95},
-        {"hour": "12:00", "utilization": 84, "demand": "high", "cost_per_hour": 125},
-        {"hour": "14:00", "utilization": 76, "demand": "high", "cost_per_hour": 110},
-        {"hour": "16:00", "utilization": 90, "demand": "peak", "cost_per_hour": 145},
-        {"hour": "18:00", "utilization": 64, "demand": "medium", "cost_per_hour": 85},
-        {"hour": "20:00", "utilization": 36, "demand": "low", "cost_per_hour": 55},
-    ]
-}
-
-# Advanced pattern matching for natural language queries
-QUERY_PATTERNS = [
-    {
-        "patterns": [r"safety|safest|dangerous|accident|incident|score", r"location|where|which"],
-        "handler": "safety_analysis",
-        "confidence": 0.95
-    },
-    {
-        "patterns": [r"idle|idling|waste|stationary|parked"],
-        "handler": "idle_analysis", 
-        "confidence": 0.92
-    },
-    {
-        "patterns": [r"fuel|gas|efficiency|consumption|mpg|cost"],
-        "handler": "fuel_analysis",
-        "confidence": 0.90
-    },
-    {
-        "patterns": [r"maintenance|repair|service|predict|due"],
-        "handler": "maintenance_predictions",
-        "confidence": 0.93
-    },
-    {
-        "patterns": [r"utilization|busy|active|peak|usage|demand"],
-        "handler": "utilization_analysis",
-        "confidence": 0.88
-    },
-    {
-        "patterns": [r"recommend|suggest|optimize|save|cost.?saving"],
-        "handler": "cost_optimization",
-        "confidence": 0.91
-    },
-    {
-        "patterns": [r"vehicle.*\d+|specific.*vehicle|vehicle.*#"],
-        "handler": "vehicle_specific",
-        "confidence": 0.85
-    }
-]
-
-
-def analyze_query(message: str) -> tuple[str, float]:
-    """Analyze user query and determine the best handler."""
-    message_lower = message.lower()
-    
-    best_handler = "general"
-    best_confidence = 0.3
-    
-    for pattern_group in QUERY_PATTERNS:
-        matches = 0
-        for pattern in pattern_group["patterns"]:
-            if re.search(pattern, message_lower):
-                matches += 1
-        
-        if matches > 0:
-            confidence = pattern_group["confidence"] * (matches / len(pattern_group["patterns"]))
-            if confidence > best_confidence:
-                best_handler = pattern_group["handler"]
-                best_confidence = confidence
-    
-    return best_handler, best_confidence
-
-
-def safety_analysis_handler(message: str) -> ChatResponse:
-    """Handle safety-related queries."""
-    data = FLEET_DATA["safety_scores"]
-    
-    # Sort by score for better insights
-    sorted_data = sorted(data, key=lambda x: x["score"], reverse=True)
-    
-    insights = [
-        f"Best performers: {sorted_data[0]['location']} ({sorted_data[0]['score']}%) and {sorted_data[1]['location']} ({sorted_data[1]['score']}%)",
-        f"Attention needed: {sorted_data[-1]['location']} with {sorted_data[-1]['score']}% - {sorted_data[-1]['incidents']} incidents this month",
-        f"Fleet average safety score: {sum(loc['score'] for loc in data) / len(data):.1f}%"
-    ]
-    
-    # Check for specific location mentions
-    message_lower = message.lower()
-    mentioned_location = None
-    for location_data in data:
-        if location_data["location"].lower().replace(" ", "").replace(".", "") in message_lower.replace(" ", ""):
-            mentioned_location = location_data
-            break
-    
-    if mentioned_location:
-        response = f"Safety analysis for {mentioned_location['location']}: {mentioned_location['score']}% safety score with {mentioned_location['incidents']} incidents. Status: {mentioned_location['trend'].replace('_', ' ')}"
-    else:
-        response = f"Safety score analysis across all {len(data)} locations. Here's the current ranking:"
-    
-    return ChatResponse(
-        response=response,
-        data=[{"location": loc["location"], "score": loc["score"], "color": "#10b981" if loc["score"] >= 90 else "#f59e0b" if loc["score"] >= 85 else "#ef4444"} for loc in sorted_data],
-        chart_type="bar",
-        insights=insights,
-        confidence=0.95
-    )
-
-
-def idle_analysis_handler(message: str) -> ChatResponse:
-    """Handle idle time queries."""
-    data = FLEET_DATA["idle_analysis"]
-    
-    # Check for specific time threshold
-    time_threshold = None
-    time_matches = re.search(r"(\d+)\s*(min|minute|hour)", message.lower())
-    if time_matches:
-        time_threshold = int(time_matches.group(1))
-        if "hour" in time_matches.group(2):
-            time_threshold *= 60
-    
-    if time_threshold:
-        filtered_vehicles = [loc for loc in data if loc["avg_idle_minutes"] > time_threshold]
-        total_affected = sum(loc["vehicles_affected"] for loc in filtered_vehicles)
-        response = f"Found {total_affected} vehicles across {len(filtered_vehicles)} locations with idle time exceeding {time_threshold} minutes:"
-    else:
-        response = "Idle time analysis across all locations. Fort Worth and OKC need immediate attention:"
-    
-    insights = [
-        f"Highest idle time: {data[0]['location']} with {data[0]['avg_idle_minutes']} minutes average",
-        f"Total monthly cost impact: ${sum(loc['cost_impact'] for loc in data):,}",
-        f"Quick win: Focus on {data[0]['location']} - potential ${data[0]['cost_impact']:,}/month savings"
-    ]
-    
-    return ChatResponse(
-        response=response,
-        data=[{"location": loc["location"], "minutes": loc["avg_idle_minutes"], "color": "#ef4444" if loc["avg_idle_minutes"] > 120 else "#f59e0b" if loc["avg_idle_minutes"] > 60 else "#10b981"} for loc in data[:8]],
-        chart_type="bar",
-        insights=insights,
-        confidence=0.92
-    )
-
-
-def fuel_analysis_handler(message: str) -> ChatResponse:
-    """Handle fuel efficiency queries."""
-    data = FLEET_DATA["fuel_efficiency"]
-    
-    avg_efficiency = sum(day["efficiency"] for day in data) / len(data)
-    avg_cost = sum(day["cost_per_100km"] for day in data) / len(data)
-    
-    insights = [
-        f"7-day average efficiency: {avg_efficiency:.1f} L/100km (${avg_cost:.2f}/100km)",
-        f"Best day: {min(data, key=lambda x: x['efficiency'])['date']} with {min(data, key=lambda x: x['efficiency'])['efficiency']} L/100km",
-        f"Trend: {'Improving' if data[-1]['efficiency'] > data[0]['efficiency'] else 'Stable' if abs(data[-1]['efficiency'] - data[0]['efficiency']) < 0.2 else 'Declining'}"
-    ]
-    
-    return ChatResponse(
-        response="Fuel efficiency analysis for the past 7 days:",
-        data=[{"day": day["date"][-5:], "efficiency": day["efficiency"]} for day in data],
-        chart_type="line",
-        insights=insights,
-        confidence=0.90
-    )
-
-
-def maintenance_predictions_handler(message: str) -> ChatResponse:
-    """Handle maintenance prediction queries."""
-    data = FLEET_DATA["maintenance_predictions"]
-    
-    # Sort by urgency
-    sorted_data = sorted(data, key=lambda x: x["days_until_service"])
-    
-    total_cost = sum(item["cost_estimate"] for item in data)
-    urgent_count = len([item for item in data if item["days_until_service"] <= 7])
-    
-    insights = [
-        f"Urgent maintenance needed: {urgent_count} vehicles within 7 days",
-        f"Most urgent: Vehicle {sorted_data[0]['vehicle_id']} - {sorted_data[0]['type']} in {sorted_data[0]['days_until_service']} days",
-        f"Total predicted maintenance cost: ${total_cost:,} over next 30 days"
-    ]
-    
-    return ChatResponse(
-        response=f"Predictive maintenance analysis for {len(data)} vehicles:",
-        data=[{"vehicle": item["vehicle_id"], "type": item["type"], "days": item["days_until_service"], "confidence": item["confidence"] * 100, "color": "#ef4444" if item["days_until_service"] <= 3 else "#f59e0b" if item["days_until_service"] <= 7 else "#10b981"} for item in sorted_data],
-        chart_type="bar",
-        insights=insights,
-        confidence=0.93
-    )
-
-
-def utilization_analysis_handler(message: str) -> ChatResponse:
-    """Handle utilization pattern queries."""
-    data = FLEET_DATA["utilization_patterns"]
-    
-    peak_hour = max(data, key=lambda x: x["utilization"])
-    low_hour = min(data, key=lambda x: x["utilization"])
-    
-    insights = [
-        f"Peak utilization: {peak_hour['utilization']}% at {peak_hour['hour']}",
-        f"Lowest utilization: {low_hour['utilization']}% at {low_hour['hour']} (maintenance window opportunity)",
-        f"Daily revenue potential: ${sum(hour['cost_per_hour'] for hour in data):,} at current rates"
-    ]
-    
-    return ChatResponse(
-        response="Fleet utilization patterns throughout the day:",
-        data=[{"hour": hour["hour"], "rate": hour["utilization"]} for hour in data],
-        chart_type="line",
-        insights=insights,
-        confidence=0.88
-    )
-
-
-def cost_optimization_handler(message: str) -> ChatResponse:
-    """Handle cost optimization and recommendation queries."""
-    recommendations = [
-        {"category": "Route Optimization", "savings": 2400, "color": "#10b981"},
-        {"category": "Idle Reduction", "savings": 1800, "color": "#3b82f6"},
-        {"category": "Maintenance Scheduling", "savings": 1200, "color": "#8b5cf6"},
-        {"category": "Driver Training", "savings": 900, "color": "#f59e0b"},
-        {"category": "Fuel Management", "savings": 600, "color": "#06b6d4"},
-    ]
-    
-    total_savings = sum(rec["savings"] for rec in recommendations)
-    
-    insights = [
-        f"Total monthly savings potential: ${total_savings:,}",
-        f"Top opportunity: {recommendations[0]['category']} - ${recommendations[0]['savings']}/month",
-        f"ROI timeline: 3-6 months payback on optimization investments"
-    ]
-    
-    return ChatResponse(
-        response="AI-generated cost optimization recommendations based on current fleet data:",
-        data=recommendations,
-        chart_type="pie",
-        insights=insights,
-        confidence=0.91
-    )
-
-
-def vehicle_specific_handler(message: str) -> ChatResponse:
-    """Handle vehicle-specific queries."""
-    # Extract vehicle number from message
-    vehicle_match = re.search(r"(?:vehicle|#)\s*(\d+)", message.lower())
-    if vehicle_match:
-        vehicle_num = vehicle_match.group(1)
-        # Generate mock vehicle data
-        vehicle_data = {
-            "id": f"V{vehicle_num.zfill(3)}",
-            "status": "active",
-            "location": "Fort Worth",
-            "idle_time": 120,
-            "fuel_efficiency": 8.4,
-            "safety_score": 87,
-            "last_maintenance": "2024-01-15",
-            "next_service": "2024-02-20"
-        }
-        
-        return ChatResponse(
-            response=f"Vehicle #{vehicle_num} analysis:",
-            data=[vehicle_data],
-            insights=[
-                f"Current status: {vehicle_data['status']} at {vehicle_data['location']}",
-                f"Performance: {vehicle_data['fuel_efficiency']} L/100km, Safety score {vehicle_data['safety_score']}%",
-                f"Service due: {vehicle_data['next_service']}"
-            ],
-            confidence=0.85
-        )
-    
-    return general_handler(message)
-
-
-def general_handler(message: str) -> ChatResponse:
-    """Handle general queries that don't match specific patterns."""
-    return ChatResponse(
-        response="I understand you're asking about fleet operations. I can help you with safety scores, idle time analysis, fuel efficiency, maintenance predictions, utilization patterns, and cost optimization recommendations. Try asking something like 'Which location has the best safety scores?' or 'Show me vehicles with high idle time.'",
-        confidence=0.3
-    )
 
 
 async def _process_ai_query(message: str, conversation_history: List[Dict[str, str]]) -> ChatResponse:
@@ -669,12 +359,7 @@ async def _process_ai_query(message: str, conversation_history: List[Dict[str, s
             messages.append({"role": role, "content": msg.get("content", "")})
         
         # Add current message with fleet context
-        current_message = f"""CURRENT FLEET DATA:
-{fleet_context}
-
-USER QUESTION: {message}
-
-Please analyze this question in the context of the current fleet data and provide insights, recommendations, and any relevant visualizations."""
+        current_message = _build_current_message(fleet_context, message)
 
         messages.append({"role": "user", "content": current_message})
         
@@ -743,33 +428,6 @@ Please analyze this question in the context of the current fleet data and provid
         return _ai_unavailable_response()
 
 
-async def _process_fallback_query(message: str) -> ChatResponse:
-    """Fallback to pattern matching when AI is not available."""
-    handler_name, confidence = analyze_query(message)
-    
-    # Route to appropriate handler
-    handlers = {
-        "safety_analysis": safety_analysis_handler,
-        "idle_analysis": idle_analysis_handler,
-        "fuel_analysis": fuel_analysis_handler,
-        "maintenance_predictions": maintenance_predictions_handler,
-        "utilization_analysis": utilization_analysis_handler,
-        "cost_optimization": cost_optimization_handler,
-        "vehicle_specific": vehicle_specific_handler,
-        "general": general_handler
-    }
-    
-    handler = handlers.get(handler_name, general_handler)
-    response = handler(message)
-    
-    # Override confidence and add fallback indicators
-    response.confidence = confidence
-    response.model = "pattern-matching"
-    response.is_ai_powered = False
-    
-    return response
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def process_chat_query(chat_message: ChatMessage):
     """Process a natural language fleet query with Claude AI or fallback to pattern matching."""
@@ -829,12 +487,7 @@ async def process_chat_stream(chat_message: ChatMessage):
                 role = "user" if msg.get("type") == "user" else "assistant"
                 messages.append({"role": role, "content": msg.get("content", "")})
             
-            current_message = f"""CURRENT FLEET DATA:
-{fleet_context}
-
-USER QUESTION: {chat_message.message}
-
-Please analyze this question in the context of the current fleet data and provide insights, recommendations, and any relevant visualizations."""
+            current_message = _build_current_message(fleet_context, chat_message.message)
 
             messages.append({"role": "user", "content": current_message})
             
@@ -961,71 +614,146 @@ async def get_ai_config():
 
 @router.get("/insights", response_model=List[FleetInsight])
 async def get_ai_insights():
-    """Get current AI-generated fleet insights and recommendations."""
-    insights = [
-        FleetInsight(
-            type="efficiency",
-            priority="high",
-            title="Idle Time Optimization",
-            message="Fort Worth location shows 3x higher idle time than fleet average. Driver coaching program could reduce this by 60%.",
-            impact="$2,400/month savings",
-            action="Schedule Training"
-        ),
-        FleetInsight(
-            type="maintenance",
+    """Get fleet insights derived from live Geotab-backed services."""
+
+    from services.alert_service import get_recent_alerts
+    from services.fleet_service import get_fleet_overview
+    from services.safety_service import get_safety_scores
+
+    insights: list[FleetInsight] = []
+    overview = get_fleet_overview()
+    total = max(overview.total_vehicles, 1)
+    utilization_rate = round((overview.active / total) * 100, 1)
+
+    if overview.offline:
+        priority = "high" if overview.offline / total >= 0.2 else "medium"
+        insights.append(FleetInsight(
+            type="availability",
+            priority=priority,
+            title="Offline Vehicle Review",
+            message=f"{overview.offline} of {overview.total_vehicles} scoped vehicles are offline in the latest Geotab status snapshot.",
+            impact="Capacity risk; verify device connectivity and vehicle availability.",
+            action="Review Offline Vehicles"
+        ))
+
+    if utilization_rate < 20:
+        insights.append(FleetInsight(
+            type="utilization",
             priority="medium",
-            title="Predictive Maintenance Alert",
-            message="Vehicle V023 brake wear patterns indicate service needed in 5-7 days. AI confidence: 92%.",
-            impact="Prevent $850 emergency repair",
-            action="Schedule Service"
-        ),
-        FleetInsight(
-            type="revenue",
-            priority="medium", 
-            title="Peak Hour Optimization",
-            message="Utilization analysis suggests deploying 3 additional vehicles during 4-6PM peak at OKC location.",
-            impact="+$450 daily revenue",
-            action="Adjust Fleet Distribution"
-        ),
-        FleetInsight(
+            title="Low Active Utilization",
+            message=f"{overview.active} of {overview.total_vehicles} scoped vehicles are active now ({utilization_rate}%).",
+            impact="Potential under-utilization; compare against dispatch plan before taking action.",
+            action="Review Dispatch Plan"
+        ))
+
+    alerts = get_recent_alerts()
+    if alerts:
+        top_alert = alerts[0]
+        insights.append(FleetInsight(
+            type="alert",
+            priority=str(top_alert.severity.value),
+            title="Recent Geotab Alert",
+            message=f"{top_alert.alert_type} reported for {top_alert.vehicle_name}.",
+            impact="Operational risk from live Geotab exception data.",
+            action="Open Alert Feed"
+        ))
+
+    safety_scores = get_safety_scores()
+    attention_scores = [score for score in safety_scores if score.event_count > 0 or score.score < 95]
+    if attention_scores:
+        attention_scores.sort(key=lambda score: (score.score, -score.event_count))
+        score = attention_scores[0]
+        insights.append(FleetInsight(
             type="safety",
+            priority="medium" if score.score >= 80 else "high",
+            title="Safety Score Attention",
+            message=f"{score.vehicle_name} has safety score {score.score} with {score.event_count} recent event(s).",
+            impact="Safety coaching opportunity from live Geotab events.",
+            action="Review Safety Detail"
+        ))
+
+    if not insights:
+        insights.append(FleetInsight(
+            type="status",
             priority="low",
-            title="Best Practice Sharing",
-            message="Fort Worth location drivers show 12% better safety performance. Their techniques could be applied fleet-wide.",
-            impact="15% incident reduction",
-            action="Analyze Best Practices"
-        )
-    ]
-    
-    return insights
+            title="No Active Fleet Exceptions",
+            message="No live alerts or safety exceptions were found in the latest FleetPulse context.",
+            impact="Continue monitoring live Geotab-backed dashboard metrics.",
+            action="Monitor Dashboard"
+        ))
+
+    return insights[:4]
 
 
 @router.get("/analytics/summary")
 async def get_analytics_summary():
-    """Get comprehensive fleet analytics summary for AI processing."""
+    """Get comprehensive fleet analytics summary from live services."""
+    from services.alert_service import get_recent_alerts
+    from services.fleet_service import get_fleet_overview
+    from services.safety_service import get_safety_scores
+
+    overview = get_fleet_overview()
+    alerts = get_recent_alerts()
+    safety_scores = get_safety_scores()
+
+    total = max(overview.total_vehicles, 1)
+    utilization_rate = round((overview.active / total) * 100, 1)
+    avg_safety_score = (
+        round(sum(score.score for score in safety_scores) / len(safety_scores), 1)
+        if safety_scores else None
+    )
+    safety_events = sum(score.event_count for score in safety_scores)
+    high_alerts = [
+        alert for alert in alerts
+        if str(alert.severity.value) in {"high", "critical"}
+    ]
+
     return {
+        "source_authority": "Geotab",
+        "source_mode": overview.source_mode,
+        "data_policy": "Live FleetPulse summary only; unavailable values are null, not estimated.",
         "fleet_health": {
-            "overall_score": 87,
-            "safety_trend": "improving",
-            "efficiency_trend": "stable",
-            "utilization_rate": 74,
-            "maintenance_compliance": 92
+            "overall_score": avg_safety_score,
+            "safety_trend": "stable" if safety_scores else "unavailable",
+            "efficiency_trend": "unavailable",
+            "utilization_rate": utilization_rate,
+            "maintenance_compliance": None
         },
         "key_metrics": {
-            "total_vehicles": 50,
-            "active_vehicles": 42,
-            "avg_safety_score": 89.6,
-            "avg_fuel_efficiency": 8.2,
-            "monthly_savings_potential": 6300
+            "total_vehicles": overview.total_vehicles,
+            "active_vehicles": overview.active,
+            "parked_vehicles": overview.parked,
+            "offline_vehicles": overview.offline,
+            "total_trips_today": overview.total_trips_today,
+            "total_stops_today": overview.total_stops_today,
+            "total_distance_miles": overview.total_distance_miles,
+            "avg_safety_score": avg_safety_score,
+            "avg_fuel_efficiency": None,
+            "monthly_savings_potential": None
         },
         "risk_indicators": [
-            {"location": "Fort Worth", "risk": "high", "reason": "excessive_idle_time"},
-            {"location": "OKC", "risk": "medium", "reason": "below_avg_safety"},
-            {"vehicle": "V023", "risk": "medium", "reason": "maintenance_due"}
+            {
+                "type": "offline_vehicles",
+                "risk": "high" if overview.offline / total >= 0.2 else "medium",
+                "count": overview.offline,
+                "reason": "vehicle_status_offline"
+            },
+            {
+                "type": "high_severity_alerts",
+                "risk": "high" if high_alerts else "low",
+                "count": len(high_alerts),
+                "reason": "geotab_exception_events"
+            },
+            {
+                "type": "safety_events",
+                "risk": "medium" if safety_events else "low",
+                "count": safety_events,
+                "reason": "geotab_safety_score_events"
+            }
         ],
         "optimization_opportunities": [
-            {"type": "route", "impact": "high", "savings": 2400},
-            {"type": "idle_reduction", "impact": "high", "savings": 1800}, 
-            {"type": "maintenance_schedule", "impact": "medium", "savings": 1200}
+            {"type": "restore_offline_capacity", "impact": "high" if overview.offline else "low", "savings": None},
+            {"type": "review_low_utilization", "impact": "medium" if utilization_rate < 20 else "low", "savings": None},
+            {"type": "review_safety_events", "impact": "medium" if safety_events else "low", "savings": None}
         ]
     }
