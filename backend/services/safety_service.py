@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import os
+import threading
 import time
 from copy import deepcopy
 from collections import defaultdict
@@ -28,6 +29,7 @@ _CATEGORY_KEYWORDS = {
     "harsh_cornering": ["corner", "turning"],
 }
 _SAFETY_CACHE: dict[str, tuple[float, list[VehicleSafetyScore]]] = {}
+_SAFETY_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _int_env(name: str, default: int) -> int:
@@ -61,6 +63,11 @@ def _cache_set(key: str, scores: list[VehicleSafetyScore]) -> None:
     _SAFETY_CACHE[key] = (time.time(), deepcopy(scores))
 
 
+def _acquire_cache_lock(key: str) -> threading.Lock | None:
+    lock = _SAFETY_LOCKS.setdefault(key, threading.Lock())
+    return lock if lock.acquire(blocking=False) else None
+
+
 def _categorize_event(rule_name: str) -> str | None:
     lower = rule_name.lower()
     for cat, keywords in _CATEGORY_KEYWORDS.items():
@@ -87,7 +94,16 @@ def get_safety_scores(days: int = 7) -> list[VehicleSafetyScore]:
         cached = _cache_get(cache_key, _cache_ttl_seconds())
         if cached is not None:
             return cached
+
+        lock = _acquire_cache_lock(cache_key)
+        if lock is None:
+            fallback = _cache_get(cache_key, _cache_fallback_seconds())
+            return fallback if fallback is not None else []
+
         try:
+            cached = _cache_get(cache_key, _cache_ttl_seconds())
+            if cached is not None:
+                return cached
             scores = _get_geotab_safety_scores(days)
             _cache_set(cache_key, scores)
             return scores
@@ -98,6 +114,8 @@ def get_safety_scores(days: int = 7) -> list[VehicleSafetyScore]:
         except Exception as exc:
             logger.warning("safety_scores_unavailable", extra={"error": str(exc)})
             return []
+        finally:
+            lock.release()
     return _get_demo_safety_scores()
 
 

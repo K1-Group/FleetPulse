@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,7 @@ DEFAULT_RULES: list[AlertRule] = [
 
 _alert_rules = list(DEFAULT_RULES)
 _ALERT_CACHE: dict[str, tuple[float, list[Alert]]] = {}
+_ALERT_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _int_env(name: str, default: int) -> int:
@@ -55,6 +57,11 @@ def _cache_get(key: str, max_age_seconds: int) -> list[Alert] | None:
 
 def _cache_set(key: str, alerts: list[Alert]) -> None:
     _ALERT_CACHE[key] = (time.time(), deepcopy(alerts))
+
+
+def _acquire_cache_lock(key: str) -> threading.Lock | None:
+    lock = _ALERT_LOCKS.setdefault(key, threading.Lock())
+    return lock if lock.acquire(blocking=False) else None
 
 
 def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | None:
@@ -97,14 +104,24 @@ def get_recent_alerts(hours: int = 24) -> list[Alert]:
     if cached is not None:
         return cached
 
+    lock = _acquire_cache_lock(cache_key)
+    if lock is None:
+        fallback = _cache_get(cache_key, _cache_fallback_seconds())
+        return fallback if fallback is not None else []
+
     client = GeotabClient.get()
     try:
+        cached = _cache_get(cache_key, _cache_ttl_seconds())
+        if cached is not None:
+            return cached
         devices = get_scoped_device_map(client.get_devices())
         now = datetime.now(timezone.utc)
         events = client.get_exception_events(now - timedelta(hours=hours), now)
     except TimeoutError:
         fallback = _cache_get(cache_key, _cache_fallback_seconds())
         return fallback if fallback is not None else []
+    finally:
+        lock.release()
 
     alerts: list[Alert] = []
     for e in events:

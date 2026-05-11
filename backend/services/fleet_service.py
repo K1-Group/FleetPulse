@@ -6,6 +6,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import os
+import threading
 import time
 from typing import Any
 
@@ -23,6 +24,7 @@ DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_CACHE_FALLBACK_SECONDS = 300
 
 _CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_LOCKS: dict[str, threading.Lock] = {}
 
 # K1 Logistics / K1 Group locations (FTW, Justin, OKC, Kansas City)
 LOCATIONS = [
@@ -80,6 +82,11 @@ def _cache_get(key: str, max_age_seconds: int) -> Any | None:
 
 def _cache_set(key: str, value: Any) -> None:
     _CACHE[key] = (time.time(), deepcopy(value))
+
+
+def _acquire_cache_lock(key: str) -> threading.Lock | None:
+    lock = _CACHE_LOCKS.setdefault(key, threading.Lock())
+    return lock if lock.acquire(blocking=False) else None
 
 
 def _with_source_mode(overview: FleetOverview, source_mode: str) -> FleetOverview:
@@ -187,10 +194,31 @@ def get_scoped_device_map(
     """Return Geotab device id -> name for the configured K1 operational fleet scope."""
 
     current_time = now or datetime.now(timezone.utc)
-    devices = raw_devices if raw_devices is not None else GeotabClient.get().get_devices()
+    if raw_devices is None:
+        cache_key = "scoped_device_map"
+        cached = _cache_get(cache_key, _cache_ttl_seconds())
+        if cached is not None:
+            return cached
+
+        lock = _acquire_cache_lock(cache_key)
+        if lock is None:
+            fallback = _cache_get(cache_key, _cache_fallback_seconds())
+            return fallback if fallback is not None else {}
+
+        try:
+            cached = _cache_get(cache_key, _cache_ttl_seconds())
+            if cached is not None:
+                return cached
+            raw_devices = GeotabClient.get().get_devices()
+            device_map = get_scoped_device_map(raw_devices, now=current_time)
+            _cache_set(cache_key, device_map)
+            return device_map
+        finally:
+            lock.release()
+
     return {
         str(device["id"]): str(device.get("name") or device["id"])
-        for device in devices
+        for device in raw_devices
         if device.get("id") and _is_scoped_fleet_device(device, current_time)
     }
 
@@ -442,7 +470,20 @@ def get_fleet_overview() -> FleetOverview:
     if cached is not None:
         return _with_source_mode(cached, "cached_live_filtered")
 
+    lock = _acquire_cache_lock("fleet_overview")
+    if lock is None:
+        fallback = _cache_get("fleet_overview", _cache_fallback_seconds())
+        if fallback is not None:
+            return _with_source_mode(fallback, "cached_refresh_in_progress")
+        return FleetOverview(
+            source_mode="geotab_refresh_in_progress",
+            trip_definition="driver_session_with_stops_over_5_min",
+        )
+
     try:
+        cached = _cache_get("fleet_overview", _cache_ttl_seconds())
+        if cached is not None:
+            return _with_source_mode(cached, "cached_live_filtered")
         overview = _build_fleet_overview()
     except TimeoutError:
         fallback = _cache_get("fleet_overview", _cache_fallback_seconds())
@@ -452,6 +493,8 @@ def get_fleet_overview() -> FleetOverview:
             source_mode="geotab_unavailable",
             trip_definition="driver_session_with_stops_over_5_min",
         )
+    finally:
+        lock.release()
 
     _cache_set("fleet_overview", overview)
     return overview
@@ -496,11 +539,21 @@ def get_vehicles() -> list[Vehicle]:
     if cached is not None:
         return cached
 
+    lock = _acquire_cache_lock("vehicles")
+    if lock is None:
+        fallback = _cache_get("vehicles", _cache_fallback_seconds())
+        return fallback if fallback is not None else []
+
     try:
+        cached = _cache_get("vehicles", _cache_ttl_seconds())
+        if cached is not None:
+            return cached
         vehicles = _build_vehicles()
     except TimeoutError:
         fallback = _cache_get("vehicles", _cache_fallback_seconds())
         return fallback if fallback is not None else []
+    finally:
+        lock.release()
 
     _cache_set("vehicles", vehicles)
     return vehicles
