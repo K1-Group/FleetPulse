@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
 import { Eye, EyeOff, Activity, MapPin, Navigation, Layers } from 'lucide-react'
 import L from 'leaflet'
 import type { Vehicle, LocationStats } from '../types/fleet'
@@ -8,6 +8,14 @@ import type { Vehicle, LocationStats } from '../types/fleet'
 interface Props {
   vehicles: Vehicle[] | null
   locations: LocationStats[] | null
+}
+
+interface RouteTrail {
+  vehicleId: string
+  vehicleName: string
+  points: [number, number][]
+  color: string
+  totalPoints: number
 }
 
 const statusColor: Record<string, string> = {
@@ -79,11 +87,50 @@ function locationIcon(locationStats: LocationStats) {
   })
 }
 
+function MapAutoFit({ positions }: { positions: [number, number][] }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (positions.length === 0) return
+
+    if (positions.length === 1) {
+      map.setView(positions[0], Math.max(map.getZoom(), 10), { animate: true })
+      return
+    }
+
+    map.fitBounds(L.latLngBounds(positions), {
+      animate: true,
+      maxZoom: 12,
+      padding: [32, 32]
+    })
+  }, [map, positions])
+
+  return null
+}
+
+const formatLastUpdated = (value: string | null): string => {
+  if (!value) return 'No live contact yet'
+
+  const timestamp = new Date(value)
+  if (Number.isNaN(timestamp.getTime())) return 'Unknown'
+
+  return timestamp.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+}
+
 export default function FleetMap({ vehicles, locations }: Props) {
   const [showVehicles, setShowVehicles] = useState(true)
   const [showLocations, setShowLocations] = useState(true)
   const [showRoutes, setShowRoutes] = useState(false)
+  const [showOffline, setShowOffline] = useState(false)
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null)
+  const [routeTrails, setRouteTrails] = useState<RouteTrail[]>([])
+  const [routesLoading, setRoutesLoading] = useState(false)
+  const [routesError, setRoutesError] = useState<string | null>(null)
 
   // DFW center
   const center: [number, number] = [32.82, -97.00]
@@ -91,26 +138,105 @@ export default function FleetMap({ vehicles, locations }: Props) {
   // Filter vehicles by selected location
   const filteredVehicles = useMemo(() => {
     if (!vehicles) return []
-    if (!selectedLocation) return vehicles
-    return vehicles.filter(v => v.location_name === selectedLocation)
-  }, [vehicles, selectedLocation])
-
-  // Generate mock route for demonstration
-  const mockRoute = useMemo(() => {
-    if (!showRoutes || !vehicles) return []
-    const activeVehicles = vehicles.filter(v => v.status === 'active' && v.position).slice(0, 5)
-    return activeVehicles.map(v => {
-      const basePos = [v.position!.latitude, v.position!.longitude]
-      // Generate a simple route path
-      const route = [
-        [basePos[0] - 0.01, basePos[1] - 0.01],
-        [basePos[0] - 0.005, basePos[1]],
-        basePos,
-        [basePos[0] + 0.005, basePos[1] + 0.005]
-      ] as [number, number][]
-      return { vehicleId: v.id, route, color: statusColor[v.status] }
+    return vehicles.filter(v => {
+      if (!showOffline && v.status === 'offline') return false
+      if (!selectedLocation) return true
+      return v.location_name === selectedLocation
     })
-  }, [vehicles, showRoutes])
+  }, [vehicles, selectedLocation, showOffline])
+
+  const routeVehicles = useMemo(
+    () => filteredVehicles.filter(v => v.status === 'active' && v.position).slice(0, 5),
+    [filteredVehicles]
+  )
+
+  useEffect(() => {
+    if (!showRoutes || routeVehicles.length === 0) {
+      setRouteTrails([])
+      setRoutesLoading(false)
+      setRoutesError(null)
+      return
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+
+    const fetchRoutes = async () => {
+      setRoutesLoading(true)
+      setRoutesError(null)
+
+      try {
+        const trails = await Promise.all(
+          routeVehicles.map(async vehicle => {
+            const toDate = vehicle.last_contact ? new Date(vehicle.last_contact) : new Date()
+            if (Number.isNaN(toDate.getTime())) return null
+
+            const fromDate = new Date(toDate.getTime() - 60 * 60 * 1000)
+            const url = `/api/trips/vehicle/${encodeURIComponent(vehicle.id)}/route?from=${encodeURIComponent(fromDate.toISOString())}&to=${encodeURIComponent(toDate.toISOString())}`
+            const response = await fetch(url, { signal: controller.signal })
+            if (!response.ok) return null
+
+            const payload = await response.json()
+            const points = (payload.points || [])
+              .filter((point: any) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude))
+              .slice(-200)
+              .map((point: any) => [point.latitude, point.longitude] as [number, number])
+
+            if (points.length < 2) return null
+
+            return {
+              vehicleId: vehicle.id,
+              vehicleName: vehicle.name,
+              points,
+              color: statusColor[vehicle.status] || '#10b981',
+              totalPoints: payload.total_points || points.length
+            }
+          })
+        )
+
+        if (!cancelled) {
+          setRouteTrails(trails.filter((trail): trail is RouteTrail => trail !== null))
+        }
+      } catch (error: any) {
+        if (!cancelled && error.name !== 'AbortError') {
+          setRouteTrails([])
+          setRoutesError('Route history unavailable')
+        }
+      } finally {
+        if (!cancelled) setRoutesLoading(false)
+      }
+    }
+
+    fetchRoutes()
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [routeVehicles, showRoutes])
+
+  const visiblePositions = useMemo(() => {
+    const vehiclePositions = showVehicles
+      ? filteredVehicles
+          .filter(v => v.position)
+          .map(v => [v.position!.latitude, v.position!.longitude] as [number, number])
+      : []
+
+    const locationPositions = showLocations && vehiclePositions.length === 0
+      ? (locations || []).map(loc => [loc.latitude, loc.longitude] as [number, number])
+      : []
+
+    return [...vehiclePositions, ...locationPositions]
+  }, [filteredVehicles, locations, showLocations, showVehicles])
+
+  const lastUpdated = useMemo(() => {
+    const timestamps = (vehicles || [])
+      .map(v => v.last_contact ? new Date(v.last_contact).getTime() : NaN)
+      .filter(Number.isFinite)
+
+    if (timestamps.length === 0) return null
+    return new Date(Math.max(...timestamps)).toISOString()
+  }, [vehicles])
 
   // Status summary
   const statusSummary = useMemo(() => {
@@ -134,7 +260,7 @@ export default function FleetMap({ vehicles, locations }: Props) {
             <MapPin className="w-5 h-5 text-blue-400" />
             Live Fleet Map
             <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded-full">
-              Real-time
+              Geotab live
             </span>
           </h2>
           
@@ -150,6 +276,18 @@ export default function FleetMap({ vehicles, locations }: Props) {
             >
               {showVehicles ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
               <span className="hidden sm:inline text-xs">Vehicles</span>
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowOffline(!showOffline)}
+              className={`p-2 rounded-lg transition-colors flex items-center gap-1 ${
+                showOffline ? 'bg-gray-500 text-white' : 'bg-gray-700 text-gray-400'
+              }`}
+            >
+              {showOffline ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+              <span className="hidden sm:inline text-xs">Offline</span>
             </motion.button>
             
             <motion.button
@@ -180,7 +318,7 @@ export default function FleetMap({ vehicles, locations }: Props) {
 
         {/* Status Legend & Location Filter */}
         <div className="flex items-center justify-between">
-          <div className="flex gap-3 text-xs">
+          <div className="flex flex-wrap gap-3 text-xs">
             {Object.entries(statusColor).map(([status, color]) => (
               <motion.span
                 key={status}
@@ -210,6 +348,9 @@ export default function FleetMap({ vehicles, locations }: Props) {
             ))}
           </select>
         </div>
+        <div className="mt-2 text-xs text-gray-400">
+          Last Geotab contact: {formatLastUpdated(lastUpdated)}
+        </div>
       </div>
 
       {/* Map Container */}
@@ -233,6 +374,7 @@ export default function FleetMap({ vehicles, locations }: Props) {
               url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               attribution='&copy; <a href="https://carto.com/">CARTO</a>'
             />
+            <MapAutoFit positions={visiblePositions} />
             
             {/* Location zones and markers */}
             {showLocations && locations?.map(loc => (
@@ -293,10 +435,10 @@ export default function FleetMap({ vehicles, locations }: Props) {
             ))}
 
             {/* Route trails */}
-            {showRoutes && mockRoute.map(({ vehicleId, route, color }) => (
+            {showRoutes && routeTrails.map(({ vehicleId, points, color }) => (
               <Polyline
                 key={vehicleId}
-                positions={route}
+                positions={points}
                 pathOptions={{
                   color,
                   weight: 3,
@@ -309,8 +451,8 @@ export default function FleetMap({ vehicles, locations }: Props) {
         )}
 
         {/* Map overlay info */}
-        <div className="absolute bottom-4 left-4 bg-black/70 dark:bg-black/70 light:bg-white/90 backdrop-blur-sm rounded-lg p-3 text-xs text-white dark:text-white light:text-gray-900 z-20 border border-gray-700 dark:border-gray-700 light:border-gray-200">
-          <div className="flex items-center gap-4">
+        <div className="absolute bottom-4 left-4 bg-black/70 dark:bg-black/70 light:bg-white/90 backdrop-blur-sm rounded-lg p-3 text-xs text-white dark:text-white light:text-gray-900 z-20 border border-gray-700 dark:border-gray-700 light:border-gray-200 max-w-[calc(100%-2rem)]">
+          <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1">
               <Activity className="w-3 h-3 text-emerald-400" />
               <span>{filteredVehicles?.filter(v => v.status === 'active').length || 0} active</span>
@@ -322,6 +464,13 @@ export default function FleetMap({ vehicles, locations }: Props) {
             {selectedLocation && (
               <div className="text-yellow-400">
                 Filtered: {selectedLocation}
+              </div>
+            )}
+            {showRoutes && (
+              <div className={routesError ? 'text-red-300' : 'text-emerald-300'}>
+                {routesLoading
+                  ? 'Loading Geotab routes...'
+                  : routesError || `${routeTrails.length} live route trail${routeTrails.length === 1 ? '' : 's'}`}
               </div>
             )}
           </div>
