@@ -35,6 +35,7 @@ class TimeoutGeotabClient:
 
 
 def test_safety_scores_timeout_returns_empty_live_result(monkeypatch):
+    safety_service._SAFETY_CACHE.clear()
     monkeypatch.setenv("FLEETPULSE_SAFETY_DEMO_MODE", "false")
     monkeypatch.setattr(safety_service.GeotabClient, "get", lambda: TimeoutGeotabClient())
 

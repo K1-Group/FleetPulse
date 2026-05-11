@@ -179,6 +179,22 @@ def _is_scoped_fleet_device(device: dict[str, Any], now: datetime) -> bool:
     return True
 
 
+def get_scoped_device_map(
+    raw_devices: list[dict[str, Any]] | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, str]:
+    """Return Geotab device id -> name for the configured K1 operational fleet scope."""
+
+    current_time = now or datetime.now(timezone.utc)
+    devices = raw_devices if raw_devices is not None else GeotabClient.get().get_devices()
+    return {
+        str(device["id"]): str(device.get("name") or device["id"])
+        for device in devices
+        if device.get("id") and _is_scoped_fleet_device(device, current_time)
+    }
+
+
 def _status_datetime(status: dict[str, Any]) -> datetime | None:
     return _to_utc(status.get("dateTime"))
 
@@ -374,8 +390,9 @@ def _build_fleet_overview() -> FleetOverview:
     client = GeotabClient.get()
     raw_devices = client.get_devices()
     now = datetime.now(timezone.utc)
-    devices = [dev for dev in raw_devices if _is_scoped_fleet_device(dev, now)]
-    scoped_device_ids = {dev.get("id") for dev in devices if dev.get("id")}
+    scoped_device_map = get_scoped_device_map(raw_devices, now=now)
+    devices = [dev for dev in raw_devices if dev.get("id") in scoped_device_map]
+    scoped_device_ids = set(scoped_device_map)
     statuses = client.get_device_status_info()
     status_map = {s.get("device", {}).get("id"): s for s in statuses}
 

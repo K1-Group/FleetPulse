@@ -11,6 +11,7 @@ from typing import Any
 
 from geotab_client import GeotabClient
 from models import Alert, AlertRule, AlertSeverity
+from services.fleet_service import get_scoped_device_map
 
 # ── Default alert rules ────────────────────────────────────────
 DEFAULT_RULES: list[AlertRule] = [
@@ -59,6 +60,8 @@ def _cache_set(key: str, alerts: list[Alert]) -> None:
 def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | None:
     """Convert a Geotab ExceptionEvent into an Alert."""
     dev_id = event.get("device", {}).get("id", "")
+    if dev_id not in devices:
+        return None
     rule_name = event.get("rule", {}).get("name", "")
     ts = event.get("activeFrom") or event.get("dateTime") or datetime.now(timezone.utc)
 
@@ -94,7 +97,7 @@ def get_recent_alerts(hours: int = 24) -> list[Alert]:
 
     client = GeotabClient.get()
     try:
-        devices = {d["id"]: d.get("name", "Unknown") for d in client.get_devices()}
+        devices = get_scoped_device_map(client.get_devices())
         now = datetime.now(timezone.utc)
         events = client.get_exception_events(now - timedelta(hours=hours), now)
     except TimeoutError:

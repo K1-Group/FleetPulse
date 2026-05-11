@@ -13,6 +13,7 @@ from typing import Any
 
 from geotab_client import GeotabClient
 from models import SafetyBreakdown, TrendDirection, VehicleSafetyScore
+from services.fleet_service import get_scoped_device_map
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +113,7 @@ def _use_demo_safety_scores() -> bool:
 def _get_demo_safety_scores() -> list[VehicleSafetyScore]:
     """Return deterministic demo scores only when explicitly enabled."""
     client = GeotabClient.get()
-    devices = client.get_devices()
-    device_map = {d["id"]: d.get("name", "Unknown") for d in devices}
+    device_map = get_scoped_device_map(client.get_devices())
 
     results: list[VehicleSafetyScore] = []
     random.seed(42)
@@ -162,8 +162,7 @@ def _get_demo_safety_scores() -> list[VehicleSafetyScore]:
 
 def _get_geotab_safety_scores(days: int) -> list[VehicleSafetyScore]:
     client = GeotabClient.get()
-    devices = client.get_devices()
-    device_map = {d["id"]: d.get("name", "Unknown") for d in devices}
+    device_map = get_scoped_device_map(client.get_devices())
 
     now = datetime.now(timezone.utc)
     events = client.get_exception_events(now - timedelta(days=days), now)
