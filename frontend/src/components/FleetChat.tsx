@@ -1,7 +1,20 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts'
-import { Send, Bot, User, Settings, Brain, Sparkles } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  Brain,
+  Gauge,
+  Route,
+  Send,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  Truck,
+  User
+} from 'lucide-react'
 import AISettingsModal from './AISettingsModal'
 
 interface Message {
@@ -21,115 +34,20 @@ interface Props {
   onClose: () => void
 }
 
-const responses = {
-  safetyScores: {
-    pattern: /(safety|scores?|safest|dangerous|accident|incident)/i,
-    response: "Based on current safety analytics, here are the safety scores by location:",
-    data: [
-      { location: 'Fort Worth', score: 94, color: '#10b981' },
-      { location: 'Fort Worth', score: 93, color: '#10b981' },
-      { location: 'Justin TX', score: 92, color: '#10b981' },
-      { location: 'Kansas City', score: 91, color: '#10b981' },
-      { location: 'OKC', score: 89, color: '#f59e0b' },
-      { location: 'Justin TX', score: 88, color: '#f59e0b' },
-      { location: 'Fort Worth', score: 87, color: '#f59e0b' },
-      { location: 'OKC', score: 85, color: '#ef4444' }
-    ],
-    chart: 'bar' as const,
-    insight: "Fort Worth and Fort Worth lead with 94% and 93% safety scores. OKC needs attention with 85% - recommend driver coaching program."
-  },
-  
-  idleTime: {
-    pattern: /(idle|idling|waste|wasted|stationary|parked)/i,
-    response: "Here's the idle time analysis across locations:",
-    data: [
-      { location: 'Fort Worth', minutes: 180, color: '#ef4444' },
-      { location: 'OKC', minutes: 165, color: '#ef4444' },
-      { location: 'Justin TX', minutes: 120, color: '#f59e0b' },
-      { location: 'OKC', minutes: 95, color: '#f59e0b' },
-      { location: 'Justin TX', minutes: 75, color: '#10b981' },
-      { location: 'Kansas City', minutes: 65, color: '#10b981' },
-      { location: 'Fort Worth', minutes: 45, color: '#10b981' },
-      { location: 'Fort Worth', minutes: 35, color: '#10b981' }
-    ],
-    chart: 'bar' as const,
-    insight: "Fort Worth has 3x more idle time than fleet average (60min). Vehicle #42 has been stationary for 6 hours outside its zone - dispatching maintenance check."
-  },
-
-  fuelEfficiency: {
-    pattern: /(fuel|gas|efficiency|consumption|cost|mpg)/i,
-    response: "Fuel efficiency trends over the last 7 days:",
-    data: [
-      { day: 'Mon', efficiency: 8.2 },
-      { day: 'Tue', efficiency: 7.8 },
-      { day: 'Wed', efficiency: 8.5 },
-      { day: 'Thu', efficiency: 8.1 },
-      { day: 'Fri', efficiency: 7.9 },
-      { day: 'Sat', efficiency: 8.3 },
-      { day: 'Sun', efficiency: 8.6 }
-    ],
-    chart: 'line' as const,
-    insight: "Current average: 8.2 L/100km. Tuesday showed 7.8 L/100km - likely due to highway routes. Weekend efficiency improves due to local trips."
-  },
-
-  recommendations: {
-    pattern: /(recommend|suggest|improve|optimize|save|cost)/i,
-    response: "AI-generated cost optimization recommendations:",
-    data: [
-      { category: 'Route Optimization', savings: 2400, color: '#10b981' },
-      { category: 'Idle Reduction', savings: 1800, color: '#3b82f6' },
-      { category: 'Maintenance Scheduling', savings: 1200, color: '#8b5cf6' },
-      { category: 'Driver Training', savings: 900, color: '#f59e0b' }
-    ],
-    chart: 'pie' as const,
-    insight: "Potential monthly savings: $6,300. Top recommendation: Implement AI route optimization for 15% fuel savings. Start with Fort Worth location."
-  },
-
-  utilization: {
-    pattern: /(utilization|busy|active|usage|demand|peak)/i,
-    response: "Fleet utilization patterns throughout the day:",
-    data: [
-      { hour: '6AM', rate: 24 },
-      { hour: '8AM', rate: 56 },
-      { hour: '10AM', rate: 70 },
-      { hour: '12PM', rate: 84 },
-      { hour: '2PM', rate: 76 },
-      { hour: '4PM', rate: 90 },
-      { hour: '6PM', rate: 64 },
-      { hour: '8PM', rate: 36 },
-      { hour: '10PM', rate: 16 }
-    ],
-    chart: 'line' as const,
-    insight: "Peak utilization at 4PM (90%). Low utilization 6-10AM suggests opportunity for maintenance windows. Consider surge pricing during peak hours."
-  },
-
-  maintenance: {
-    pattern: /(maintenance|repair|service|check|due)/i,
-    response: "Predictive maintenance insights:",
-    data: [
-      { priority: 'Critical', count: 3, color: '#ef4444' },
-      { priority: 'High', count: 7, color: '#f59e0b' },
-      { priority: 'Medium', count: 12, color: '#3b82f6' },
-      { priority: 'Low', count: 28, color: '#10b981' }
-    ],
-    chart: 'pie' as const,
-    insight: "3 vehicles need immediate attention. Vehicle #23 shows unusual brake wear patterns. Vehicle #45 due for oil change in 2 days. Schedule during 6-8AM low utilization window."
-  }
-}
-
 const quickQueries = [
-  { text: "Which location has the best safety scores?", icon: "🛡️" },
-  { text: "Show me vehicles that idled more than 30 min today", icon: "⏱️" },
-  { text: "What are the cost-saving recommendations?", icon: "💰" },
-  { text: "How is our fuel efficiency trending?", icon: "⛽" },
-  { text: "When is peak fleet utilization?", icon: "📈" },
-  { text: "Any maintenance predictions?", icon: "🔧" }
+  { text: "Summarize current fleet status", Icon: Activity },
+  { text: "Which vehicles are active right now?", Icon: Truck },
+  { text: "Show offline vehicles and risk", Icon: AlertTriangle },
+  { text: "What changed in today's trips?", Icon: Route },
+  { text: "Which safety scores need attention?", Icon: ShieldCheck },
+  { text: "Explain current utilization", Icon: Gauge }
 ]
 
 interface AIConfig {
   ai_enabled: boolean
   model?: string
   provider: string
+  provider_name?: string
 }
 
 export default function FleetChat({ isOpen, onClose }: Props) {
@@ -142,6 +60,8 @@ export default function FleetChat({ isOpen, onClose }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const streamingMessageRef = useRef<string>('')
+
+  const aiProviderLabel = aiConfig?.provider_name || (aiConfig?.provider === 'openrouter' ? 'OpenRouter AI' : 'AI')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -181,7 +101,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
     const welcomeMessage: Message = {
       id: '1',
       type: 'assistant',
-      content: "Hello! I'm your fleet intelligence assistant. Ask me anything about vehicle performance, safety scores, cost optimization, or maintenance predictions. I can provide real-time insights and data visualizations.",
+      content: "Hello. I can answer questions using live FleetPulse fleet context. If a metric is not available from the connected telemetry, I will say that instead of guessing.",
       timestamp: new Date(),
       model: 'welcome',
       isAIPowered: false
@@ -229,7 +149,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
         content: '',
         timestamp: new Date(),
         isStreaming: true,
-        model: 'claude-sonnet-4-20250514',
+        model: aiConfig?.model || 'streaming',
         isAIPowered: true
       }
 
@@ -284,7 +204,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                       const insightMessages = data.insights.map((insight: string, index: number) => ({
                         id: (Date.now() + 2 + index).toString(),
                         type: 'assistant' as const,
-                        content: `💡 **AI Insight:** ${insight}`,
+                        content: `AI Insight: ${insight}`,
                         timestamp: new Date(),
                         model: data.model,
                         isAIPowered: true
@@ -360,7 +280,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
           const insightMessages = data.insights.map((insight: string, index: number) => ({
             id: (Date.now() + 2 + index).toString(),
             type: 'assistant' as const,
-            content: `💡 **AI Insight:** ${insight}`,
+            content: `AI Insight: ${insight}`,
             timestamp: new Date(),
             model: data.model,
             isAIPowered: data.is_ai_powered
@@ -376,7 +296,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: "I'm experiencing some technical difficulties. Please try again or ask about specific topics like safety scores, fuel efficiency, or maintenance predictions.",
+        content: "I could not reach the AI service right now. Please try again, or ask a live fleet status question after the service is back online.",
         timestamp: new Date(),
         model: 'error-fallback',
         isAIPowered: false
@@ -402,7 +322,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
     setIsTyping(true)
 
     try {
-      // Use streaming for AI responses, non-streaming for pattern matching
+      // Use streaming when the backend AI provider is enabled.
       if (aiConfig?.ai_enabled) {
         await generateStreamingResponse(messageText)
       } else {
@@ -550,8 +470,8 @@ export default function FleetChat({ isOpen, onClose }: Props) {
               </div>
               <p className="text-xs text-gray-400">
                 {aiConfig?.ai_enabled 
-                  ? `Claude AI • ${aiConfig.model}` 
-                  : 'Demo Mode • Pattern Matching'
+                  ? `${aiProviderLabel} • ${aiConfig.model}`
+                  : 'AI unavailable • Live data only'
                 }
               </p>
             </div>
@@ -621,7 +541,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                         ) : (
                           <div className="flex items-center gap-1 px-2 py-1 bg-gray-600 text-white text-xs rounded-full">
                             <Bot className="w-3 h-3" />
-                            Demo
+                            Offline
                           </div>
                         )}
                       </div>
@@ -639,7 +559,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                     {message.timestamp.toLocaleTimeString()}
                     {message.model && message.model !== 'welcome' && (
                       <span className="text-gray-600">
-                        • {message.isAIPowered ? `Claude ${message.model?.split('-')[1]}` : 'Pattern Match'}
+                        • {message.isAIPowered ? message.model : 'Service unavailable'}
                       </span>
                     )}
                   </div>
@@ -673,7 +593,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                   <span className="text-xs text-gray-400">
-                    {isStreaming ? 'Claude is thinking...' : 'Processing...'}
+                    {isStreaming ? 'AI is thinking...' : 'Processing...'}
                   </span>
                 </div>
               </div>
@@ -684,18 +604,21 @@ export default function FleetChat({ isOpen, onClose }: Props) {
 
         {/* Quick Query Buttons */}
         <div className="p-4 border-t border-gray-800">
-          <p className="text-xs text-gray-400 mb-3">Quick queries:</p>
+          <p className="text-xs text-gray-400 mb-3">Starter prompts:</p>
           <div className="grid grid-cols-2 gap-2 mb-4">
-            {quickQueries.slice(0, 4).map((query, index) => (
-              <button
-                key={index}
-                onClick={() => handleQuickQuery(query.text)}
-                className="text-xs p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-left transition-colors flex items-center gap-2"
-              >
-                <span>{query.icon}</span>
-                <span className="truncate">{query.text}</span>
-              </button>
-            ))}
+            {quickQueries.map((query, index) => {
+              const PromptIcon = query.Icon
+              return (
+                <button
+                  key={index}
+                  onClick={() => handleQuickQuery(query.text)}
+                  className="text-xs p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-left transition-colors flex items-center gap-2"
+                >
+                  <PromptIcon className="w-3.5 h-3.5 flex-shrink-0 text-blue-300" />
+                  <span className="truncate">{query.text}</span>
+                </button>
+              )
+            })}
           </div>
 
           {/* Input */}
@@ -709,7 +632,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
               placeholder={
                 aiConfig?.ai_enabled 
                   ? "Ask me anything about your fleet..."
-                  : "Ask about fleet performance, safety, costs..."
+                  : "AI is offline; retry after configuration is restored"
               }
               disabled={isTyping || isStreaming}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
@@ -728,8 +651,8 @@ export default function FleetChat({ isOpen, onClose }: Props) {
             <div className="text-center">
               <p className="text-xs text-gray-500">
                 {aiConfig.ai_enabled 
-                  ? `🧠 Enhanced with Claude AI • ${aiConfig.model}` 
-                  : '🤖 Demo mode • Configure API key for AI-powered responses'
+                  ? `Enhanced with ${aiProviderLabel} • ${aiConfig.model}`
+                  : 'AI provider unavailable'
                 }
               </p>
             </div>

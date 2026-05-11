@@ -155,7 +155,7 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
             </div>
             <div>
               <h3 className="font-semibold text-lg">AI Settings</h3>
-              <p className="text-sm text-gray-400">Configure Claude AI for enhanced fleet intelligence</p>
+              <p className="text-sm text-gray-400">Configure the fleet intelligence provider</p>
             </div>
           </div>
           <button
@@ -186,7 +186,7 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
                   <span>
                     {aiConfig.ai_enabled 
                       ? `Active (${aiConfig.model})` 
-                      : 'Demo Mode (Pattern Matching)'
+                      : 'AI unavailable'
                     }
                   </span>
                 </div>
@@ -268,7 +268,7 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
               </div>
             </div>
 
-            {/* Demo Mode */}
+            {/* AI Disabled */}
             <div className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
               selectedProvider === 'demo' 
                 ? 'border-gray-500 bg-gray-500/10' 
@@ -284,13 +284,13 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     <Bot className="w-4 h-4 text-gray-400" />
-                    <h4 className="font-medium text-white">Demo Mode</h4>
+                    <h4 className="font-medium text-white">AI Disabled</h4>
                   </div>
                   <p className="text-sm text-gray-400">
-                    No API key needed. Uses pattern matching for common queries.
+                    No API key needed. The chat will not fabricate fleet metrics.
                   </p>
                   <p className="text-xs text-gray-500 mt-1">
-                    Good for testing • Limited intelligence compared to AI modes
+                    Use this when provider credentials are unavailable.
                   </p>
                 </div>
               </div>
@@ -353,7 +353,7 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
                   {selectedProvider === 'demo' ? 'Setting up...' : 'Validating...'}
                 </>
               ) : selectedProvider === 'demo' ? (
-                'Use Demo Mode'
+                'Disable AI'
               ) : (
                 `Configure ${selectedProvider === 'anthropic' ? 'Anthropic' : 'OpenRouter'}`
               )}
@@ -399,13 +399,12 @@ export default function AISettingsModal({ isOpen, onClose, onConfigChange }: Pro
             <div className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-4">
               <h4 className="font-medium text-gray-300 mb-2 flex items-center gap-2">
                 <Bot className="w-4 h-4" />
-                Demo Mode Features:
+                AI Disabled Behavior:
               </h4>
               <div className="space-y-1 text-sm text-gray-300">
-                <p>• Works instantly without any setup or API keys</p>
-                <p>• Provides intelligent responses to common fleet queries</p>
-                <p>• Includes data visualizations and insights</p>
-                <p>• Great for testing and basic fleet analysis</p>
+                <p>• Does not use a model provider</p>
+                <p>• Does not generate fallback fleet numbers</p>
+                <p>• Keeps source-of-truth telemetry in Geotab-backed APIs</p>
               </div>
             </div>
           )}
