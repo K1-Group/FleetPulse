@@ -5,11 +5,20 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 from services import fleet_service  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def clear_fleet_service_cache():
+    fleet_service._CACHE.clear()
+    yield
+    fleet_service._CACHE.clear()
 
 
 class FakeGeotabClient:
@@ -110,3 +119,33 @@ def test_vehicle_list_hides_stale_positions(monkeypatch):
     assert vehicles[0].position is not None
     assert vehicles[1].status == fleet_service.VehicleStatus.OFFLINE
     assert vehicles[1].position is None
+
+
+def test_fleet_overview_uses_cached_live_data_after_timeout(monkeypatch):
+    monkeypatch.setattr(fleet_service.GeotabClient, "get", lambda: FakeGeotabClient())
+    monkeypatch.setenv("FLEETPULSE_CACHE_TTL_SECONDS", "0")
+    monkeypatch.setenv("FLEETPULSE_CACHE_FALLBACK_SECONDS", "300")
+
+    first = fleet_service.get_fleet_overview()
+
+    class TimeoutGeotabClient(FakeGeotabClient):
+        def get_devices(self):
+            raise TimeoutError("geotab unavailable")
+
+    monkeypatch.setattr(fleet_service.GeotabClient, "get", lambda: TimeoutGeotabClient())
+    second = fleet_service.get_fleet_overview()
+
+    assert first.total_vehicles == 2
+    assert second.total_vehicles == 2
+    assert second.source_mode == "cached_after_geotab_timeout"
+
+
+def test_vehicle_list_returns_empty_without_cache_after_timeout(monkeypatch):
+    class TimeoutGeotabClient:
+        def get_devices(self):
+            raise TimeoutError("geotab unavailable")
+
+    monkeypatch.setattr(fleet_service.GeotabClient, "get", lambda: TimeoutGeotabClient())
+    monkeypatch.setenv("FLEETPULSE_CACHE_TTL_SECONDS", "0")
+
+    assert fleet_service.get_vehicles() == []

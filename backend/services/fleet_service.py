@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import os
+import time
 from typing import Any
 
 from geotab_client import GeotabClient
@@ -17,6 +19,10 @@ DEFAULT_TARGET_TRIP_HOURS = 12
 DEFAULT_DEVICE_GROUP_IDS = "GroupVehicleId"
 DEFAULT_EXCLUDED_DEVICE_GROUP_IDS = "GroupTrailerId"
 DEFAULT_STATUS_STALE_HOURS = 24
+DEFAULT_CACHE_TTL_SECONDS = 30
+DEFAULT_CACHE_FALLBACK_SECONDS = 300
+
+_CACHE: dict[str, tuple[float, Any]] = {}
 
 # K1 Logistics / K1 Group locations (FTW, Justin, OKC, Kansas City)
 LOCATIONS = [
@@ -50,6 +56,34 @@ def _int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _cache_ttl_seconds() -> int:
+    return max(0, _int_env("FLEETPULSE_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS))
+
+
+def _cache_fallback_seconds() -> int:
+    return max(_cache_ttl_seconds(), _int_env("FLEETPULSE_CACHE_FALLBACK_SECONDS", DEFAULT_CACHE_FALLBACK_SECONDS))
+
+
+def _cache_get(key: str, max_age_seconds: int) -> Any | None:
+    if max_age_seconds <= 0:
+        return None
+    entry = _CACHE.get(key)
+    if not entry:
+        return None
+    created_at, value = entry
+    if time.time() - created_at > max_age_seconds:
+        return None
+    return deepcopy(value)
+
+
+def _cache_set(key: str, value: Any) -> None:
+    _CACHE[key] = (time.time(), deepcopy(value))
+
+
+def _with_source_mode(overview: FleetOverview, source_mode: str) -> FleetOverview:
+    return overview.model_copy(update={"source_mode": source_mode})
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -336,7 +370,7 @@ def _nearest_location(lat: float, lon: float) -> str | None:
     return best
 
 
-def get_fleet_overview() -> FleetOverview:
+def _build_fleet_overview() -> FleetOverview:
     client = GeotabClient.get()
     raw_devices = client.get_devices()
     now = datetime.now(timezone.utc)
@@ -385,7 +419,28 @@ def get_fleet_overview() -> FleetOverview:
         stale_status_count=stale_status_count,
     )
 
-def get_vehicles() -> list[Vehicle]:
+
+def get_fleet_overview() -> FleetOverview:
+    cached = _cache_get("fleet_overview", _cache_ttl_seconds())
+    if cached is not None:
+        return _with_source_mode(cached, "cached_live_filtered")
+
+    try:
+        overview = _build_fleet_overview()
+    except TimeoutError:
+        fallback = _cache_get("fleet_overview", _cache_fallback_seconds())
+        if fallback is not None:
+            return _with_source_mode(fallback, "cached_after_geotab_timeout")
+        return FleetOverview(
+            source_mode="geotab_unavailable",
+            trip_definition="driver_session_with_stops_over_5_min",
+        )
+
+    _cache_set("fleet_overview", overview)
+    return overview
+
+
+def _build_vehicles() -> list[Vehicle]:
     client = GeotabClient.get()
     now = datetime.now(timezone.utc)
     devices = [dev for dev in client.get_devices() if _is_scoped_fleet_device(dev, now)]
@@ -416,6 +471,21 @@ def get_vehicles() -> list[Vehicle]:
                 last_contact=st.get("dateTime"),
             )
         )
+    return vehicles
+
+
+def get_vehicles() -> list[Vehicle]:
+    cached = _cache_get("vehicles", _cache_ttl_seconds())
+    if cached is not None:
+        return cached
+
+    try:
+        vehicles = _build_vehicles()
+    except TimeoutError:
+        fallback = _cache_get("vehicles", _cache_fallback_seconds())
+        return fallback if fallback is not None else []
+
+    _cache_set("vehicles", vehicles)
     return vehicles
 
 

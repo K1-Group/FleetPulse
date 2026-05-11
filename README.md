@@ -106,11 +106,16 @@ FLEETPULSE_SAFETY_DEMO_MODE=false
 FLEETPULSE_MONITOR_ENABLED=false
 FLEETPULSE_GEOTAB_TIMEOUT_SECONDS=10
 FLEETPULSE_GEOTAB_MAX_WORKERS=4
+FLEETPULSE_CACHE_TTL_SECONDS=30
+FLEETPULSE_CACHE_FALLBACK_SECONDS=300
 ```
 
 The dashboard response includes source metadata such as `raw_device_count`,
 `scoped_device_count`, and `stale_status_count` so operators can tell whether a
-KPI is live and business-scoped.
+KPI is live and business-scoped. If Geotab times out, FleetPulse returns a
+short-lived cached live response with `source_mode=cached_after_geotab_timeout`;
+when no cache exists, it returns an explicit unavailable/empty response instead
+of demo numbers.
 
 ### Backend
 ```bash
