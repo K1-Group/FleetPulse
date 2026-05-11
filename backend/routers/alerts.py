@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/recent", response_model=list[Alert])
-async def recent_alerts(hours: int = Query(24, ge=1, le=168)):
+def recent_alerts(hours: int = Query(24, ge=1, le=168)):
     return get_recent_alerts(hours=hours)
 
 

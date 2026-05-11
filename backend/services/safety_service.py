@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 import os
+import time
+from copy import deepcopy
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 import logging
@@ -24,6 +26,38 @@ _CATEGORY_KEYWORDS = {
     "harsh_acceleration": ["harsh accel", "hard accel", "acceleration"],
     "harsh_cornering": ["corner", "turning"],
 }
+_SAFETY_CACHE: dict[str, tuple[float, list[VehicleSafetyScore]]] = {}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _cache_ttl_seconds() -> int:
+    return max(0, _int_env("FLEETPULSE_CACHE_TTL_SECONDS", 30))
+
+
+def _cache_fallback_seconds() -> int:
+    return max(_cache_ttl_seconds(), _int_env("FLEETPULSE_CACHE_FALLBACK_SECONDS", 300))
+
+
+def _cache_get(key: str, max_age_seconds: int) -> list[VehicleSafetyScore] | None:
+    if max_age_seconds <= 0:
+        return None
+    entry = _SAFETY_CACHE.get(key)
+    if not entry:
+        return None
+    created_at, scores = entry
+    if time.time() - created_at > max_age_seconds:
+        return None
+    return deepcopy(scores)
+
+
+def _cache_set(key: str, scores: list[VehicleSafetyScore]) -> None:
+    _SAFETY_CACHE[key] = (time.time(), deepcopy(scores))
 
 
 def _categorize_event(rule_name: str) -> str | None:
@@ -48,11 +82,18 @@ def _compute_score(breakdown: SafetyBreakdown) -> float:
 def get_safety_scores(days: int = 7) -> list[VehicleSafetyScore]:
     """Get safety scores from real Geotab ExceptionEvents."""
     if not _use_demo_safety_scores():
+        cache_key = f"safety:{days}"
+        cached = _cache_get(cache_key, _cache_ttl_seconds())
+        if cached is not None:
+            return cached
         try:
-            return _get_geotab_safety_scores(days)
+            scores = _get_geotab_safety_scores(days)
+            _cache_set(cache_key, scores)
+            return scores
         except TimeoutError as exc:
             logger.warning("safety_scores_unavailable_geotab_timeout", extra={"error": str(exc)})
-            return []
+            fallback = _cache_get(cache_key, _cache_fallback_seconds())
+            return fallback if fallback is not None else []
         except Exception as exc:
             logger.warning("safety_scores_unavailable", extra={"error": str(exc)})
             return []

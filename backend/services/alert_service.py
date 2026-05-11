@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import time
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,6 +22,38 @@ DEFAULT_RULES: list[AlertRule] = [
 ]
 
 _alert_rules = list(DEFAULT_RULES)
+_ALERT_CACHE: dict[str, tuple[float, list[Alert]]] = {}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _cache_ttl_seconds() -> int:
+    return max(0, _int_env("FLEETPULSE_CACHE_TTL_SECONDS", 30))
+
+
+def _cache_fallback_seconds() -> int:
+    return max(_cache_ttl_seconds(), _int_env("FLEETPULSE_CACHE_FALLBACK_SECONDS", 300))
+
+
+def _cache_get(key: str, max_age_seconds: int) -> list[Alert] | None:
+    if max_age_seconds <= 0:
+        return None
+    entry = _ALERT_CACHE.get(key)
+    if not entry:
+        return None
+    created_at, alerts = entry
+    if time.time() - created_at > max_age_seconds:
+        return None
+    return deepcopy(alerts)
+
+
+def _cache_set(key: str, alerts: list[Alert]) -> None:
+    _ALERT_CACHE[key] = (time.time(), deepcopy(alerts))
 
 
 def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | None:
@@ -52,10 +87,19 @@ def _event_to_alert(event: dict[str, Any], devices: dict[str, str]) -> Alert | N
 
 
 def get_recent_alerts(hours: int = 24) -> list[Alert]:
+    cache_key = f"recent:{hours}"
+    cached = _cache_get(cache_key, _cache_ttl_seconds())
+    if cached is not None:
+        return cached
+
     client = GeotabClient.get()
-    devices = {d["id"]: d.get("name", "Unknown") for d in client.get_devices()}
-    now = datetime.now(timezone.utc)
-    events = client.get_exception_events(now - timedelta(hours=hours), now)
+    try:
+        devices = {d["id"]: d.get("name", "Unknown") for d in client.get_devices()}
+        now = datetime.now(timezone.utc)
+        events = client.get_exception_events(now - timedelta(hours=hours), now)
+    except TimeoutError:
+        fallback = _cache_get(cache_key, _cache_fallback_seconds())
+        return fallback if fallback is not None else []
 
     alerts: list[Alert] = []
     for e in events:
@@ -64,7 +108,9 @@ def get_recent_alerts(hours: int = 24) -> list[Alert]:
             alerts.append(a)
 
     alerts.sort(key=lambda a: a.timestamp, reverse=True)
-    return alerts[:100]  # cap at 100
+    result = alerts[:100]  # cap at 100
+    _cache_set(cache_key, result)
+    return result
 
 
 def get_alert_rules() -> list[AlertRule]:
