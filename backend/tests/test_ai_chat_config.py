@@ -86,3 +86,35 @@ def test_openrouter_validation_uses_configured_model(monkeypatch):
     assert ai_chat._set_api_key("secret-value", "openrouter") is True
     assert captured["model"] == "anthropic/claude-sonnet-4.5"
     assert "secret-value" not in str(captured["messages"])
+
+
+def test_openrouter_env_key_initializes_on_import(monkeypatch):
+    import openai
+
+    captured: dict = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeOpenAI:
+        chat = FakeChat()
+
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret-value")
+    monkeypatch.setenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sys.modules.pop("routers.ai_chat", None)
+
+    ai_chat = importlib.import_module("routers.ai_chat")
+
+    assert ai_chat._is_ai_enabled() is True
+    assert ai_chat._get_provider() == "openrouter"
+    assert captured["model"] == "anthropic/claude-sonnet-4"

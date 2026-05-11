@@ -68,29 +68,6 @@ def _build_openrouter_client(api_key: str) -> openai.OpenAI:
         kwargs["default_headers"] = headers
     return openai.OpenAI(**kwargs)
 
-# Initialize from environment variables if available
-def _initialize_from_env():
-    """Initialize AI client from environment variables."""
-    global _ai_config
-    
-    # Check for Anthropic API key
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    if anthropic_key and anthropic_key != "your-key-here":
-        success = _set_api_key(anthropic_key, "anthropic")
-        if success:
-            return
-    
-    # Check for OpenRouter API key
-    openrouter_key = os.getenv("OPENROUTER_API_KEY") 
-    if openrouter_key and openrouter_key != "your-key-here":
-        success = _set_api_key(openrouter_key, "openrouter")
-        if success:
-            return
-
-# Initialize on module load
-_initialize_from_env()
-
-
 def _set_api_key(api_key: str, provider: ProviderType) -> bool:
     """Set API key and provider in memory and initialize client."""
     global _ai_config
@@ -140,6 +117,36 @@ def _set_api_key(api_key: str, provider: ProviderType) -> bool:
         return False
 
 
+# Initialize from environment variables if available
+def _initialize_from_env():
+    """Initialize AI client from environment variables."""
+    global _ai_config
+
+    if _is_ai_enabled():
+        return
+
+    # Check for Anthropic API key
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if anthropic_key and anthropic_key != "your-key-here":
+        success = _set_api_key(anthropic_key, "anthropic")
+        if success:
+            return
+
+    # Check for OpenRouter API key
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key and openrouter_key != "your-key-here":
+        success = _set_api_key(openrouter_key, "openrouter")
+        if success:
+            return
+
+
+def _ensure_env_initialized() -> None:
+    """Retry environment-backed setup for late Key Vault reference resolution."""
+
+    if not _is_ai_enabled():
+        _initialize_from_env()
+
+
 def _get_ai_client():
     """Get the current AI client if available."""
     return _ai_config.get("client")
@@ -153,6 +160,10 @@ def _get_provider() -> ProviderType:
 def _is_ai_enabled() -> bool:
     """Check if AI is enabled (API key is set)."""
     return _ai_config.get("client") is not None and _ai_config.get("provider") != "demo"
+
+
+# Initialize on module load, after helpers it calls are defined.
+_initialize_from_env()
 
 
 def _get_model_name() -> str:
@@ -756,6 +767,7 @@ async def _process_fallback_query(message: str) -> ChatResponse:
 async def process_chat_query(chat_message: ChatMessage):
     """Process a natural language fleet query with Claude AI or fallback to pattern matching."""
     try:
+        _ensure_env_initialized()
         if _is_ai_enabled():
             return await _process_ai_query(
                 chat_message.message, 
@@ -787,6 +799,7 @@ async def process_chat_stream(chat_message: ChatMessage):
     """Process chat query with streaming response (Server-Sent Events)."""
     
     async def stream_response():
+        _ensure_env_initialized()
         if not _is_ai_enabled():
             # For non-AI responses, just yield the complete response
             response = await _process_fallback_query(chat_message.message)
@@ -935,6 +948,7 @@ async def set_api_key(request: ApiKeyRequest):
 @router.get("/config", response_model=ConfigResponse)
 async def get_ai_config():
     """Get current AI configuration status (never returns the API key)."""
+    _ensure_env_initialized()
     provider = _get_provider()
     return ConfigResponse(
         ai_enabled=_is_ai_enabled(),
