@@ -9,15 +9,15 @@ router = APIRouter()
 
 
 @router.get("/leaderboard", response_model=list[DriverScore])
-async def leaderboard():
+def leaderboard():
     return get_leaderboard()
 
 
 @router.get("/challenges", response_model=list[Challenge])
-async def challenges():
+def challenges():
     return get_active_challenges()
 
 
 @router.get("/location-rankings", response_model=list[LocationRanking])
-async def location_rankings():
+def location_rankings():
     return get_location_rankings()

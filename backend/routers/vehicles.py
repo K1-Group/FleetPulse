@@ -9,12 +9,12 @@ router = APIRouter()
 
 
 @router.get("/", response_model=list[Vehicle])
-async def list_vehicles():
+def list_vehicles():
     return get_vehicles()
 
 
 @router.get("/{vehicle_id}", response_model=Vehicle)
-async def get_vehicle(vehicle_id: str):
+def get_vehicle(vehicle_id: str):
     vehicles = get_vehicles()
     for v in vehicles:
         if v.id == vehicle_id:
