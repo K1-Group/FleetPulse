@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Filter, ChevronDown, Activity, Clock, MapPin, Zap } from 'lucide-react'
 import type { Vehicle } from '../types/fleet'
+import { roundedMph } from '../utils/units'
 
 interface Props {
   vehicles: Vehicle[] | null
@@ -285,9 +286,9 @@ export default function VehicleList({ vehicles, loading }: Props) {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <span className={`font-mono ${vehicle.position?.speed && vehicle.position.speed > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
-                        {vehicle.position?.speed ?? 0}
+                        {roundedMph(vehicle.position?.speed)}
                       </span>
-                      <span className="text-xs text-gray-500">km/h</span>
+                      <span className="text-xs text-gray-500">mph</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right">

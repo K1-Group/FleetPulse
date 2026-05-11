@@ -16,8 +16,8 @@ from services.fleet_service import get_scoped_device_map
 
 # ── Default alert rules ────────────────────────────────────────
 DEFAULT_RULES: list[AlertRule] = [
-    AlertRule(id="speed_high", name="High Speed", description="Vehicle exceeds 120 km/h", enabled=True, threshold=120, alert_type="speeding", severity=AlertSeverity.HIGH),
-    AlertRule(id="speed_extreme", name="Extreme Speed", description="Vehicle exceeds 150 km/h", enabled=True, threshold=150, alert_type="speeding", severity=AlertSeverity.CRITICAL),
+    AlertRule(id="speed_high", name="High Speed", description="Vehicle exceeds about 75 mph", enabled=True, threshold=120, alert_type="speeding", severity=AlertSeverity.HIGH),
+    AlertRule(id="speed_extreme", name="Extreme Speed", description="Vehicle exceeds about 93 mph", enabled=True, threshold=150, alert_type="speeding", severity=AlertSeverity.CRITICAL),
     AlertRule(id="idle_long", name="Extended Idle", description="Vehicle idle >30 min", enabled=True, threshold=30, alert_type="idle", severity=AlertSeverity.MEDIUM),
     AlertRule(id="geofence_exit", name="Geofence Breach", description="Vehicle left assigned zone", enabled=True, threshold=None, alert_type="geofence", severity=AlertSeverity.HIGH),
     AlertRule(id="after_hours", name="After Hours Usage", description="Vehicle moving between 11PM-5AM", enabled=True, threshold=None, alert_type="after_hours", severity=AlertSeverity.MEDIUM),

@@ -1,5 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { FleetOverview, Vehicle, VehicleSafetyScore, DriverScore, Alert, LocationStats, DriverCoachingProfile, DriverCoachingDetail, FleetCoachingSummary } from '../types/fleet'
+import type {
+  Alert,
+  ControlTowerAgentsResponse,
+  ControlTowerAttentionResponse,
+  ControlTowerCodexResponse,
+  ControlTowerFinancialResponse,
+  ControlTowerOverview,
+  ControlTowerTrailersResponse,
+  DriverCoachingDetail,
+  DriverCoachingProfile,
+  DriverScore,
+  FleetCoachingSummary,
+  FleetOverview,
+  LocationStats,
+  Vehicle,
+  VehicleSafetyScore,
+} from '../types/fleet'
 
 const API = '/api'
 
@@ -128,4 +144,29 @@ export function useUrgentMaintenance() {
 
 export function useVehicleMaintenance(vehicleId: string) {
   return useFetch<any>(`${API}/maintenance/vehicle/${vehicleId}`)
+}
+
+// Original Control Tower surfaces
+export function useControlTowerOverview() {
+  return useFetch<ControlTowerOverview>(`${API}/control-tower/overview`, 60000)
+}
+
+export function useControlTowerAttention() {
+  return useFetch<ControlTowerAttentionResponse>(`${API}/control-tower/attention`, 30000)
+}
+
+export function useControlTowerTrailers() {
+  return useFetch<ControlTowerTrailersResponse>(`${API}/control-tower/trailers`, 60000)
+}
+
+export function useControlTowerFinancial() {
+  return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000)
+}
+
+export function useControlTowerAgents() {
+  return useFetch<ControlTowerAgentsResponse>(`${API}/control-tower/agents`, 30000)
+}
+
+export function useControlTowerCodex() {
+  return useFetch<ControlTowerCodexResponse>(`${API}/control-tower/codex`, 60000)
 }

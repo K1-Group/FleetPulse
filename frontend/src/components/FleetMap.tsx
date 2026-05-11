@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Circle, Polyline, useMap } from 'react-leaflet'
 import { Eye, EyeOff, Activity, MapPin, Navigation, Layers } from 'lucide-react'
 import L from 'leaflet'
 import type { Vehicle, LocationStats } from '../types/fleet'
+import { formatMph } from '../utils/units'
 
 interface Props {
   vehicles: Vehicle[] | null
@@ -121,6 +122,8 @@ const formatLastUpdated = (value: string | null): string => {
     minute: '2-digit'
   })
 }
+
+const assetLabel = (vehicle: Vehicle): string => vehicle.name || vehicle.id || 'Unknown asset'
 
 export default function FleetMap({ vehicles, locations }: Props) {
   const [showVehicles, setShowVehicles] = useState(true)
@@ -414,14 +417,28 @@ export default function FleetMap({ vehicles, locations }: Props) {
                 position={[v.position!.latitude, v.position!.longitude]}
                 icon={vehicleIcon(v.status, v.status === 'active' && (v.position?.speed || 0) > 5)}
               >
+                <Tooltip
+                  direction="top"
+                  offset={[0, -10]}
+                  opacity={1}
+                  sticky
+                  className="fleet-vehicle-tooltip"
+                >
+                  <div className="text-xs">
+                    <div className="font-semibold">Asset: {assetLabel(v)}</div>
+                    <div className="capitalize">Status: {v.status}</div>
+                    <div>Speed: {formatMph(v.position?.speed)}</div>
+                  </div>
+                </Tooltip>
                 <Popup className="dark-popup">
                   <div className="text-sm">
                     <div className="font-semibold text-white mb-1 flex items-center gap-2">
-                      {statusEmoji[v.status]} {v.name}
+                      {statusEmoji[v.status]} Asset {assetLabel(v)}
                     </div>
                     <div className="text-gray-300 space-y-1">
+                      <div className="text-xs text-gray-400">Geotab ID: {v.id}</div>
                       <div>Status: <span className="capitalize">{v.status}</span></div>
-                      <div>Speed: {v.position!.speed || 0} km/h</div>
+                      <div>Speed: {formatMph(v.position?.speed)}</div>
                       {v.location_name && <div>📍 {v.location_name}</div>}
                       {v.last_contact && (
                         <div className="text-xs text-gray-400">

@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet
 import L, { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Play, Pause, RotateCcw, Calendar, Clock, MapPin, Gauge, Route, ArrowLeft } from 'lucide-react'
+import { formatMph, kmhToMph } from '../utils/units'
 
 // Fix for default markers in Leaflet with Webpack
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -168,9 +169,10 @@ export default function RouteReplay({ vehicleId, onClose }: RouteReplayProps) {
   }, [isPlaying, routePoints.length, playbackSpeed])
   
   // Get color for route segment based on speed
-  const getSpeedColor = (speed: number) => {
-    if (speed > 70) return '#EF4444' // Red for high speed
-    if (speed > 50) return '#F59E0B' // Yellow for medium speed
+  const getSpeedColor = (speedKmh: number) => {
+    const speedMph = kmhToMph(speedKmh)
+    if (speedMph > 70) return '#EF4444' // Red for high speed
+    if (speedMph > 50) return '#F59E0B' // Yellow for medium speed
     return '#10B981' // Green for normal speed
   }
   
@@ -418,7 +420,7 @@ export default function RouteReplay({ vehicleId, onClose }: RouteReplayProps) {
           <div className="flex items-center gap-6 text-sm text-gray-300">
             <div className="flex items-center gap-2">
               <Gauge className="w-4 h-4 text-blue-400" />
-              <span>{currentSpeed.toFixed(0)} km/h</span>
+              <span>{formatMph(currentSpeed)}</span>
             </div>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-green-400" />

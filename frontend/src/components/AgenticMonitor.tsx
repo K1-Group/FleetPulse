@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, TrendingUp, AlertTriangle, Target, Lightbulb, Clock, MapPin } from 'lucide-react'
+import { Brain, AlertTriangle, Lightbulb, Clock } from 'lucide-react'
 import type { Alert } from '../types/fleet'
 
 interface MonitorStatus {
@@ -23,110 +23,75 @@ interface Props {
   onTriggerCheck: () => void
 }
 
-const severityStyle: Record<string, string> = {
-  critical: 'border-l-red-500 bg-red-500/10',
-  high: 'border-l-orange-500 bg-orange-500/10',
-  medium: 'border-l-amber-500 bg-amber-500/10',
-  low: 'border-l-blue-500 bg-blue-500/10',
+const groupStyle: Record<string, string> = {
+  critical: 'bg-red-500',
+  high: 'bg-orange-500',
+  medium: 'bg-amber-500',
+  low: 'bg-blue-500',
 }
-
-const severityBadge: Record<string, string> = {
-  critical: 'bg-red-500/20 text-red-400',
-  high: 'bg-orange-500/20 text-orange-400',
-  medium: 'bg-amber-500/20 text-amber-400',
-  low: 'bg-blue-500/20 text-blue-400',
-}
-
-const aiInsights = [
-  {
-    id: '1',
-    type: 'cost-optimization',
-    icon: <TrendingUp className="w-4 h-4" />,
-    title: 'Cost Optimization Opportunity',
-    message: 'W Sahara location shows 3x higher idle time than fleet average. Implementing driver coaching could save $2,400/month.',
-    action: 'Schedule Training',
-    priority: 'high'
-  },
-  {
-    id: '2',
-    type: 'predictive-maintenance',
-    icon: <AlertTriangle className="w-4 h-4" />,
-    title: 'Maintenance Prediction',
-    message: 'Vehicle #42 brake wear patterns indicate service needed in 5-7 days. Schedule during low utilization window (6-8AM).',
-    action: 'Schedule Service',
-    priority: 'medium'
-  },
-  {
-    id: '3',
-    type: 'route-optimization',
-    icon: <MapPin className="w-4 h-4" />,
-    title: 'Route Efficiency',
-    message: 'AI detected 15% fuel savings opportunity by optimizing routes between McCarran and Downtown locations.',
-    action: 'View Routes',
-    priority: 'medium'
-  },
-  {
-    id: '4',
-    type: 'performance',
-    icon: <Target className="w-4 h-4" />,
-    title: 'Performance Insight',
-    message: 'Fremont location drivers have 12% better safety scores. Best practices could be applied fleet-wide.',
-    action: 'Analyze Patterns',
-    priority: 'low'
-  }
-]
-
-const proactiveRecommendations = [
-  {
-    title: 'Peak Hour Optimization',
-    description: 'Deploy 3 additional vehicles to Summerlin during 4-6PM peak demand',
-    impact: '+$450 daily revenue',
-    type: 'revenue'
-  },
-  {
-    title: 'Maintenance Window',
-    description: 'Schedule 5 pending maintenance tasks during tomorrow\'s low utilization (6-8AM)',
-    impact: '0% service disruption',
-    type: 'efficiency'
-  },
-  {
-    title: 'Driver Performance',
-    description: 'W Sahara team needs coaching on idle time reduction - 40% above target',
-    impact: '$600 monthly savings',
-    type: 'cost'
-  }
-]
-
-const alertGroups = [
-  {
-    category: 'Safety Critical',
-    count: 3,
-    color: 'bg-red-500',
-    alerts: ['Harsh braking detected - Vehicle #23', 'Speeding alert - Downtown route', 'Lane deviation - Vehicle #7']
-  },
-  {
-    category: 'Efficiency',
-    count: 8,
-    color: 'bg-amber-500',
-    alerts: ['Extended idle - W Sahara lot', 'Route deviation - Strip area', 'Fuel consumption spike']
-  },
-  {
-    category: 'Maintenance',
-    count: 4,
-    color: 'bg-blue-500',
-    alerts: ['Tire pressure low - Vehicle #15', 'Service due - Vehicle #42', 'Battery voltage drop']
-  }
-]
 
 export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck }: Props) {
   const [expanded, setExpanded] = useState(true)
   const [activeTab, setActiveTab] = useState<'alerts' | 'insights' | 'recommendations'>('insights')
   const patterns = status?.patterns || {}
+  const checksRun = Number(patterns.checks_run || 0)
+  const monitoredVehicles = Number(patterns.total_vehicles || 0)
+  const activeVehicles = Number(patterns.active_vehicles || 0)
+  const alertsGenerated = Number(patterns.alerts_generated || 0)
+  const lastCheck = typeof patterns.last_check === 'string' ? patterns.last_check : null
+
+  const liveInsights = useMemo(() => {
+    return (alerts || []).slice(0, 5).map(alert => ({
+      id: alert.id,
+      icon: <AlertTriangle className="w-4 h-4" />,
+      title: alert.alert_type || 'Fleet alert',
+      message: alert.message,
+      action: alert.acknowledged ? 'Acknowledged' : 'Review',
+      priority: alert.severity,
+    }))
+  }, [alerts])
+
+  const recommendations = useMemo(() => {
+    const activeAlerts = alerts || []
+    const urgent = activeAlerts.filter(alert => alert.severity === 'critical' || alert.severity === 'high')
+    if (urgent.length > 0) {
+      return urgent.slice(0, 5).map(alert => ({
+        title: `${alert.vehicle_name} ${alert.alert_type}`,
+        description: alert.message,
+        impact: alert.severity === 'critical' ? 'Critical review' : 'High-priority review',
+        type: alert.severity,
+      }))
+    }
+    if (!status?.running) {
+      return [{
+        title: 'Monitor disabled',
+        description: 'No background monitor cycle is running for FleetPulse.',
+        impact: 'Enable monitor for live anomaly checks',
+        type: 'medium',
+      }]
+    }
+    return []
+  }, [alerts, status?.running])
+
+  const groupedAlerts = useMemo(() => {
+    const activeAlerts = alerts || []
+    return (['critical', 'high', 'medium', 'low'] as const)
+      .map(severity => {
+        const matches = activeAlerts.filter(alert => alert.severity === severity)
+        return {
+          category: `${severity.charAt(0).toUpperCase()}${severity.slice(1)} Alerts`,
+          count: matches.length,
+          color: groupStyle[severity],
+          alerts: matches.map(alert => `${alert.vehicle_name}: ${alert.message}`),
+        }
+      })
+      .filter(group => group.count > 0)
+  }, [alerts])
 
   const tabs = [
-    { id: 'insights', label: 'AI Insights', icon: <Brain className="w-4 h-4" />, count: aiInsights.length },
+    { id: 'insights', label: 'AI Insights', icon: <Brain className="w-4 h-4" />, count: liveInsights.length },
     { id: 'alerts', label: 'Grouped Alerts', icon: <AlertTriangle className="w-4 h-4" />, count: alerts?.length || 0 },
-    { id: 'recommendations', label: 'Recommendations', icon: <Lightbulb className="w-4 h-4" />, count: proactiveRecommendations.length }
+    { id: 'recommendations', label: 'Recommendations', icon: <Lightbulb className="w-4 h-4" />, count: recommendations.length }
   ]
 
   return (
@@ -191,27 +156,27 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-gray-800/50">
               <motion.div className="text-center" whileHover={{ scale: 1.05 }}>
                 <div className="text-2xl font-bold text-purple-400">
-                  {patterns.checks_run ?? 18}
+                  {checksRun}
                 </div>
                 <div className="text-xs text-gray-500">AI Checks</div>
               </motion.div>
               <motion.div className="text-center" whileHover={{ scale: 1.05 }}>
                 <div className="text-2xl font-bold text-blue-400">
-                  {patterns.total_vehicles ?? 50}
+                  {monitoredVehicles}
                 </div>
                 <div className="text-xs text-gray-500">Monitored</div>
               </motion.div>
               <motion.div className="text-center" whileHover={{ scale: 1.05 }}>
                 <div className="text-2xl font-bold text-emerald-400">
-                  {patterns.active_vehicles ?? 42}
+                  {activeVehicles}
                 </div>
                 <div className="text-xs text-gray-500">Active</div>
               </motion.div>
               <motion.div className="text-center" whileHover={{ scale: 1.05 }}>
                 <div className="text-2xl font-bold text-amber-400">
-                  94%
+                  {alertsGenerated}
                 </div>
-                <div className="text-xs text-gray-500">AI Confidence</div>
+                <div className="text-xs text-gray-500">Generated</div>
               </motion.div>
             </div>
 
@@ -247,14 +212,19 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
                     exit={{ opacity: 0, x: 20 }}
                     className="p-4 space-y-3"
                   >
-                    {aiInsights.map((insight, index) => (
+                    {liveInsights.length === 0 && (
+                      <div className="rounded-lg border border-gray-700/50 bg-gray-800/30 p-4 text-sm text-gray-400">
+                        No monitor insights returned by live alert feeds.
+                      </div>
+                    )}
+                    {liveInsights.map((insight, index) => (
                       <motion.div
                         key={insight.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: index * 0.1 }}
                         className={`p-3 rounded-lg border-l-4 ${
-                          insight.priority === 'high' ? 'border-red-500 bg-red-500/5' :
+                          insight.priority === 'critical' || insight.priority === 'high' ? 'border-red-500 bg-red-500/5' :
                           insight.priority === 'medium' ? 'border-amber-500 bg-amber-500/5' :
                           'border-blue-500 bg-blue-500/5'
                         } backdrop-blur-sm`}
@@ -262,7 +232,7 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3">
                             <div className={`p-1.5 rounded-lg ${
-                              insight.priority === 'high' ? 'bg-red-500/20 text-red-400' :
+                              insight.priority === 'critical' || insight.priority === 'high' ? 'bg-red-500/20 text-red-400' :
                               insight.priority === 'medium' ? 'bg-amber-500/20 text-amber-400' :
                               'bg-blue-500/20 text-blue-400'
                             }`}>
@@ -294,7 +264,12 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
                     exit={{ opacity: 0, x: 20 }}
                     className="p-4 space-y-3"
                   >
-                    {alertGroups.map((group, index) => (
+                    {groupedAlerts.length === 0 && (
+                      <div className="rounded-lg border border-gray-700/50 bg-gray-800/30 p-4 text-sm text-gray-400">
+                        No grouped alerts returned by live alert feeds.
+                      </div>
+                    )}
+                    {groupedAlerts.map((group, index) => (
                       <motion.div
                         key={group.category}
                         initial={{ opacity: 0, y: 10 }}
@@ -331,7 +306,12 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
                     exit={{ opacity: 0, x: 20 }}
                     className="p-4 space-y-3"
                   >
-                    {proactiveRecommendations.map((rec, index) => (
+                    {recommendations.length === 0 && (
+                      <div className="rounded-lg border border-gray-700/50 bg-gray-800/30 p-4 text-sm text-gray-400">
+                        No recommendations returned by the active monitor state.
+                      </div>
+                    )}
+                    {recommendations.map((rec, index) => (
                       <motion.div
                         key={rec.title}
                         initial={{ opacity: 0, y: 10 }}
@@ -360,10 +340,10 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
 
             {/* Status Footer */}
             <div className="px-4 py-2 text-xs text-gray-600 border-t border-gray-800/50 flex items-center justify-between">
-              <span>AI model confidence: 94% • Last analysis: {new Date().toLocaleTimeString()}</span>
+              <span>Last analysis: {lastCheck ? new Date(lastCheck).toLocaleTimeString() : 'Awaiting monitor check'}</span>
               <span className="flex items-center gap-1 text-emerald-400">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-                Live monitoring
+                {status?.running ? 'Live monitoring' : 'Monitor paused'}
               </span>
             </div>
           </motion.div>

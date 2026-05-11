@@ -166,3 +166,138 @@ export interface FleetCoachingSummary {
   worst_performers: string[]
   fleet_fuel_savings_potential: number
 }
+
+// Control Tower projections
+export type ControlTowerStatus = 'healthy' | 'warning' | 'critical' | 'awaiting_feed' | 'unavailable'
+
+export interface ControlTowerFeedStatus {
+  name: string
+  source_authority: string
+  status: ControlTowerStatus
+  message: string
+  required_config: string[]
+  last_updated: string | null
+}
+
+export interface ControlTowerSectionSummary {
+  key: 'attention' | 'trailers' | 'financial' | 'agents' | 'codex'
+  label: string
+  status: ControlTowerStatus
+  source_authority: string
+  item_count: number
+  message: string
+}
+
+export interface ControlTowerOverview {
+  generated_at: string
+  projection_mode: 'read_only'
+  sections: ControlTowerSectionSummary[]
+}
+
+export interface ControlTowerAttentionItem {
+  id: string
+  category: string
+  severity: AlertSeverity
+  action: string
+  message: string
+  source_authority: string
+  timestamp: string | null
+}
+
+export interface ControlTowerAttentionResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  items: ControlTowerAttentionItem[]
+  feeds: ControlTowerFeedStatus[]
+}
+
+export interface ControlTowerTrailerSummary {
+  total_trailers: number
+  gps_active: number
+  gps_inactive: number
+  geofence_events_today: number
+  yards_reporting: number
+  last_email_received: string | null
+}
+
+export interface ControlTowerYardLocation {
+  name: string
+  latitude: number
+  longitude: number
+  trailer_count: number
+}
+
+export interface ControlTowerTrailerEvent {
+  id: string
+  trailer_id: string
+  event_type: string
+  location: string | null
+  timestamp: string | null
+  source_authority: string
+}
+
+export interface ControlTowerTrailersResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  summary: ControlTowerTrailerSummary
+  yard_locations: ControlTowerYardLocation[]
+  geofence_events: ControlTowerTrailerEvent[]
+  bobtail_alerts: ControlTowerAttentionItem[]
+  feeds: ControlTowerFeedStatus[]
+}
+
+export interface ControlTowerFinancialBucket {
+  bucket: string
+  amount: number | null
+  count: number
+}
+
+export interface ControlTowerFinancialSummary {
+  pending_amount: number | null
+  pending_bills: number
+  overdue_amount: number | null
+  overdue_count: number
+  total: number | null
+}
+
+export interface ControlTowerFinancialResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  accounts_payable: ControlTowerFinancialSummary
+  accounts_receivable: ControlTowerFinancialBucket[]
+  cash_flow: Record<string, number | null>
+  audit_queue: Record<string, number | string[]>
+  feeds: ControlTowerFeedStatus[]
+}
+
+export interface ControlTowerAgentFlow {
+  name: string
+  status: ControlTowerStatus
+  detail: string
+}
+
+export interface ControlTowerAgentSystem {
+  name: string
+  status: ControlTowerStatus
+  usage: string | null
+  flows: ControlTowerAgentFlow[]
+}
+
+export interface ControlTowerAgentsResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  systems: ControlTowerAgentSystem[]
+}
+
+export interface ControlTowerCodexResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  overall_status: ControlTowerStatus
+  repository: string | null
+  branch: string | null
+  commit_sha: string | null
+  run_id: string | null
+  message: string
+  feeds: ControlTowerFeedStatus[]
+}

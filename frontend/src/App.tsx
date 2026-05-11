@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database } from 'lucide-react'
+import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import FleetAnalytics from './components/FleetAnalytics'
 import FleetChat from './components/FleetChat'
@@ -22,11 +22,12 @@ import GeofenceManager from './components/GeofenceManager'
 import FuelAnalytics from './components/FuelAnalytics'
 import ComplianceDashboard from './components/ComplianceDashboard'
 import DataConnector from './components/DataConnector'
+import ControlTower from './components/ControlTower'
 import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus } from './hooks/useGeotab'
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'control-tower' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'>('dashboard')
   
   const overview = useFleetOverview()
   const vehicles = useVehicles()
@@ -93,6 +94,17 @@ export default function App() {
             >
               <BarChart3 className="w-4 h-4" />
               <span className="hidden sm:inline">Dashboard</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('control-tower')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === 'control-tower'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
+              }`}
+            >
+              <Activity className="w-4 h-4" />
+              <span className="hidden sm:inline">Tower</span>
             </button>
             <button
               onClick={() => setActiveTab('maintenance')}
@@ -313,6 +325,10 @@ export default function App() {
 
         {activeTab === 'maintenance' && (
           <MaintenancePredictor />
+        )}
+
+        {activeTab === 'control-tower' && (
+          <ControlTower />
         )}
 
         {activeTab === 'coaching' && (

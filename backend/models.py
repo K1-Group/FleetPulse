@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -314,3 +314,144 @@ class FleetCoachingSummary(BaseModel):
     best_improved: list[str] = Field(default_factory=list, description="Driver names")
     worst_performers: list[str] = Field(default_factory=list, description="Driver names")
     fleet_fuel_savings_potential: float = Field(ge=0, le=30, description="Potential fuel savings %")
+
+
+# ── Control Tower ──────────────────────────────────────────────
+class ControlTowerStatus(str, Enum):
+    HEALTHY = "healthy"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    AWAITING_FEED = "awaiting_feed"
+    UNAVAILABLE = "unavailable"
+
+
+class ControlTowerFeedStatus(BaseModel):
+    name: str
+    source_authority: str
+    status: ControlTowerStatus = ControlTowerStatus.AWAITING_FEED
+    message: str
+    required_config: list[str] = Field(default_factory=list)
+    last_updated: Optional[datetime] = None
+
+
+class ControlTowerSectionSummary(BaseModel):
+    key: str
+    label: str
+    status: ControlTowerStatus
+    source_authority: str
+    item_count: int = 0
+    message: str
+
+
+class ControlTowerOverview(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    sections: list[ControlTowerSectionSummary] = Field(default_factory=list)
+
+
+class ControlTowerAttentionItem(BaseModel):
+    id: str
+    category: str
+    severity: AlertSeverity
+    action: str
+    message: str
+    source_authority: str
+    timestamp: Optional[datetime] = None
+
+
+class ControlTowerAttentionResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    items: list[ControlTowerAttentionItem] = Field(default_factory=list)
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
+class ControlTowerTrailerSummary(BaseModel):
+    total_trailers: int = 0
+    gps_active: int = 0
+    gps_inactive: int = 0
+    geofence_events_today: int = 0
+    yards_reporting: int = 0
+    last_email_received: Optional[str] = None
+
+
+class ControlTowerYardLocation(BaseModel):
+    name: str
+    latitude: float
+    longitude: float
+    trailer_count: int = 0
+
+
+class ControlTowerTrailerEvent(BaseModel):
+    id: str
+    trailer_id: str
+    event_type: str
+    location: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    source_authority: str = "Outlook/XTRA"
+
+
+class ControlTowerTrailersResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    summary: ControlTowerTrailerSummary = Field(default_factory=ControlTowerTrailerSummary)
+    yard_locations: list[ControlTowerYardLocation] = Field(default_factory=list)
+    geofence_events: list[ControlTowerTrailerEvent] = Field(default_factory=list)
+    bobtail_alerts: list[ControlTowerAttentionItem] = Field(default_factory=list)
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
+class ControlTowerFinancialBucket(BaseModel):
+    bucket: str
+    amount: Optional[float] = None
+    count: int = 0
+
+
+class ControlTowerFinancialSummary(BaseModel):
+    pending_amount: Optional[float] = None
+    pending_bills: int = 0
+    overdue_amount: Optional[float] = None
+    overdue_count: int = 0
+    total: Optional[float] = None
+
+
+class ControlTowerFinancialResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    source_authority: str = "K1 Group LLC / Xcelerator / QuickBooks"
+    accounts_payable: ControlTowerFinancialSummary = Field(default_factory=ControlTowerFinancialSummary)
+    accounts_receivable: list[ControlTowerFinancialBucket] = Field(default_factory=list)
+    cash_flow: dict[str, Optional[float]] = Field(default_factory=dict)
+    audit_queue: dict[str, Union[int, list[str]]] = Field(default_factory=dict)
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
+class ControlTowerAgentFlow(BaseModel):
+    name: str
+    status: ControlTowerStatus
+    detail: str
+
+
+class ControlTowerAgentSystem(BaseModel):
+    name: str
+    status: ControlTowerStatus
+    usage: Optional[str] = None
+    flows: list[ControlTowerAgentFlow] = Field(default_factory=list)
+
+
+class ControlTowerAgentsResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    systems: list[ControlTowerAgentSystem] = Field(default_factory=list)
+
+
+class ControlTowerCodexResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    overall_status: ControlTowerStatus
+    repository: Optional[str] = None
+    branch: Optional[str] = None
+    commit_sha: Optional[str] = None
+    run_id: Optional[str] = None
+    message: str
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)

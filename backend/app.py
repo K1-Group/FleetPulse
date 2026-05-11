@@ -39,6 +39,7 @@ _ROUTERS = [
     ("geofences", "/api/geofences", ["Geofence Management"]),
     ("fuel", "/api/fuel", ["Fuel Analytics"]),
     ("compliance", "/api/compliance", ["Compliance & ELD"]),
+    ("control_tower", "/api/control-tower", ["Control Tower"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),
     ("zapier", "/api/zapier", ["Zapier"]),

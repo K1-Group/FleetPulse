@@ -42,6 +42,11 @@ OPS_BOUNDS = {"lat_min": 32.00, "lat_max": 40.00, "lon_min": -98.00, "lon_max": 
 # K1 speeding threshold: 6 mph (~10 km/h) over posted speed limit
 SPEEDING_THRESHOLD_MPH = 6
 SPEEDING_THRESHOLD_KMH = 10  # approximate conversion
+KMH_TO_MPH = 0.621371
+
+
+def _format_mph(speed_kmh: float) -> str:
+    return f"{speed_kmh * KMH_TO_MPH:.0f} mph"
 
 
 def _uid(parts: str) -> str:
@@ -96,13 +101,13 @@ def check_speed_anomalies(statuses: list[dict], device_map: dict[str, str]) -> l
         if speed > 140:
             alerts.append(_make_alert(
                 dev_id, name, "extreme_speed", AlertSeverity.CRITICAL,
-                f"⚠️ {name} traveling at {speed} km/h — dangerously above limit",
+                f"⚠️ {name} traveling at {_format_mph(speed)} — dangerously above limit",
                 "Immediate intervention recommended. Contact driver."
             ))
         elif speed > 120:
             alerts.append(_make_alert(
                 dev_id, name, "high_speed", AlertSeverity.HIGH,
-                f"🚨 {name} at {speed} km/h — significantly above speed limit",
+                f"🚨 {name} at {_format_mph(speed)} — significantly above speed limit",
                 "Review driver behavior pattern."
             ))
     return alerts
@@ -219,7 +224,7 @@ def check_fleet_patterns(statuses: list[dict], device_map: dict[str, str]) -> li
             if avg_speed > 80:
                 alerts.append(_make_alert(
                     "fleet", "Fleet-wide", "high_avg_speed", AlertSeverity.MEDIUM,
-                    f"📈 Fleet average speed unusually high: {avg_speed:.0f} km/h across {len(speeds)} active vehicles",
+                    f"📈 Fleet average speed unusually high: {_format_mph(avg_speed)} across {len(speeds)} active vehicles",
                     "Review driver training compliance."
                 ))
 
