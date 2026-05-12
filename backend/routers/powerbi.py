@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
+from services.lane_stability_service import get_lane_stability_snapshot
 from services.safety_service import get_safety_scores
 
 router = APIRouter()
@@ -29,15 +30,30 @@ def _dump(value: Any) -> dict[str, Any]:
     raise TypeError(f"Unsupported Power BI row type: {type(value).__name__}")
 
 
-def _with_export_meta(row: dict[str, Any], connection_name: str) -> dict[str, Any]:
+def _with_export_meta(
+    row: dict[str, Any],
+    connection_name: str,
+    *,
+    source_system: str = "FleetPulse",
+    source_authority: str = "Geotab",
+) -> dict[str, Any]:
     return {
         **row,
         "connection_name": connection_name,
         "exported_at": _now_iso(),
-        "source_system": "FleetPulse",
-        "source_authority": "Geotab",
+        "source_system": source_system,
+        "source_authority": source_authority,
         "projection_mode": "read_only",
     }
+
+
+def _with_lane_stability_meta(row: dict[str, Any], connection_name: str) -> dict[str, Any]:
+    return _with_export_meta(
+        row,
+        connection_name,
+        source_system="Xcelerator",
+        source_authority="K1 Group LLC / Xcelerator",
+    )
 
 
 @router.get("/overview")
@@ -113,6 +129,97 @@ async def powerbi_fleetpulse_snapshot(days: int = Query(7, ge=1, le=90)) -> dict
             "vehicles": len(vehicles),
             "safety_scores": len(safety_scores),
         },
+    }
+
+
+@router.get("/lane-stability/company")
+async def powerbi_lane_stability_company(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: company KPIs from Xcelerator orders."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    return [_with_lane_stability_meta(snapshot["company_kpis"], "lane_stability_company")]
+
+
+@router.get("/lane-stability/by-service")
+async def powerbi_lane_stability_by_service(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: service-level rollup."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    period = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "feed_status": snapshot["feed_status"],
+    }
+    return [
+        _with_lane_stability_meta({**period, **row}, "lane_stability_by_service")
+        for row in snapshot["by_service"]
+    ]
+
+
+@router.get("/lane-stability/lanes")
+async def powerbi_lane_stability_lanes(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: lane-level driver stability."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    period = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "feed_status": snapshot["feed_status"],
+    }
+    return [
+        _with_lane_stability_meta({**period, **row}, "lane_stability_lanes")
+        for row in snapshot["lanes"]
+    ]
+
+
+@router.get("/lane-stability/routes")
+async def powerbi_lane_stability_routes(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: route-slot breakdown within each lane."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    period = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "feed_status": snapshot["feed_status"],
+    }
+    return [
+        _with_lane_stability_meta({**period, **row}, "lane_stability_routes")
+        for row in snapshot["routes"]
+    ]
+
+
+@router.get("/lane-stability/daily")
+async def powerbi_lane_stability_daily(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: daily operational review trend."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    period = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "feed_status": snapshot["feed_status"],
+    }
+    return [
+        _with_lane_stability_meta({**period, **row}, "lane_stability_daily")
+        for row in snapshot["daily"]
+    ]
+
+
+@router.get("/lane-stability/trend")
+async def powerbi_lane_stability_trend(days: int = Query(7, ge=1, le=90)) -> list[dict[str, Any]]:
+    """Power BI lane stability table: better/worse lane deltas vs baseline."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    return [
+        _with_lane_stability_meta(row, "lane_stability_trend")
+        for row in snapshot["trend"]
+    ]
+
+
+@router.get("/lane-stability-snapshot")
+async def powerbi_lane_stability_snapshot(days: int = Query(7, ge=1, le=90)) -> dict[str, Any]:
+    """Power BI lane stability snapshot for one-source imports."""
+    snapshot = get_lane_stability_snapshot(days=days)
+    return {
+        "connection_name": "lane_stability_snapshot",
+        "exported_at": _now_iso(),
+        "source_system": "Xcelerator",
+        "source_authority": "K1 Group LLC / Xcelerator",
+        "projection_mode": "read_only",
+        **snapshot,
     }
 
 

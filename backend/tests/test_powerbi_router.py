@@ -92,6 +92,56 @@ def _client(monkeypatch) -> TestClient:
             )
         ],
     )
+    monkeypatch.setattr(
+        powerbi,
+        "get_lane_stability_snapshot",
+        lambda days=7: {
+            "period_start": "2026-05-03",
+            "period_end": "2026-05-09",
+            "generated_at": "2026-05-10T12:00:00+00:00",
+            "feed_status": "healthy",
+            "company_kpis": {
+                "period_start": "2026-05-03",
+                "period_end": "2026-05-09",
+                "feed_status": "healthy",
+                "total_revenue": 304844.11,
+                "weighted_stable_cov_pct": 0.7467,
+                "source_authority": "K1 Group LLC / Xcelerator",
+                "projection_mode": "read_only",
+            },
+            "by_service": [
+                {"service": "LH", "lanes": 2, "orders": 5, "weighted_stable_cov_pct": 0.8}
+            ],
+            "lanes": [
+                {
+                    "service": "LH",
+                    "lane": "HDS K1",
+                    "status": "At Risk",
+                    "orders": 5,
+                    "stable_cov_pct": 0.4,
+                    "num_routes": 3,
+                    "primary_route": "DFW 009",
+                }
+            ],
+            "routes": [
+                {"service": "LH", "lane": "HDS K1", "route": "DFW 009", "orders": 3}
+            ],
+            "daily": [
+                {"date": "2026-05-09", "orders": 5, "daily_stable_cov_pct": 0.4}
+            ],
+            "trend": [
+                {
+                    "period_start": "2026-05-03",
+                    "period_end": "2026-05-09",
+                    "service": "LH",
+                    "lane": "HDS K1",
+                    "trend_type": "degrading",
+                    "delta_stable_cov_pct": -0.5,
+                }
+            ],
+            "row_counts": {"by_service": 1, "lanes": 1, "routes": 1, "daily": 1, "trend": 1},
+        },
+    )
 
     app = FastAPI()
     app.include_router(powerbi.router, prefix="/api/powerbi")
@@ -164,3 +214,41 @@ def test_powerbi_dashboard_preview_serves_html(monkeypatch):
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "FleetPulse Power BI Dashboard Preview" in response.text
+
+
+def test_powerbi_lane_stability_company_is_xcelerator_projection(monkeypatch):
+    response = _client(monkeypatch).get("/api/powerbi/lane-stability/company")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows[0]["connection_name"] == "lane_stability_company"
+    assert rows[0]["source_system"] == "Xcelerator"
+    assert rows[0]["source_authority"] == "K1 Group LLC / Xcelerator"
+    assert rows[0]["projection_mode"] == "read_only"
+    assert rows[0]["total_revenue"] == 304844.11
+
+
+def test_powerbi_lane_stability_tables(monkeypatch):
+    for path, expected_key in [
+        ("/api/powerbi/lane-stability/by-service", "service"),
+        ("/api/powerbi/lane-stability/lanes", "lane"),
+        ("/api/powerbi/lane-stability/routes", "route"),
+        ("/api/powerbi/lane-stability/daily", "date"),
+        ("/api/powerbi/lane-stability/trend", "trend_type"),
+    ]:
+        response = _client(monkeypatch).get(path)
+
+        assert response.status_code == 200
+        rows = response.json()
+        assert rows[0]["source_system"] == "Xcelerator"
+        assert rows[0][expected_key]
+
+
+def test_powerbi_lane_stability_snapshot(monkeypatch):
+    response = _client(monkeypatch).get("/api/powerbi/lane-stability-snapshot")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connection_name"] == "lane_stability_snapshot"
+    assert payload["source_authority"] == "K1 Group LLC / Xcelerator"
+    assert payload["row_counts"]["lanes"] == 1

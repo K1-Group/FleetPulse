@@ -37,6 +37,12 @@ TABLE_ENDPOINTS = {
     "FleetPulseLocations": "/api/powerbi/locations",
     "FleetPulseVehicles": "/api/powerbi/vehicles",
     "FleetPulseSafetyScores": "/api/powerbi/safety-scores?days=7",
+    "LaneStabilityCompany": "/api/powerbi/lane-stability/company?days=7",
+    "LaneStabilityByService": "/api/powerbi/lane-stability/by-service?days=7",
+    "LaneStabilityLanes": "/api/powerbi/lane-stability/lanes?days=7",
+    "LaneStabilityRoutes": "/api/powerbi/lane-stability/routes?days=7",
+    "LaneStabilityDaily": "/api/powerbi/lane-stability/daily?days=7",
+    "LaneStabilityTrend": "/api/powerbi/lane-stability/trend?days=7",
 }
 
 TABLE_SCHEMAS: dict[str, list[dict[str, str]]] = {
@@ -104,6 +110,151 @@ TABLE_SCHEMAS: dict[str, list[dict[str, str]]] = {
         {"name": "harsh_acceleration_events", "dataType": "Int64"},
         {"name": "harsh_cornering_events", "dataType": "Int64"},
         {"name": "period_days", "dataType": "Int64"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityCompany": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "generated_at", "dataType": "DateTime"},
+        {"name": "feed_status", "dataType": "String"},
+        {"name": "feed_message", "dataType": "String"},
+        {"name": "total_orders", "dataType": "Int64"},
+        {"name": "billed_orders", "dataType": "Int64"},
+        {"name": "total_revenue", "dataType": "Double"},
+        {"name": "total_revenue_source", "dataType": "String"},
+        {"name": "total_gm", "dataType": "Double"},
+        {"name": "gm_pct", "dataType": "Double"},
+        {"name": "total_driver_pay", "dataType": "Double"},
+        {"name": "team_subset_revenue", "dataType": "Double"},
+        {"name": "team_subset_gm", "dataType": "Double"},
+        {"name": "weighted_stable_cov_pct", "dataType": "Double"},
+        {"name": "baseline_weighted_stable_cov_pct", "dataType": "Double"},
+        {"name": "delta_vs_baseline_pct", "dataType": "Double"},
+        {"name": "total_lanes", "dataType": "Int64"},
+        {"name": "critical", "dataType": "Int64"},
+        {"name": "at_risk", "dataType": "Int64"},
+        {"name": "watch", "dataType": "Int64"},
+        {"name": "stable", "dataType": "Int64"},
+        {"name": "cross_route_lanes", "dataType": "Int64"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityByService": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "feed_status", "dataType": "String"},
+        {"name": "service", "dataType": "String"},
+        {"name": "lanes", "dataType": "Int64"},
+        {"name": "critical", "dataType": "Int64"},
+        {"name": "at_risk", "dataType": "Int64"},
+        {"name": "watch", "dataType": "Int64"},
+        {"name": "stable", "dataType": "Int64"},
+        {"name": "cross_route", "dataType": "Int64"},
+        {"name": "orders", "dataType": "Int64"},
+        {"name": "revenue", "dataType": "Double"},
+        {"name": "gm", "dataType": "Double"},
+        {"name": "gm_pct", "dataType": "Double"},
+        {"name": "weighted_stable_cov_pct", "dataType": "Double"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityLanes": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "feed_status", "dataType": "String"},
+        {"name": "service", "dataType": "String"},
+        {"name": "lane", "dataType": "String"},
+        {"name": "status", "dataType": "String"},
+        {"name": "status_rank", "dataType": "Int64"},
+        {"name": "orders", "dataType": "Int64"},
+        {"name": "unique_drivers", "dataType": "Int64"},
+        {"name": "stable_driver", "dataType": "String"},
+        {"name": "stable_runs", "dataType": "Int64"},
+        {"name": "stable_cov_pct", "dataType": "Double"},
+        {"name": "swaps", "dataType": "Int64"},
+        {"name": "swap_rate_pct", "dataType": "Double"},
+        {"name": "revenue", "dataType": "Double"},
+        {"name": "gm", "dataType": "Double"},
+        {"name": "gm_pct", "dataType": "Double"},
+        {"name": "driver_pay", "dataType": "Double"},
+        {"name": "num_routes", "dataType": "Int64"},
+        {"name": "primary_route", "dataType": "String"},
+        {"name": "primary_route_pct", "dataType": "Double"},
+        {"name": "cross_route", "dataType": "bool"},
+        {"name": "routes_used", "dataType": "String"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityRoutes": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "feed_status", "dataType": "String"},
+        {"name": "service", "dataType": "String"},
+        {"name": "lane", "dataType": "String"},
+        {"name": "route", "dataType": "String"},
+        {"name": "orders", "dataType": "Int64"},
+        {"name": "route_pct_of_lane", "dataType": "Double"},
+        {"name": "primary_driver", "dataType": "String"},
+        {"name": "primary_driver_runs", "dataType": "Int64"},
+        {"name": "route_stable_cov_pct", "dataType": "Double"},
+        {"name": "lane_stable_cov_pct", "dataType": "Double"},
+        {"name": "lane_status", "dataType": "String"},
+        {"name": "lane_status_rank", "dataType": "Int64"},
+        {"name": "revenue", "dataType": "Double"},
+        {"name": "gm", "dataType": "Double"},
+        {"name": "gm_pct", "dataType": "Double"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityDaily": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "feed_status", "dataType": "String"},
+        {"name": "date", "dataType": "String"},
+        {"name": "orders", "dataType": "Int64"},
+        {"name": "active_lanes", "dataType": "Int64"},
+        {"name": "active_drivers", "dataType": "Int64"},
+        {"name": "revenue", "dataType": "Double"},
+        {"name": "gm", "dataType": "Double"},
+        {"name": "driver_pay", "dataType": "Double"},
+        {"name": "daily_stable_cov_pct", "dataType": "Double"},
+        {"name": "connection_name", "dataType": "String"},
+        {"name": "exported_at", "dataType": "DateTime"},
+        {"name": "source_system", "dataType": "String"},
+        {"name": "source_authority", "dataType": "String"},
+        {"name": "projection_mode", "dataType": "String"},
+    ],
+    "LaneStabilityTrend": [
+        {"name": "period_start", "dataType": "String"},
+        {"name": "period_end", "dataType": "String"},
+        {"name": "service", "dataType": "String"},
+        {"name": "lane", "dataType": "String"},
+        {"name": "trend_type", "dataType": "String"},
+        {"name": "baseline_stable_cov_pct", "dataType": "Double"},
+        {"name": "current_stable_cov_pct", "dataType": "Double"},
+        {"name": "delta_stable_cov_pct", "dataType": "Double"},
+        {"name": "baseline_status", "dataType": "String"},
+        {"name": "current_status", "dataType": "String"},
+        {"name": "current_revenue", "dataType": "Double"},
+        {"name": "current_orders", "dataType": "Int64"},
+        {"name": "current_num_routes", "dataType": "Int64"},
+        {"name": "current_primary_route", "dataType": "String"},
         {"name": "connection_name", "dataType": "String"},
         {"name": "exported_at", "dataType": "DateTime"},
         {"name": "source_system", "dataType": "String"},
@@ -218,6 +369,14 @@ def fetch_fleetpulse(path: str) -> list[dict[str, Any]]:
     return payload
 
 
+def normalize_rows_for_schema(table_name: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    columns = [column["name"] for column in TABLE_SCHEMAS[table_name]]
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        normalized.append({column: row.get(column) for column in columns})
+    return normalized
+
+
 def powerbi_url(path: str) -> str:
     return f"{POWERBI_API}/groups/{WORKSPACE_ID}{path}"
 
@@ -255,6 +414,19 @@ def create_dataset(token: str) -> dict[str, Any]:
             "defaultMode": "Push",
             "tables": tables,
         },
+    )
+
+
+def put_table_schema(token: str, dataset_id: str, table_name: str) -> None:
+    request_json(
+        token,
+        "PUT",
+        powerbi_url(f"/datasets/{dataset_id}/tables/{table_name}"),
+        {
+            "name": table_name,
+            "columns": TABLE_SCHEMAS[table_name],
+        },
+        accept_empty=True,
     )
 
 
@@ -429,6 +601,7 @@ def text_visual(name: str, x: float, y: float, width: float, height: float, text
 
 def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
     page_name = "fleetpulseops"
+    lane_page_name = "lanestability"
     theme_name = "K1FleetPulse"
     visuals = {
         "title": text_visual(
@@ -482,6 +655,82 @@ def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
                 sum_projection("FleetPulseSafetyScores", "event_count"),
                 sum_projection("FleetPulseSafetyScores", "speeding_events"),
                 sum_projection("FleetPulseSafetyScores", "harsh_braking_events"),
+            ],
+        ),
+    }
+    lane_visuals = {
+        "lane_title": text_visual(
+            "lane_title",
+            24,
+            18,
+            1200,
+            60,
+            "Lane Stability - read-only Xcelerator operational projection",
+        ),
+        "lane_company": pivot_visual(
+            "lane_company",
+            24,
+            100,
+            1220,
+            150,
+            [],
+            [
+                sum_projection("LaneStabilityCompany", "total_revenue"),
+                sum_projection("LaneStabilityCompany", "weighted_stable_cov_pct"),
+                sum_projection("LaneStabilityCompany", "critical"),
+                sum_projection("LaneStabilityCompany", "at_risk"),
+                sum_projection("LaneStabilityCompany", "cross_route_lanes"),
+            ],
+        ),
+        "lane_service": pivot_visual(
+            "lane_service",
+            24,
+            280,
+            580,
+            380,
+            [column_projection("LaneStabilityByService", "service", active=True)],
+            [
+                sum_projection("LaneStabilityByService", "lanes"),
+                sum_projection("LaneStabilityByService", "orders"),
+                sum_projection("LaneStabilityByService", "revenue"),
+                sum_projection("LaneStabilityByService", "weighted_stable_cov_pct"),
+                sum_projection("LaneStabilityByService", "cross_route"),
+            ],
+        ),
+        "lane_problem": pivot_visual(
+            "lane_problem",
+            634,
+            280,
+            610,
+            180,
+            [
+                column_projection("LaneStabilityLanes", "service", active=True),
+                column_projection("LaneStabilityLanes", "lane"),
+                column_projection("LaneStabilityLanes", "status"),
+                column_projection("LaneStabilityLanes", "primary_route"),
+            ],
+            [
+                sum_projection("LaneStabilityLanes", "orders"),
+                sum_projection("LaneStabilityLanes", "revenue"),
+                sum_projection("LaneStabilityLanes", "stable_cov_pct"),
+                sum_projection("LaneStabilityLanes", "num_routes"),
+            ],
+        ),
+        "lane_trend": pivot_visual(
+            "lane_trend",
+            634,
+            490,
+            610,
+            170,
+            [
+                column_projection("LaneStabilityTrend", "trend_type", active=True),
+                column_projection("LaneStabilityTrend", "service"),
+                column_projection("LaneStabilityTrend", "lane"),
+            ],
+            [
+                sum_projection("LaneStabilityTrend", "current_revenue"),
+                sum_projection("LaneStabilityTrend", "current_orders"),
+                sum_projection("LaneStabilityTrend", "delta_stable_cov_pct"),
             ],
         ),
     }
@@ -572,7 +821,7 @@ def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
             "definition/pages/pages.json",
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/pagesMetadata/1.0.0/schema.json",
-                "pageOrder": [page_name],
+                "pageOrder": [page_name, lane_page_name],
                 "activePageName": page_name,
             },
         ),
@@ -587,9 +836,24 @@ def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
                 "width": 1280,
             },
         ),
+        encoded_part(
+            f"definition/pages/{lane_page_name}/page.json",
+            {
+                "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+                "name": lane_page_name,
+                "displayName": "Lane Stability",
+                "displayOption": "FitToPage",
+                "height": 720,
+                "width": 1280,
+            },
+        ),
     ]
     for visual_name, visual_payload in visuals.items():
         parts.append(encoded_part(f"definition/pages/{page_name}/visuals/{visual_name}/visual.json", visual_payload))
+    for visual_name, visual_payload in lane_visuals.items():
+        parts.append(
+            encoded_part(f"definition/pages/{lane_page_name}/visuals/{visual_name}/visual.json", visual_payload)
+        )
     return {"format": "PBIR", "parts": parts}
 
 
@@ -613,7 +877,7 @@ def main() -> int:
     token = get_token()
     fabric_token = get_fabric_token()
     rows_by_table = {
-        table_name: fetch_fleetpulse(endpoint)
+        table_name: normalize_rows_for_schema(table_name, fetch_fleetpulse(endpoint))
         for table_name, endpoint in TABLE_ENDPOINTS.items()
     }
 
@@ -627,6 +891,7 @@ def main() -> int:
 
     for table_name in TABLE_SCHEMAS:
         if not created_dataset:
+            put_table_schema(token, dataset_id, table_name)
             clear_table(token, dataset_id, table_name)
         push_rows(token, dataset_id, table_name, rows_by_table[table_name])
 

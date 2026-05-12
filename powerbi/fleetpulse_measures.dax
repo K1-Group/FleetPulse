@@ -83,3 +83,47 @@ CALCULATE (
 Last FleetPulse Export =
 MAX ( FleetPulseOverview[exported_at] )
 
+Lane Stability Revenue =
+SUM ( LaneStabilityCompany[total_revenue] )
+
+Lane Stability Team Revenue =
+SUM ( LaneStabilityCompany[team_subset_revenue] )
+
+Weighted Stable Coverage % =
+AVERAGE ( LaneStabilityCompany[weighted_stable_cov_pct] )
+
+Baseline Stable Coverage % =
+AVERAGE ( LaneStabilityCompany[baseline_weighted_stable_cov_pct] )
+
+Stable Coverage Delta =
+AVERAGE ( LaneStabilityCompany[delta_vs_baseline_pct] )
+
+Critical Lanes =
+SUM ( LaneStabilityCompany[critical] )
+
+At Risk Lanes =
+SUM ( LaneStabilityCompany[at_risk] )
+
+Cross Route Lanes =
+SUM ( LaneStabilityCompany[cross_route_lanes] )
+
+Problem Lane Count =
+CALCULATE (
+    COUNTROWS ( LaneStabilityLanes ),
+    LaneStabilityLanes[status] IN { "Critical", "At Risk" }
+)
+
+Improving Lane Count =
+CALCULATE (
+    COUNTROWS ( LaneStabilityTrend ),
+    LaneStabilityTrend[trend_type] = "improving"
+)
+
+Degrading Lane Count =
+CALCULATE (
+    COUNTROWS ( LaneStabilityTrend ),
+    LaneStabilityTrend[trend_type] = "degrading"
+)
+
+Last Lane Stability Export =
+MAX ( LaneStabilityCompany[exported_at] )
