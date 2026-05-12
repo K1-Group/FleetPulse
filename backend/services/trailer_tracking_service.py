@@ -323,10 +323,12 @@ def get_live_trailer_tracking() -> ControlTowerTrailerTrackingResponse:
         radius_meters = _int_env("FLEETPULSE_TRAILER_MATCH_RADIUS_METERS", 150)
         last_geotab_contact: datetime | None = None
 
+        matched_xtra_keys: set[str] = set()
         for device in trailer_devices:
             geotab_device_id = str(device.get("id") or "")
             trailer_id = _trailer_id_from_device(device)
-            key = _asset_key(trailer_id) or geotab_device_id
+            xtra_key = _asset_key(trailer_id)
+            asset_key = geotab_device_id or xtra_key or trailer_id
             status = status_by_device.get(geotab_device_id, {})
             position = _vehicle_position_from_status(
                 status,
@@ -337,9 +339,11 @@ def get_live_trailer_tracking() -> ControlTowerTrailerTrackingResponse:
             timestamp = _status_timestamp(status)
             if timestamp and (last_geotab_contact is None or timestamp > last_geotab_contact):
                 last_geotab_contact = timestamp
-            xtra_event = xtra_events.get(key)
+            xtra_event = xtra_events.get(xtra_key)
+            if xtra_event:
+                matched_xtra_keys.add(xtra_key)
             custody = _custody_for_position(position, vehicles, radius_meters)
-            trailer_assets[key] = ControlTowerTrailerLiveAsset(
+            trailer_assets[asset_key] = ControlTowerTrailerLiveAsset(
                 trailer_id=trailer_id,
                 trailer_name=str(device.get("name") or trailer_id),
                 geotab_device_id=geotab_device_id,
@@ -355,7 +359,7 @@ def get_live_trailer_tracking() -> ControlTowerTrailerTrackingResponse:
             )
 
         for key, event in xtra_events.items():
-            if key in trailer_assets:
+            if key in matched_xtra_keys:
                 continue
             trailer_assets[key] = ControlTowerTrailerLiveAsset(
                 trailer_id=event.trailer_id,
