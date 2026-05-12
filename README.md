@@ -117,6 +117,36 @@ short-lived cached live response with `source_mode=cached_after_geotab_timeout`;
 when no cache exists, it returns an explicit unavailable/empty response instead
 of demo numbers.
 
+#### XTRA Lease Geofence Feed
+```env
+FLEETPULSE_XTRA_INGESTION_ENABLED=true
+FLEETPULSE_XTRA_OUTLOOK_MAILBOX=xtra-feed@example.com
+FLEETPULSE_XTRA_GEOFENCE_FOLDER=XTRA Lease Trailer Geofence Tracker
+FLEETPULSE_XTRA_INGESTION_API_KEY=store-in-key-vault
+FLEETPULSE_GRAPH_TENANT_ID=tenant-id
+FLEETPULSE_GRAPH_CLIENT_ID=app-client-id
+FLEETPULSE_GRAPH_CLIENT_SECRET=store-in-key-vault
+FLEETPULSE_XTRA_STATE_PATH=/home/data/fleetpulse_xtra_lease_ingestion_state.json
+FLEETPULSE_XTRA_SHAREPOINT_LOG_WEBHOOK_URL=
+FLEETPULSE_TEAMS_ALERT_WEBHOOK_URL=
+FLEETPULSE_TWILIO_ACCOUNT_SID=
+FLEETPULSE_TWILIO_AUTH_TOKEN=
+FLEETPULSE_TWILIO_FROM_NUMBER=
+FLEETPULSE_TWILIO_ALERT_TO_NUMBER=
+```
+
+The XTRA adapter reads one configured Outlook folder through Microsoft Graph,
+stores only read-only geofence event references, and deduplicates each email by
+idempotency key. Use a least-privilege app registration with mailbox-scoped
+Graph access; grant only `Mail.Read` and constrain the service principal to the
+configured XTRA mailbox with Exchange application RBAC or an application access
+policy. Trigger ingestion from an approved scheduler with:
+
+```bash
+curl -X POST https://k1-fleetpulse.azurewebsites.net/api/control-tower/trailers/xtra/ingest \
+  -H "X-FleetPulse-Xtra-Key: $FLEETPULSE_XTRA_INGESTION_API_KEY"
+```
+
 ### Backend
 ```bash
 # Create virtual environment
@@ -277,6 +307,9 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |
+| **🚚 Control Tower Endpoints** |
+| `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
+| `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
 | **🧠 AI Endpoints** |
 | `POST /api/ai/chat` | **Claude AI-powered chat** (with conversation history) |
 | `POST /api/ai/chat/stream` | **Streaming AI responses** (Server-Sent Events) |

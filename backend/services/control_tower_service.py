@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
+from configs.xtra_lease import XtraLeaseIngestionConfig
 from geotab_client import GeotabClient
 from models import (
     Alert,
@@ -29,12 +30,14 @@ from models import (
     ControlTowerSectionSummary,
     ControlTowerStatus,
     ControlTowerTrailerSummary,
+    ControlTowerTrailerEvent,
     ControlTowerTrailersResponse,
     ControlTowerYardLocation,
 )
 from services.alert_service import get_recent_alerts
 from services.fleet_service import LOCATIONS
 from services.monitor_service import get_monitor_alerts, get_monitor_status
+from services.xtra_lease_ingestion_service import XtraLeaseProjection, get_xtra_lease_projection
 
 
 TRAILER_GROUP_IDS_DEFAULT = "GroupTrailerId"
@@ -205,6 +208,16 @@ def _status_timestamp(status: dict[str, Any]) -> datetime | None:
     return None
 
 
+def _parse_iso_datetime(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 def _is_active_gps(status: dict[str, Any], now: datetime) -> bool:
     timestamp = _status_timestamp(status)
     if not timestamp:
@@ -213,25 +226,81 @@ def _is_active_gps(status: dict[str, Any], now: datetime) -> bool:
     return (now - timestamp).total_seconds() <= stale_hours * 3600
 
 
+def _count_events_today(events: list[ControlTowerTrailerEvent], now: datetime) -> int:
+    today = now.astimezone(timezone.utc).date()
+    return sum(1 for event in events if event.timestamp and event.timestamp.astimezone(timezone.utc).date() == today)
+
+
+def _xtra_feed_status(
+    config: XtraLeaseIngestionConfig,
+    projection: XtraLeaseProjection | None,
+    error: str | None = None,
+) -> ControlTowerFeedStatus:
+    if not config.mailbox_configured:
+        return _feed(
+            "XTRA Outlook geofence feed",
+            "Outlook / XTRA Lease",
+            ControlTowerStatus.AWAITING_FEED,
+            "Trailer geofence email ingestion is not configured in this FleetPulse service yet.",
+            ["FLEETPULSE_XTRA_OUTLOOK_MAILBOX", "FLEETPULSE_XTRA_GEOFENCE_FOLDER"],
+        )
+    if not config.enabled:
+        return _feed(
+            "XTRA Outlook geofence feed",
+            "Outlook / XTRA Lease",
+            ControlTowerStatus.WARNING,
+            "XTRA Outlook mailbox and folder are configured, but ingestion is not enabled yet.",
+            ["FLEETPULSE_XTRA_INGESTION_ENABLED"],
+        )
+    missing = config.missing_ingestion_config()
+    if missing:
+        return _feed(
+            "XTRA Outlook geofence feed",
+            "Outlook / XTRA Lease",
+            ControlTowerStatus.WARNING,
+            "XTRA ingestion is enabled, but required Graph or endpoint configuration is missing.",
+            missing,
+        )
+    if error:
+        return _feed(
+            "XTRA Outlook geofence feed",
+            "Outlook / XTRA Lease",
+            ControlTowerStatus.UNAVAILABLE,
+            f"XTRA ingestion state unavailable: {error}",
+            ["FLEETPULSE_XTRA_STATE_PATH"],
+        )
+    last_updated = _parse_iso_datetime(projection.last_email_received if projection else None)
+    if last_updated:
+        return _feed(
+            "XTRA Outlook geofence feed",
+            "Outlook / XTRA Lease",
+            ControlTowerStatus.HEALTHY,
+            "XTRA Outlook ingestion adapter is live and importing geofence email events.",
+            last_updated=last_updated,
+        )
+    return _feed(
+        "XTRA Outlook geofence feed",
+        "Outlook / XTRA Lease",
+        ControlTowerStatus.WARNING,
+        "XTRA Outlook ingestion adapter is live, but no geofence emails have been imported yet.",
+    )
+
+
 def get_trailers() -> ControlTowerTrailersResponse:
     """Return XTRA/trailer control surface without inventing the Outlook feed."""
 
-    xtra_mail_configured = _env_present("FLEETPULSE_XTRA_OUTLOOK_MAILBOX") and _env_present(
-        "FLEETPULSE_XTRA_GEOFENCE_FOLDER"
-    )
-    feeds: list[ControlTowerFeedStatus] = [
-        _feed(
-            "XTRA Outlook geofence feed",
-            "Outlook / XTRA Lease",
-            ControlTowerStatus.WARNING if xtra_mail_configured else ControlTowerStatus.AWAITING_FEED,
-            (
-                "XTRA Outlook mailbox and folder are configured, but the email ingestion adapter is not live yet."
-                if xtra_mail_configured
-                else "Trailer geofence email ingestion is not configured in this FleetPulse service yet."
-            ),
-            ["FLEETPULSE_XTRA_OUTLOOK_MAILBOX", "FLEETPULSE_XTRA_GEOFENCE_FOLDER"],
-        )
-    ]
+    xtra_config = XtraLeaseIngestionConfig.from_env()
+    geofence_events: list[ControlTowerTrailerEvent] = []
+    last_email_received: str | None = None
+    xtra_projection: XtraLeaseProjection | None = None
+    xtra_error: str | None = None
+    try:
+        xtra_projection = get_xtra_lease_projection(xtra_config)
+        geofence_events = xtra_projection.events[:50]
+        last_email_received = xtra_projection.last_email_received
+    except Exception as exc:
+        xtra_error = type(exc).__name__
+    feeds: list[ControlTowerFeedStatus] = [_xtra_feed_status(xtra_config, xtra_projection, xtra_error)]
     yard_locations = [
         ControlTowerYardLocation(
             name=str(location["name"]),
@@ -241,11 +310,15 @@ def get_trailers() -> ControlTowerTrailersResponse:
         )
         for location in LOCATIONS
     ]
-    summary = ControlTowerTrailerSummary(last_email_received=None)
+    now = _now()
+    geofence_events_today = _count_events_today(geofence_events, now)
+    summary = ControlTowerTrailerSummary(
+        geofence_events_today=geofence_events_today,
+        last_email_received=last_email_received,
+    )
 
     try:
         group_ids = _csv_env("FLEETPULSE_TRAILER_GROUP_IDS", TRAILER_GROUP_IDS_DEFAULT)
-        now = _now()
         client = GeotabClient.get()
         devices = [
             device
@@ -274,9 +347,9 @@ def get_trailers() -> ControlTowerTrailersResponse:
             total_trailers=len(devices),
             gps_active=active,
             gps_inactive=inactive,
-            geofence_events_today=0,
+            geofence_events_today=geofence_events_today,
             yards_reporting=sum(1 for yard in yard_locations if yard.trailer_count > 0),
-            last_email_received=None,
+            last_email_received=last_email_received,
         )
         feeds.append(
             _feed(
@@ -301,6 +374,7 @@ def get_trailers() -> ControlTowerTrailersResponse:
         generated_at=_now(),
         summary=summary,
         yard_locations=yard_locations,
+        geofence_events=geofence_events,
         feeds=feeds,
     )
 

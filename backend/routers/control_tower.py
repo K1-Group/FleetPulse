@@ -1,7 +1,8 @@
 """Original Control Tower dashboard surfaces, restored as read-only projections."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 
+from configs.xtra_lease import XtraLeaseIngestionConfig
 from models import (
     ControlTowerAgentsResponse,
     ControlTowerAttentionResponse,
@@ -11,6 +12,11 @@ from models import (
     ControlTowerTrailersResponse,
 )
 from services import control_tower_service
+from services.xtra_lease_ingestion_service import (
+    XtraLeaseConfigError,
+    ingest_xtra_lease_emails,
+    validate_ingestion_api_key,
+)
 
 router = APIRouter()
 
@@ -28,6 +34,25 @@ def attention():
 @router.get("/trailers", response_model=ControlTowerTrailersResponse)
 def trailers():
     return control_tower_service.get_trailers()
+
+
+@router.post("/trailers/xtra/ingest")
+def ingest_xtra_trailer_feed(
+    x_fleetpulse_xtra_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    """Pull read-only XTRA geofence emails from the configured Outlook folder."""
+
+    config = XtraLeaseIngestionConfig.from_env()
+    try:
+        validate_ingestion_api_key(config, x_fleetpulse_xtra_key or x_api_key)
+        return ingest_xtra_lease_emails(config).as_dict()
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except XtraLeaseConfigError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="xtra_ingestion_failed") from exc
 
 
 @router.get("/financial", response_model=ControlTowerFinancialResponse)

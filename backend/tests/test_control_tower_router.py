@@ -99,6 +99,7 @@ def test_configured_feed_urls_report_adapter_pending_without_fake_values(monkeyp
 
 
 def test_trailer_mailbox_config_reports_adapter_pending(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XTRA_INGESTION_ENABLED", "false")
     monkeypatch.setenv("FLEETPULSE_XTRA_OUTLOOK_MAILBOX", "rami@example.com")
     monkeypatch.setenv("FLEETPULSE_XTRA_GEOFENCE_FOLDER", "XTRA Lease Trailer Geofence Tracker")
     monkeypatch.setattr(
@@ -117,7 +118,33 @@ def test_trailer_mailbox_config_reports_adapter_pending(monkeypatch):
     payload = response.json()
     xtra_feed = next(feed for feed in payload["feeds"] if feed["name"] == "XTRA Outlook geofence feed")
     assert xtra_feed["status"] == "warning"
-    assert "adapter is not live yet" in xtra_feed["message"]
+    assert "ingestion is not enabled yet" in xtra_feed["message"]
+
+
+def test_xtra_ingest_endpoint_requires_api_key(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XTRA_INGESTION_API_KEY", "expected")
+
+    response = _client().post("/api/control-tower/trailers/xtra/ingest")
+
+    assert response.status_code == 401
+
+
+def test_xtra_ingest_endpoint_runs_with_valid_api_key(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XTRA_INGESTION_API_KEY", "expected")
+
+    class FakeResult:
+        def as_dict(self):
+            return {"status": "ok", "imported_count": 1}
+
+    monkeypatch.setattr(control_tower, "ingest_xtra_lease_emails", lambda config: FakeResult())
+
+    response = _client().post(
+        "/api/control-tower/trailers/xtra/ingest",
+        headers={"X-FleetPulse-Xtra-Key": "expected"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 1
 
 
 def test_agents_report_configuration_presence_without_secret_values(monkeypatch):
