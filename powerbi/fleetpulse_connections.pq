@@ -31,6 +31,36 @@ let
             Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/safety-scores?days=7"))
         ),
 
+    LaneStabilityCompany =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/company?days=7"))
+        ),
+
+    LaneStabilityByService =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/by-service?days=7"))
+        ),
+
+    LaneStabilityLanes =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/lanes?days=7"))
+        ),
+
+    LaneStabilityRoutes =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/routes?days=7"))
+        ),
+
+    LaneStabilityDaily =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/daily?days=7"))
+        ),
+
+    LaneStabilityTrend =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/trend?days=7"))
+        ),
+
     FleetPulseSnapshot =
         Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/fleetpulse-snapshot?days=7"))
 in
@@ -39,5 +69,11 @@ in
         FleetPulseLocations = FleetPulseLocations,
         FleetPulseVehicles = FleetPulseVehicles,
         FleetPulseSafetyScores = FleetPulseSafetyScores,
+        LaneStabilityCompany = LaneStabilityCompany,
+        LaneStabilityByService = LaneStabilityByService,
+        LaneStabilityLanes = LaneStabilityLanes,
+        LaneStabilityRoutes = LaneStabilityRoutes,
+        LaneStabilityDaily = LaneStabilityDaily,
+        LaneStabilityTrend = LaneStabilityTrend,
         FleetPulseSnapshot = FleetPulseSnapshot
     ]

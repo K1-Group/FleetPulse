@@ -19,7 +19,7 @@ Set this Power BI parameter:
 FleetPulseBaseUrl = https://k1-fleetpulse.azurewebsites.net
 ```
 
-The five read-only tables are:
+The core Geotab read-only tables are:
 
 | Table | Endpoint |
 | --- | --- |
@@ -28,6 +28,18 @@ The five read-only tables are:
 | FleetPulseVehicles | `/api/powerbi/vehicles` |
 | FleetPulseSafetyScores | `/api/powerbi/safety-scores?days=7` |
 | FleetPulseSnapshot | `/api/powerbi/fleetpulse-snapshot?days=7` |
+
+The lane stability Xcelerator projection adds these read-only tables:
+
+| Table | Endpoint |
+| --- | --- |
+| LaneStabilityCompany | `/api/powerbi/lane-stability/company?days=7` |
+| LaneStabilityByService | `/api/powerbi/lane-stability/by-service?days=7` |
+| LaneStabilityLanes | `/api/powerbi/lane-stability/lanes?days=7` |
+| LaneStabilityRoutes | `/api/powerbi/lane-stability/routes?days=7` |
+| LaneStabilityDaily | `/api/powerbi/lane-stability/daily?days=7` |
+| LaneStabilityTrend | `/api/powerbi/lane-stability/trend?days=7` |
+| LaneStabilitySnapshot | `/api/powerbi/lane-stability-snapshot?days=7` |
 
 ## Build The Power BI Report
 
@@ -42,7 +54,40 @@ The five read-only tables are:
 
 - Recommended refresh interval: every 15 minutes during operations.
 - Authentication mode: Anonymous/Web for the public read-only FleetPulse projection endpoint, or the future managed service identity gateway if FleetPulse auth is tightened.
-- Do not write back to Geotab or FleetPulse from Power BI.
+- Do not write back to Geotab, Xcelerator, or FleetPulse from Power BI.
+
+## Lane Stability Source Configuration
+
+FleetPulse can score lane stability from a live JSON/CSV/XLSX ReviewOrders feed
+or from a precomputed lane stability JSON payload. Xcelerator remains the source
+of truth for orders, revenue, driver pay, and route assignments; FleetPulse only
+projects analytics rows for Power BI.
+
+Recommended live feed variables:
+
+```bash
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=https://example.internal/revieworders/latest
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
+FLEETPULSE_LANE_STABILITY_BASELINE_ORDER_FEED_URL=https://example.internal/revieworders/baseline
+FLEETPULSE_LANE_STABILITY_BASELINE_ORDER_FEED_API_KEY=
+FLEETPULSE_LANE_STABILITY_EXCLUDED_SCORING_SERVICES=ATL-ShipBob
+FLEETPULSE_LANE_STABILITY_EXCLUDED_SCORING_REF_PATTERNS=pay ticket,route ticket,tonu,service-only
+```
+
+Fallback payload variables for the current workbook-style JSON contract:
+
+```bash
+FLEETPULSE_LANE_STABILITY_PAYLOAD_URL=
+FLEETPULSE_LANE_STABILITY_PAYLOAD_PATH=
+FLEETPULSE_LANE_STABILITY_BASELINE_PAYLOAD_URL=
+FLEETPULSE_LANE_STABILITY_BASELINE_PAYLOAD_PATH=
+```
+
+Revenue methodology:
+
+- Company KPIs use the Xcelerator footer total when present, matching the TMS report total.
+- Lane scoring excludes configured pay-ticket/service-only rows and excluded services, but those rows still remain in company revenue.
+- Stable coverage is the primary-driver run count divided by total runs for the lane.
 
 ## Validation
 
@@ -54,10 +99,10 @@ python3 powerbi/validate_fleetpulse_connections.py
 
 The script verifies:
 
-- HTTP 200 for all five endpoints.
+- HTTP 200 for all configured fleet and lane-stability endpoints.
 - Non-empty overview, vehicles, and safety tables.
 - `projection_mode = read_only`.
-- `source_authority = Geotab`.
+- `source_authority = Geotab` for fleet tables and `K1 Group LLC / Xcelerator` for lane stability tables.
 - Snapshot row counts align with the individual endpoint counts.
 
 ## Publish To Power BI Workspace

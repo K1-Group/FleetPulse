@@ -20,6 +20,7 @@ class Endpoint:
     path: str
     expect_list: bool
     require_non_empty: bool = True
+    expected_authority: str = "Geotab"
 
 
 ENDPOINTS = [
@@ -28,6 +29,53 @@ ENDPOINTS = [
     Endpoint("vehicles", "/api/powerbi/vehicles", True),
     Endpoint("safety_scores", "/api/powerbi/safety-scores?days=7", True),
     Endpoint("fleetpulse_snapshot", "/api/powerbi/fleetpulse-snapshot?days=7", False),
+    Endpoint(
+        "lane_stability_company",
+        "/api/powerbi/lane-stability/company?days=7",
+        True,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_by_service",
+        "/api/powerbi/lane-stability/by-service?days=7",
+        True,
+        require_non_empty=False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_lanes",
+        "/api/powerbi/lane-stability/lanes?days=7",
+        True,
+        require_non_empty=False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_routes",
+        "/api/powerbi/lane-stability/routes?days=7",
+        True,
+        require_non_empty=False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_daily",
+        "/api/powerbi/lane-stability/daily?days=7",
+        True,
+        require_non_empty=False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_trend",
+        "/api/powerbi/lane-stability/trend?days=7",
+        True,
+        require_non_empty=False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
+    Endpoint(
+        "lane_stability_snapshot",
+        "/api/powerbi/lane-stability-snapshot?days=7",
+        False,
+        expected_authority="K1 Group LLC / Xcelerator",
+    ),
 ]
 
 
@@ -65,17 +113,19 @@ def validate_list_rows(endpoint: Endpoint, payload: Any) -> dict[str, Any]:
         if first_row.get("projection_mode") != "read_only":
             result["error"] = "projection_mode_not_read_only"
             return result
-        if first_row.get("source_authority") != "Geotab":
-            result["error"] = "source_authority_not_geotab"
+        if first_row.get("source_authority") != endpoint.expected_authority:
+            result["error"] = "source_authority_mismatch"
+            result["expected_authority"] = endpoint.expected_authority
+            result["actual_authority"] = first_row.get("source_authority")
             return result
 
     result["ok"] = True
     return result
 
 
-def validate_snapshot(payload: Any, observed_counts: dict[str, int]) -> dict[str, Any]:
+def validate_snapshot(endpoint: Endpoint, payload: Any, observed_counts: dict[str, int]) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "name": "fleetpulse_snapshot",
+        "name": endpoint.name,
         "ok": False,
         "row_counts": {},
     }
@@ -85,12 +135,18 @@ def validate_snapshot(payload: Any, observed_counts: dict[str, int]) -> dict[str
     if payload.get("projection_mode") != "read_only":
         result["error"] = "projection_mode_not_read_only"
         return result
-    if payload.get("source_authority") != "Geotab":
-        result["error"] = "source_authority_not_geotab"
+    if payload.get("source_authority") != endpoint.expected_authority:
+        result["error"] = "source_authority_mismatch"
+        result["expected_authority"] = endpoint.expected_authority
+        result["actual_authority"] = payload.get("source_authority")
         return result
 
     row_counts = payload.get("row_counts") or {}
     result["row_counts"] = row_counts
+    if endpoint.name == "lane_stability_snapshot":
+        result["ok"] = True
+        return result
+
     expected = {
         "overview": observed_counts.get("overview"),
         "locations": observed_counts.get("locations"),
@@ -134,7 +190,7 @@ def main() -> int:
             result = validate_list_rows(endpoint, payload)
             observed_counts[endpoint.name] = int(result.get("row_count", 0))
         else:
-            result = validate_snapshot(payload, observed_counts)
+            result = validate_snapshot(endpoint, payload, observed_counts)
         result["status"] = status
         result["url"] = url
         validations.append(result)
@@ -150,4 +206,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
