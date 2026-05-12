@@ -1,12 +1,14 @@
 """PDF Fleet Report generation endpoints."""
 
 from datetime import datetime, timedelta, timezone
+from html import escape
 from io import BytesIO
 from fastapi import APIRouter, Response
 from typing import Any
 
 from geotab_client import GeotabClient
 from _cache import get_cached, set_cached
+from services.trailer_tracking_service import get_live_trailer_tracking
 
 router = APIRouter()
 
@@ -18,6 +20,9 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
     devices = fleet_data.get("devices", [])
     trips = fleet_data.get("trips", [])
     exceptions = fleet_data.get("exceptions", [])
+    trailer_tracking = fleet_data.get("trailer_tracking")
+    trailer_summary = getattr(trailer_tracking, "summary", None)
+    trailers = getattr(trailer_tracking, "trailers", []) if trailer_tracking else []
     
     total_vehicles = len(devices)
     total_trips = len(trips)
@@ -75,6 +80,23 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
         <tr>
             <td style="padding:8px;border-bottom:1px solid #e5e7eb">{name}</td>
             <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center">{count}</td>
+        </tr>"""
+
+    trailer_rows = ""
+    for trailer in trailers[:30]:
+        custody = trailer.custody
+        event = trailer.xtra_last_event
+        custody_label = custody.vehicle_name or "Unassigned"
+        if custody.driver_name:
+            custody_label = f"{custody_label} / {custody.driver_name}"
+        gps_status = getattr(trailer.gps_status, "value", str(trailer.gps_status))
+        trailer_rows += f"""
+        <tr>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">{escape(trailer.trailer_id)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">{escape(gps_status)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">{escape(event.event_type if event else 'No XTRA event')}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb">{escape(custody_label)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right">{escape(custody.confidence)}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -144,6 +166,27 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
     </div>
 
     <div class="section">
+        <h2>Trailer Custody Snapshot</h2>
+        <p>
+            Live trailer tracking shows <strong>{getattr(trailer_summary, 'gps_active', 0)}</strong> trailers with current Geotab GPS,
+            <strong>{getattr(trailer_summary, 'xtra_event_trailers', 0)}</strong> trailers with recent XTRA geofence events, and
+            <strong>{getattr(trailer_summary, 'custody_inferred', 0)}</strong> proximity-based custody matches.
+        </p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Trailer</th>
+                    <th>GPS</th>
+                    <th>Last XTRA Event</th>
+                    <th>Candidate Tractor / Driver</th>
+                    <th style="text-align:right">Confidence</th>
+                </tr>
+            </thead>
+            <tbody>{trailer_rows if trailer_rows else '<tr><td colspan="5" style="padding:20px;text-align:center;color:#9ca3af">No live trailer tracking data available</td></tr>'}</tbody>
+        </table>
+    </div>
+
+    <div class="section">
         <h2>⚠️ Safety Exception Summary</h2>
         <table>
             <thead>
@@ -194,11 +237,16 @@ async def generate_report(period: str = "weekly"):
         devices = client.get_devices()
         trips = client.get_trips(from_date=from_date, to_date=now)
         exceptions = client.get_exception_events(from_date=from_date, to_date=now)
+        try:
+            trailer_tracking = get_live_trailer_tracking()
+        except Exception:
+            trailer_tracking = None
         
         fleet_data = {
             "devices": devices,
             "trips": trips,
             "exceptions": exceptions,
+            "trailer_tracking": trailer_tracking,
         }
         
         html = _build_html_report(fleet_data, period.capitalize())
@@ -212,6 +260,8 @@ async def generate_report(period: str = "weekly"):
                 "total_trips": len(trips),
                 "total_exceptions": len(exceptions),
                 "total_distance_mi": sum((t.get("distance", 0) or 0) for t in trips) * 0.621371,
+                "trailers_tracked": trailer_tracking.summary.total_trailers if trailer_tracking else 0,
+                "trailer_custody_inferred": trailer_tracking.summary.custody_inferred if trailer_tracking else 0,
             }
         }
         

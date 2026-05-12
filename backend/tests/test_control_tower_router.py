@@ -29,7 +29,7 @@ if "mygeotab" not in sys.modules:
     fake.API = _FakeAPI
     sys.modules["mygeotab"] = fake
 
-from models import Alert, AlertSeverity  # noqa: E402
+from models import Alert, AlertSeverity, ControlTowerTrailerTrackingResponse  # noqa: E402
 from routers import control_tower  # noqa: E402
 from services import control_tower_service  # noqa: E402
 
@@ -145,6 +145,19 @@ def test_xtra_ingest_endpoint_runs_with_valid_api_key(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["imported_count"] == 1
+
+
+def test_live_trailer_tracking_endpoint_returns_projection(monkeypatch):
+    monkeypatch.setattr(
+        control_tower,
+        "get_live_trailer_tracking",
+        lambda: ControlTowerTrailerTrackingResponse(generated_at=datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc)),
+    )
+
+    response = _client().get("/api/control-tower/trailers/live")
+
+    assert response.status_code == 200
+    assert response.json()["projection_mode"] == "read_only"
 
 
 def test_agents_report_configuration_presence_without_secret_values(monkeypatch):

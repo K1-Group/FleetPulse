@@ -147,6 +147,20 @@ curl -X POST https://k1-fleetpulse.azurewebsites.net/api/control-tower/trailers/
   -H "X-FleetPulse-Xtra-Key: $FLEETPULSE_XTRA_INGESTION_API_KEY"
 ```
 
+#### Live Trailer Tracking
+```env
+FLEETPULSE_TRAILER_GROUP_IDS=GroupTrailerId
+FLEETPULSE_TRAILER_MATCH_RADIUS_METERS=150
+FLEETPULSE_TRAILER_DRIVER_LOOKBACK_HOURS=12
+```
+
+`GET /api/control-tower/trailers/live` merges Geotab trailer GPS with the
+latest XTRA geofence events as read-only references. Custody is proximity-based:
+the nearest scoped Geotab tractor within `FLEETPULSE_TRAILER_MATCH_RADIUS_METERS`
+is shown as a candidate tractor/driver, not as an authoritative dispatch
+assignment. Xcelerator should remain the final dispatch/load owner when that
+assignment feed is connected.
+
 ### Backend
 ```bash
 # Create virtual environment

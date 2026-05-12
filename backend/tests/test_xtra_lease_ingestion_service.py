@@ -14,6 +14,7 @@ from integrations.outlook.graph_client import OutlookMessage  # noqa: E402
 from services.xtra_lease_ingestion_service import (  # noqa: E402
     get_xtra_lease_projection,
     ingest_xtra_lease_emails,
+    parse_xtra_message,
 )
 
 
@@ -28,7 +29,7 @@ class FakeGraphClient:
 def _configure_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FLEETPULSE_XTRA_INGESTION_ENABLED", "true")
     monkeypatch.setenv("FLEETPULSE_XTRA_OUTLOOK_MAILBOX", "xtra@example.com")
-    monkeypatch.setenv("FLEETPULSE_XTRA_GEOFENCE_FOLDER", "XTRA Lease Trailer Geofence Tracker")
+    monkeypatch.setenv("FLEETPULSE_XTRA_GEOFENCE_FOLDER", "XTRA Lease Tracking")
     monkeypatch.setenv("FLEETPULSE_XTRA_INGESTION_API_KEY", "expected")
     monkeypatch.setenv("FLEETPULSE_GRAPH_TENANT_ID", "tenant")
     monkeypatch.setenv("FLEETPULSE_GRAPH_CLIENT_ID", "client")
@@ -70,3 +71,25 @@ def test_ingestion_ignores_duplicates_and_updates_last_email(monkeypatch, tmp_pa
     assert projection.events[0].trailer_id == "ZX987"
     assert projection.events[0].event_type == "geofence_exit"
     assert projection.last_email_received == second_received.isoformat()
+
+
+def test_xtra_parser_uses_notification_subject_unit_id():
+    message = OutlookMessage(
+        id="graph-1",
+        internet_message_id="<xtra-live-1@example.com>",
+        subject="XTRA Trailer Tracking Notification: H03473- DT",
+        body_preview=(
+            "Notification Name: Trailer-Leaving-Landmark "
+            "Departed from landmark @DFW14 "
+            "Location/Time: Haslet, TX, US (2.64 mi SE) at 12:17 PM 5-12-2026 CDT "
+            "Speed/Heading: 52 mph traveling S"
+        ),
+        received_at=datetime(2026, 5, 12, 17, 18, 51, tzinfo=timezone.utc),
+    )
+
+    parsed = parse_xtra_message(message, "xtra@example.com")
+
+    assert parsed is not None
+    assert parsed.event.trailer_id == "H03473"
+    assert parsed.event.event_type == "geofence_exit"
+    assert parsed.event.location == "Haslet, TX, US (2.64 mi SE)"

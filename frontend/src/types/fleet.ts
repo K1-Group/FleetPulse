@@ -236,6 +236,52 @@ export interface ControlTowerTrailerEvent {
   source_authority: string
 }
 
+export interface ControlTowerTrailerCustody {
+  vehicle_id: string | null
+  vehicle_name: string | null
+  driver_id: string | null
+  driver_name: string | null
+  vehicle_position: VehiclePosition | null
+  distance_meters: number | null
+  confidence: string
+  source: string
+  note: string
+}
+
+export interface ControlTowerTrailerLiveAsset {
+  trailer_id: string
+  trailer_name: string
+  geotab_device_id: string | null
+  gps_status: VehicleStatus
+  position: VehiclePosition | null
+  location_name: string | null
+  speed: number
+  bearing: number
+  geotab_last_contact: string | null
+  xtra_last_event: ControlTowerTrailerEvent | null
+  custody: ControlTowerTrailerCustody
+  source_authorities: string[]
+}
+
+export interface ControlTowerTrailerTrackingSummary {
+  total_trailers: number
+  gps_active: number
+  gps_inactive: number
+  xtra_event_trailers: number
+  custody_inferred: number
+  custody_unassigned: number
+  last_geotab_contact: string | null
+  last_email_received: string | null
+}
+
+export interface ControlTowerTrailerTrackingResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  summary: ControlTowerTrailerTrackingSummary
+  trailers: ControlTowerTrailerLiveAsset[]
+  feeds: ControlTowerFeedStatus[]
+}
+
 export interface ControlTowerTrailersResponse {
   generated_at: string
   projection_mode: 'read_only'

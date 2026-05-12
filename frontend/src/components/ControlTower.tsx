@@ -17,6 +17,7 @@ import {
   useControlTowerAttention,
   useControlTowerCodex,
   useControlTowerFinancial,
+  useControlTowerTrailerTracking,
   useControlTowerOverview,
   useControlTowerTrailers,
 } from '../hooks/useGeotab'
@@ -141,6 +142,7 @@ export default function ControlTower() {
   const overview = useControlTowerOverview()
   const attention = useControlTowerAttention()
   const trailers = useControlTowerTrailers()
+  const liveTrailers = useControlTowerTrailerTracking()
   const financial = useControlTowerFinancial()
   const agents = useControlTowerAgents()
   const codex = useControlTowerCodex()
@@ -241,12 +243,25 @@ export default function ControlTower() {
                 ['GPS Active', trailers.data?.summary.gps_active ?? 0],
                 ['GPS Inactive', trailers.data?.summary.gps_inactive ?? 0],
                 ['Events Today', trailers.data?.summary.geofence_events_today ?? 0],
+                ['Custody', liveTrailers.data?.summary.custody_inferred ?? 0],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-gray-700/50 bg-gray-800/50 p-3 light:bg-gray-50 light:border-gray-200">
                   <p className="text-xs text-gray-400 light:text-gray-600">{label}</p>
                   <p className="mt-1 text-2xl font-bold text-white light:text-gray-900">{value}</p>
                 </div>
               ))}
+            </div>
+            <h4 className="mt-5 mb-2 text-sm font-semibold text-gray-200 light:text-gray-800">Live Custody</h4>
+            <div className="max-h-72 overflow-auto rounded-lg border border-gray-700/40 light:border-gray-200">
+              {(liveTrailers.data?.trailers || []).slice(0, 12).map(trailer => (
+                <div key={trailer.geotab_device_id || trailer.trailer_id} className="grid grid-cols-1 gap-2 border-b border-gray-800/60 p-3 text-sm last:border-b-0 light:border-gray-200 md:grid-cols-4">
+                  <span className="font-semibold text-white light:text-gray-900">{trailer.trailer_id}</span>
+                  <span className="capitalize text-gray-300 light:text-gray-700">{trailer.gps_status}</span>
+                  <span className="text-gray-300 light:text-gray-700">{trailer.custody.vehicle_name || 'Unassigned'}</span>
+                  <span className="text-gray-400 light:text-gray-600">{trailer.custody.driver_name || trailer.custody.confidence}</span>
+                </div>
+              ))}
+              {!liveTrailers.data?.trailers.length && <EmptyState label="No live trailer custody rows returned yet." />}
             </div>
             <h4 className="mt-5 mb-2 text-sm font-semibold text-gray-200 light:text-gray-800">Yards</h4>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">

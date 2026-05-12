@@ -9,9 +9,11 @@ from models import (
     ControlTowerCodexResponse,
     ControlTowerFinancialResponse,
     ControlTowerOverview,
+    ControlTowerTrailerTrackingResponse,
     ControlTowerTrailersResponse,
 )
 from services import control_tower_service
+from services.trailer_tracking_service import get_live_trailer_tracking
 from services.xtra_lease_ingestion_service import (
     XtraLeaseConfigError,
     ingest_xtra_lease_emails,
@@ -34,6 +36,11 @@ def attention():
 @router.get("/trailers", response_model=ControlTowerTrailersResponse)
 def trailers():
     return control_tower_service.get_trailers()
+
+
+@router.get("/trailers/live", response_model=ControlTowerTrailerTrackingResponse)
+def live_trailer_tracking():
+    return get_live_trailer_tracking()
 
 
 @router.post("/trailers/xtra/ingest")

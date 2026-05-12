@@ -96,7 +96,7 @@ export default function FleetReports() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
+            className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6"
           >
             <div className="bg-gray-800/30 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-blue-400">{summary.total_vehicles || 0}</div>
@@ -113,6 +113,10 @@ export default function FleetReports() {
             <div className="bg-gray-800/30 rounded-lg p-4 text-center">
               <div className="text-2xl font-bold text-amber-400">{summary.total_exceptions || 0}</div>
               <div className="text-xs text-gray-500 uppercase">Exceptions</div>
+            </div>
+            <div className="bg-gray-800/30 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-cyan-400">{summary.trailer_custody_inferred || 0}</div>
+              <div className="text-xs text-gray-500 uppercase">Trailer Custody</div>
             </div>
           </motion.div>
         )}

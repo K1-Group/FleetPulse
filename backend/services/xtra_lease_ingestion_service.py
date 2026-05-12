@@ -27,6 +27,15 @@ from utils.idempotency import stable_idempotency_key
 logger = logging.getLogger(__name__)
 
 XTRA_SOURCE_AUTHORITY = "Outlook / XTRA Lease"
+XTRA_IDEMPOTENCY_NAMESPACE = "xtra_lease_geofence_email_v2"
+_INVALID_TRAILER_IDS = {
+    "GEOFENCE",
+    "LEASE",
+    "NOTIFICATION",
+    "TRACKING",
+    "TRAILER",
+    "XTRA",
+}
 _STATE_LOCK = threading.Lock()
 
 
@@ -107,7 +116,7 @@ class XtraLeaseStateStore:
         with _STATE_LOCK:
             state = self.load_state()
         events = [_event_from_raw(raw) for raw in state.get("events", [])]
-        events = [event for event in events if event is not None]
+        events = [event for event in events if event is not None and _valid_trailer_id(event.trailer_id)]
         events.sort(key=lambda event: event.timestamp or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         return XtraLeaseProjection(
             events=events,
@@ -120,7 +129,11 @@ class XtraLeaseStateStore:
             state = self.load_state()
             processed_keys = [str(key) for key in state.get("processed_idempotency_keys", [])]
             processed = set(processed_keys)
-            events = list(state.get("events", []))
+            events = [
+                event
+                for event in state.get("events", [])
+                if isinstance(event, dict) and _valid_trailer_id(str(event.get("trailer_id") or ""))
+            ]
             imported = 0
             duplicates = 0
             newest_received = _parse_optional_datetime(state.get("last_email_received"))
@@ -166,20 +179,38 @@ def _event_from_raw(raw: Any) -> ControlTowerTrailerEvent | None:
         return None
 
 
+def _valid_trailer_id(value: str | None) -> bool:
+    return bool(value and value.upper().strip(" .,:;") not in _INVALID_TRAILER_IDS)
+
+
 def _message_text(message: OutlookMessage) -> str:
     return "\n".join(part for part in [message.subject, message.body_preview] if part)
 
 
+def _clean_trailer_id(value: str) -> str | None:
+    candidate = re.sub(r"\s*-\s*", "-", value.upper().strip(" .,:;"))
+    candidate = re.split(r"[\r\n]|\s{2,}", candidate, maxsplit=1)[0]
+    candidate = candidate.split()[0] if candidate.split() else candidate
+    cleaned = re.sub(r"\s+", "", candidate)
+    if re.fullmatch(r"[A-Z]\d{3,8}-[A-Z]{1,8}", cleaned):
+        cleaned = cleaned.split("-", 1)[0]
+    cleaned = cleaned.rstrip("-")
+    return cleaned if _valid_trailer_id(cleaned) else None
+
+
 def _extract_trailer_id(text: str) -> str | None:
     patterns = [
-        r"\b(?:trailer|unit|asset|equipment)\s*(?:id|number|no\.?|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{2,})\b",
+        r"\bXTRA\s+TRAILER\s+TRACKING\s+NOTIFICATION\s*:\s*([^\n\r]+)",
+        r"\b(?:trailer|unit|asset|equipment)\s+([A-Z0-9][A-Z0-9-]{2,})\s+(?:entered|exited|arrived|departed)\b",
+        r"\b(?:trailer|unit|asset|equipment)\s*(?:id|number|no\.?|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{2,})\b",
+        r"\b(?:trailer|unit|asset|equipment)\s*[:#]\s*([A-Z0-9][A-Z0-9-]{2,})\b",
         r"\bVIN\s*[:#-]?\s*([A-HJ-NPR-Z0-9]{11,17})\b",
     ]
     upper_text = text.upper()
     for pattern in patterns:
         for match in re.finditer(pattern, upper_text, flags=re.IGNORECASE):
-            value = match.group(1).strip(" .,:;")
-            if value not in {"XTRA", "LEASE", "GEOFENCE", "TRAILER"}:
+            value = _clean_trailer_id(match.group(1))
+            if value:
                 return value
     return None
 
@@ -195,6 +226,8 @@ def _extract_event_type(text: str) -> str:
 
 def _extract_location(text: str) -> str | None:
     patterns = [
+        r"\bLocation/Time\s*:\s*([^\n\r]+?)(?:\s+at\s+\d{1,2}:\d{2}|\s+\d{1,2}:\d{2}|$)",
+        r"\b(?:Arrived at|Departed from)\s+landmark\s+([^\n\r]+?)\s+Location/Time\b",
         r"\b(?:geofence|location|site|yard)\s*(?:name)?\s*[:#-]\s*([^\n\r,;]+)",
         r"\b(?:entered|exited|arrived at|departed)\s+([A-Z0-9][A-Z0-9 .'-]{2,60})",
     ]
@@ -215,7 +248,7 @@ def parse_xtra_message(message: OutlookMessage, mailbox: str) -> ParsedXtraEmail
 
     source_message_id = message.internet_message_id or message.id
     key = stable_idempotency_key(
-        "xtra_lease_geofence_email_v1",
+        XTRA_IDEMPOTENCY_NAMESPACE,
         mailbox,
         source_message_id,
         message.received_at.isoformat(),

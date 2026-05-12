@@ -6,6 +6,7 @@ import type {
   ControlTowerCodexResponse,
   ControlTowerFinancialResponse,
   ControlTowerOverview,
+  ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
@@ -157,6 +158,10 @@ export function useControlTowerAttention() {
 
 export function useControlTowerTrailers() {
   return useFetch<ControlTowerTrailersResponse>(`${API}/control-tower/trailers`, 60000)
+}
+
+export function useControlTowerTrailerTracking() {
+  return useFetch<ControlTowerTrailerTrackingResponse>(`${API}/control-tower/trailers/live`, 30000)
 }
 
 export function useControlTowerFinancial() {

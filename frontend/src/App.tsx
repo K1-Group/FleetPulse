@@ -23,7 +23,7 @@ import FuelAnalytics from './components/FuelAnalytics'
 import ComplianceDashboard from './components/ComplianceDashboard'
 import DataConnector from './components/DataConnector'
 import ControlTower from './components/ControlTower'
-import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus } from './hooks/useGeotab'
+import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false)
@@ -37,6 +37,7 @@ export default function App() {
   const locations = useLocations()
   const monitorAlerts = useMonitorAlerts()
   const monitorStatus = useMonitorStatus()
+  const trailerTracking = useControlTowerTrailerTracking()
 
   const triggerCheck = useCallback(() => {
     fetch('/api/monitor/check', { method: 'POST' }).then(() => {
@@ -236,7 +237,7 @@ export default function App() {
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.3, duration: 0.5 }}
             >
-              <FleetMap vehicles={vehicles.data} locations={locations.data} />
+              <FleetMap vehicles={vehicles.data} locations={locations.data} trailers={trailerTracking.data?.trailers || null} />
             </motion.div>
           </div>
           <motion.div

@@ -391,6 +391,52 @@ class ControlTowerTrailerEvent(BaseModel):
     source_authority: str = "Outlook/XTRA"
 
 
+class ControlTowerTrailerCustody(BaseModel):
+    vehicle_id: Optional[str] = None
+    vehicle_name: Optional[str] = None
+    driver_id: Optional[str] = None
+    driver_name: Optional[str] = None
+    vehicle_position: Optional[VehiclePosition] = None
+    distance_meters: Optional[float] = None
+    confidence: str = "none"
+    source: str = "none"
+    note: str = "No current Geotab proximity match."
+
+
+class ControlTowerTrailerLiveAsset(BaseModel):
+    trailer_id: str
+    trailer_name: str
+    geotab_device_id: Optional[str] = None
+    gps_status: VehicleStatus = VehicleStatus.OFFLINE
+    position: Optional[VehiclePosition] = None
+    location_name: Optional[str] = None
+    speed: float = 0
+    bearing: float = 0
+    geotab_last_contact: Optional[datetime] = None
+    xtra_last_event: Optional[ControlTowerTrailerEvent] = None
+    custody: ControlTowerTrailerCustody = Field(default_factory=ControlTowerTrailerCustody)
+    source_authorities: list[str] = Field(default_factory=list)
+
+
+class ControlTowerTrailerTrackingSummary(BaseModel):
+    total_trailers: int = 0
+    gps_active: int = 0
+    gps_inactive: int = 0
+    xtra_event_trailers: int = 0
+    custody_inferred: int = 0
+    custody_unassigned: int = 0
+    last_geotab_contact: Optional[datetime] = None
+    last_email_received: Optional[str] = None
+
+
+class ControlTowerTrailerTrackingResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    summary: ControlTowerTrailerTrackingSummary = Field(default_factory=ControlTowerTrailerTrackingSummary)
+    trailers: list[ControlTowerTrailerLiveAsset] = Field(default_factory=list)
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
 class ControlTowerTrailersResponse(BaseModel):
     generated_at: datetime
     projection_mode: str = "read_only"
