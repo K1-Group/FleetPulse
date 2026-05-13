@@ -918,20 +918,32 @@ def create_native_report(
     *,
     include_lane_stability: bool,
 ) -> dict[str, Any]:
+    definition = build_native_report_definition(
+        dataset_id,
+        include_lane_stability=include_lane_stability,
+    )
     reports = list_items(powerbi_token, "reports")
     existing = find_by_name(reports, "name", NATIVE_REPORT_NAME)
     if existing:
-        return existing
+        updated = request_json(
+            fabric_token,
+            "POST",
+            fabric_url(f"/reports/{existing['id']}/updateDefinition"),
+            {"definition": definition},
+            accept_empty=True,
+        )
+        return {
+            **existing,
+            "definition_updated": True,
+            "update_result": updated,
+        }
     return request_json(
         fabric_token,
         "POST",
         fabric_url("/reports"),
         {
             "displayName": NATIVE_REPORT_NAME,
-            "definition": build_native_report_definition(
-                dataset_id,
-                include_lane_stability=include_lane_stability,
-            ),
+            "definition": definition,
         },
     )
 
