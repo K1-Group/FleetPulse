@@ -385,7 +385,6 @@ def normalize_rows_for_schema(table_name: str, rows: list[dict[str, Any]]) -> li
         normalized.append({column: row.get(column) for column in columns})
     return normalized
 
-
 def lane_stability_certification(rows_by_table: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     """Return whether Xcelerator lane stability is accurate enough to publish."""
 
