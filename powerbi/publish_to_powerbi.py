@@ -30,6 +30,7 @@ CLONE_REPORT_NAME = os.getenv("POWERBI_CLONE_REPORT_NAME", "FleetPulse Live Oper
 SOURCE_REPORT_ID = os.getenv("POWERBI_SOURCE_REPORT_ID", "11418278-aee5-4d4a-9379-f3a51a84794f")
 NATIVE_REPORT_NAME = os.getenv("POWERBI_NATIVE_REPORT_NAME", "FleetPulse Live Operations Native Report")
 ENABLE_CLONE = os.getenv("POWERBI_ENABLE_CLONE", "false").strip().lower() == "true"
+REQUIRE_LANE_STABILITY = os.getenv("POWERBI_REQUIRE_LANE_STABILITY", "false").strip().lower() == "true"
 
 
 TABLE_ENDPOINTS = {
@@ -43,6 +44,14 @@ TABLE_ENDPOINTS = {
     "LaneStabilityRoutes": "/api/powerbi/lane-stability/routes?days=7",
     "LaneStabilityDaily": "/api/powerbi/lane-stability/daily?days=7",
     "LaneStabilityTrend": "/api/powerbi/lane-stability/trend?days=7",
+}
+LANE_STABILITY_TABLES = {
+    "LaneStabilityCompany",
+    "LaneStabilityByService",
+    "LaneStabilityLanes",
+    "LaneStabilityRoutes",
+    "LaneStabilityDaily",
+    "LaneStabilityTrend",
 }
 
 TABLE_SCHEMAS: dict[str, list[dict[str, str]]] = {
@@ -376,6 +385,47 @@ def normalize_rows_for_schema(table_name: str, rows: list[dict[str, Any]]) -> li
         normalized.append({column: row.get(column) for column in columns})
     return normalized
 
+def lane_stability_certification(rows_by_table: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Return whether Xcelerator lane stability is accurate enough to publish."""
+
+    company_rows = rows_by_table.get("LaneStabilityCompany") or []
+    if not company_rows:
+        return {
+            "status": "blocked",
+            "reason": "lane_stability_company_empty",
+            "publishable": False,
+        }
+    company = company_rows[0]
+    feed_status = company.get("feed_status")
+    total_orders = int(company.get("total_orders") or 0)
+    total_revenue_source = company.get("total_revenue_source")
+    if feed_status != "healthy":
+        return {
+            "status": "blocked",
+            "reason": "lane_stability_feed_not_healthy",
+            "feed_status": feed_status,
+            "feed_message": company.get("feed_message"),
+            "publishable": False,
+        }
+    if total_orders < 1 or total_revenue_source == "no_feed":
+        return {
+            "status": "blocked",
+            "reason": "lane_stability_no_xcelerator_rows",
+            "feed_status": feed_status,
+            "total_orders": total_orders,
+            "total_revenue_source": total_revenue_source,
+            "publishable": False,
+        }
+    return {
+        "status": "verified",
+        "reason": "lane_stability_feed_healthy",
+        "feed_status": feed_status,
+        "total_orders": total_orders,
+        "total_revenue": company.get("total_revenue"),
+        "total_revenue_source": total_revenue_source,
+        "publishable": True,
+    }
+
 
 def powerbi_url(path: str) -> str:
     return f"{POWERBI_API}/groups/{WORKSPACE_ID}{path}"
@@ -599,7 +649,7 @@ def text_visual(name: str, x: float, y: float, width: float, height: float, text
     }
 
 
-def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
+def build_native_report_definition(dataset_id: str, *, include_lane_stability: bool = True) -> dict[str, Any]:
     page_name = "fleetpulseops"
     lane_page_name = "lanestability"
     theme_name = "K1FleetPulse"
@@ -821,7 +871,7 @@ def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
             "definition/pages/pages.json",
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/pagesMetadata/1.0.0/schema.json",
-                "pageOrder": [page_name, lane_page_name],
+                "pageOrder": [page_name] + ([lane_page_name] if include_lane_stability else []),
                 "activePageName": page_name,
             },
         ),
@@ -836,28 +886,38 @@ def build_native_report_definition(dataset_id: str) -> dict[str, Any]:
                 "width": 1280,
             },
         ),
-        encoded_part(
-            f"definition/pages/{lane_page_name}/page.json",
-            {
-                "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
-                "name": lane_page_name,
-                "displayName": "Lane Stability",
-                "displayOption": "FitToPage",
-                "height": 720,
-                "width": 1280,
-            },
-        ),
     ]
+    if include_lane_stability:
+        parts.append(
+            encoded_part(
+                f"definition/pages/{lane_page_name}/page.json",
+                {
+                    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+                    "name": lane_page_name,
+                    "displayName": "Lane Stability",
+                    "displayOption": "FitToPage",
+                    "height": 720,
+                    "width": 1280,
+                },
+            )
+        )
     for visual_name, visual_payload in visuals.items():
         parts.append(encoded_part(f"definition/pages/{page_name}/visuals/{visual_name}/visual.json", visual_payload))
-    for visual_name, visual_payload in lane_visuals.items():
-        parts.append(
-            encoded_part(f"definition/pages/{lane_page_name}/visuals/{visual_name}/visual.json", visual_payload)
-        )
+    if include_lane_stability:
+        for visual_name, visual_payload in lane_visuals.items():
+            parts.append(
+                encoded_part(f"definition/pages/{lane_page_name}/visuals/{visual_name}/visual.json", visual_payload)
+            )
     return {"format": "PBIR", "parts": parts}
 
 
-def create_native_report(fabric_token: str, powerbi_token: str, dataset_id: str) -> dict[str, Any]:
+def create_native_report(
+    fabric_token: str,
+    powerbi_token: str,
+    dataset_id: str,
+    *,
+    include_lane_stability: bool,
+) -> dict[str, Any]:
     reports = list_items(powerbi_token, "reports")
     existing = find_by_name(reports, "name", NATIVE_REPORT_NAME)
     if existing:
@@ -868,7 +928,10 @@ def create_native_report(fabric_token: str, powerbi_token: str, dataset_id: str)
         fabric_url("/reports"),
         {
             "displayName": NATIVE_REPORT_NAME,
-            "definition": build_native_report_definition(dataset_id),
+            "definition": build_native_report_definition(
+                dataset_id,
+                include_lane_stability=include_lane_stability,
+            ),
         },
     )
 
@@ -880,6 +943,17 @@ def main() -> int:
         table_name: normalize_rows_for_schema(table_name, fetch_fleetpulse(endpoint))
         for table_name, endpoint in TABLE_ENDPOINTS.items()
     }
+    lane_certification = lane_stability_certification(rows_by_table)
+    publish_table_names = set(TABLE_SCHEMAS)
+    if not lane_certification["publishable"]:
+        if REQUIRE_LANE_STABILITY:
+            raise RuntimeError(
+                "Lane stability is not publishable: "
+                + json.dumps(lane_certification, sort_keys=True)
+            )
+        for table_name in LANE_STABILITY_TABLES:
+            rows_by_table[table_name] = []
+        publish_table_names -= LANE_STABILITY_TABLES
 
     datasets = list_items(token, "datasets")
     dataset = find_by_name(datasets, "name", DATASET_NAME)
@@ -890,6 +964,8 @@ def main() -> int:
     dataset_id = dataset["id"]
 
     for table_name in TABLE_SCHEMAS:
+        if table_name not in publish_table_names:
+            continue
         if not created_dataset:
             put_table_schema(token, dataset_id, table_name)
             clear_table(token, dataset_id, table_name)
@@ -903,7 +979,12 @@ def main() -> int:
         created_dashboard = True
 
     report = clone_report(token, dataset_id)
-    native_report = create_native_report(fabric_token, token, dataset_id)
+    native_report = create_native_report(
+        fabric_token,
+        token,
+        dataset_id,
+        include_lane_stability=lane_certification["publishable"],
+    )
 
     result = {
         "workspace": {"id": WORKSPACE_ID, "name": WORKSPACE_NAME},
@@ -922,9 +1003,16 @@ def main() -> int:
         "report": report,
         "native_report": native_report,
         "row_counts": {name: len(rows) for name, rows in rows_by_table.items()},
+        "published_tables": sorted(publish_table_names),
+        "certification": {
+            "fleet_ops": "verified",
+            "track_trace": "verified_in_fleetpulse_control_tower",
+            "lane_stability": lane_certification,
+            "dispatch": "blocked_until_xcelerator_event_feed_and_power_automate_flow_are_healthy",
+        },
         "source": {
             "base_url": FLEETPULSE_BASE_URL,
-            "authority": "Geotab",
+            "authority": "Geotab; K1 Group LLC / Xcelerator when lane_stability.publishable=true",
             "projection_mode": "read_only",
         },
     }

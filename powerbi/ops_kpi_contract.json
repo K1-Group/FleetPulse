@@ -1,0 +1,410 @@
+{
+  "contract_name": "FleetPulse Ops Dashboard KPI Contract",
+  "version": "2026-05-12",
+  "base_url_env": "FLEETPULSE_BASE_URL",
+  "default_base_url": "https://k1-fleetpulse.azurewebsites.net",
+  "status_model": {
+    "verified": "All required live checks passed for the role.",
+    "needs_attention": "Required checks passed, but one or more warnings or known limitations remain.",
+    "blocked": "One or more required checks failed; do not certify this role page."
+  },
+  "roles": [
+    {
+      "id": "fleet_ops_manager",
+      "label": "Fleet Ops Manager",
+      "source_boundary": "Geotab is authoritative for vehicle telemetry, safety, trip activity, and fleet performance.",
+      "kpis": [
+        "vehicle_status_counts",
+        "trips_today",
+        "stops_today",
+        "miles_today",
+        "average_trip_hours",
+        "trip_target_attainment",
+        "vehicle_map",
+        "terminal_coverage",
+        "safety_score_snapshot"
+      ],
+      "known_limitations": [
+        "Frontend sparklines and trend arrows must be backed by historical endpoint data before they are treated as verified KPI trends."
+      ],
+      "endpoint_checks": [
+        {
+          "id": "dashboard_overview",
+          "path": "/api/dashboard/overview",
+          "payload_type": "object",
+          "required": true,
+          "expected_source_authority": "Geotab",
+          "required_fields": [
+            "total_vehicles",
+            "active",
+            "parked",
+            "offline",
+            "total_trips_today",
+            "total_stops_today",
+            "total_distance_miles",
+            "avg_trip_duration_hours",
+            "source_authority"
+          ],
+          "minimums": [
+            {
+              "path": "total_vehicles",
+              "min": 1
+            }
+          ]
+        },
+        {
+          "id": "powerbi_overview",
+          "path": "/api/powerbi/overview",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": true,
+          "expected_source_authority": "Geotab",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "total_vehicles",
+            "active",
+            "parked",
+            "offline",
+            "source_authority",
+            "projection_mode"
+          ]
+        },
+        {
+          "id": "powerbi_vehicles",
+          "path": "/api/powerbi/vehicles",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": true,
+          "expected_source_authority": "Geotab",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "id",
+            "name",
+            "status",
+            "latitude",
+            "longitude",
+            "last_contact",
+            "source_authority",
+            "projection_mode"
+          ]
+        },
+        {
+          "id": "powerbi_locations",
+          "path": "/api/powerbi/locations",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": true,
+          "expected_source_authority": "Geotab",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "name",
+            "vehicle_count",
+            "active",
+            "source_authority",
+            "projection_mode"
+          ]
+        },
+        {
+          "id": "powerbi_safety_scores",
+          "path": "/api/powerbi/safety-scores?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": true,
+          "expected_source_authority": "Geotab",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "vehicle_id",
+            "vehicle_name",
+            "score",
+            "event_count",
+            "source_authority",
+            "projection_mode"
+          ]
+        },
+        {
+          "id": "powerbi_fleetpulse_snapshot",
+          "path": "/api/powerbi/fleetpulse-snapshot?days=7",
+          "payload_type": "object",
+          "required": true,
+          "expected_source_authority": "Geotab",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "row_counts.overview",
+            "row_counts.locations",
+            "row_counts.vehicles",
+            "row_counts.safety_scores",
+            "source_authority",
+            "projection_mode"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "track_trace",
+      "label": "Track & Trace",
+      "source_boundary": "Geotab and XTRA provide visibility references; Xcelerator must confirm final dispatch assignment.",
+      "kpis": [
+        "live_vehicle_position",
+        "trailer_gps_active_inactive",
+        "xtra_event_recency",
+        "custody_candidate",
+        "yard_geofence_volume",
+        "unassigned_trailers"
+      ],
+      "known_limitations": [
+        "Custody is inferred from Geotab proximity until Xcelerator assignment is live.",
+        "Driver identity can be blank when no recent Geotab trip driver is attached to the nearby tractor."
+      ],
+      "endpoint_checks": [
+        {
+          "id": "control_tower_trailers",
+          "path": "/api/control-tower/trailers",
+          "payload_type": "object",
+          "required": true,
+          "required_fields": [
+            "summary.total_trailers",
+            "summary.gps_active",
+            "summary.gps_inactive",
+            "summary.geofence_events_today",
+            "summary.last_email_received",
+            "feeds"
+          ],
+          "minimums": [
+            {
+              "path": "summary.total_trailers",
+              "min": 1
+            }
+          ],
+          "recent_timestamps": [
+            {
+              "path": "summary.last_email_received",
+              "max_age_hours": 72
+            }
+          ],
+          "named_statuses": [
+            {
+              "name_contains": "XTRA Outlook geofence feed",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            },
+            {
+              "name_contains": "Geotab trailer device group",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "control_tower_trailers_live",
+          "path": "/api/control-tower/trailers/live",
+          "payload_type": "object",
+          "required": true,
+          "required_fields": [
+            "summary.total_trailers",
+            "summary.gps_active",
+            "summary.gps_inactive",
+            "summary.xtra_event_trailers",
+            "summary.custody_inferred",
+            "summary.custody_unassigned",
+            "summary.last_email_received",
+            "feeds"
+          ],
+          "minimums": [
+            {
+              "path": "summary.total_trailers",
+              "min": 1
+            }
+          ],
+          "recent_timestamps": [
+            {
+              "path": "summary.last_email_received",
+              "max_age_hours": 72
+            }
+          ],
+          "named_statuses": [
+            {
+              "name_contains": "XTRA Outlook geofence feed",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            },
+            {
+              "name_contains": "Geotab trailer GPS feed",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dispatch",
+      "label": "Dispatch",
+      "source_boundary": "Xcelerator is authoritative for load lifecycle, dispatch assignment, route SLA, contract blockers, and final operational state.",
+      "kpis": [
+        "active_loads_by_status",
+        "driver_tractor_trailer_load_assignment",
+        "route_sla_exceptions",
+        "approval_queue_owner_claim_state",
+        "paused_communications",
+        "contract_validation_blockers"
+      ],
+      "known_limitations": [
+        "Do not treat zero attention items as zero dispatch exceptions unless the Xcelerator route SLA feed is healthy.",
+        "Approval queue KPIs require owner, claimant, recommender, approver, timestamp, and approval reference."
+      ],
+      "endpoint_checks": [
+        {
+          "id": "control_tower_attention_dispatch_feed",
+          "path": "/api/control-tower/attention",
+          "payload_type": "object",
+          "required": true,
+          "required_fields": [
+            "items",
+            "feeds"
+          ],
+          "named_statuses": [
+            {
+              "name_contains": "Xcelerator route SLA feed",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "control_tower_power_automate_dispatch_flow",
+          "path": "/api/control-tower/agents",
+          "payload_type": "object",
+          "required": true,
+          "required_fields": [
+            "systems"
+          ],
+          "named_statuses": [
+            {
+              "name_contains": "Dispatch visibility approval",
+              "allowed_statuses": [
+                "healthy"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sales",
+      "label": "Sales",
+      "source_boundary": "Xcelerator is authoritative for revenue, customer/order state, lane stability, contracts, and partner management.",
+      "kpis": [
+        "xcelerator_total_revenue",
+        "team_subset_revenue",
+        "weighted_stable_coverage",
+        "critical_lanes",
+        "at_risk_lanes",
+        "cross_route_lanes",
+        "revenue_by_service_lane",
+        "better_worse_lane_trends"
+      ],
+      "known_limitations": [
+        "Do not publish Sales KPIs if lane-stability endpoints return the frontend HTML shell instead of JSON.",
+        "Revenue must reconcile to the Xcelerator footer total for the same period before certification."
+      ],
+      "endpoint_checks": [
+        {
+          "id": "lane_stability_company",
+          "path": "/api/powerbi/lane-stability/company?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": true,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "total_revenue",
+            "weighted_stable_cov_pct",
+            "feed_status",
+            "total_orders",
+            "source_authority",
+            "projection_mode"
+          ],
+          "expected_values": [
+            {
+              "path": "feed_status",
+              "value": "healthy"
+            }
+          ],
+          "minimums": [
+            {
+              "path": "total_orders",
+              "min": 1
+            }
+          ]
+        },
+        {
+          "id": "lane_stability_by_service",
+          "path": "/api/powerbi/lane-stability/by-service?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": false,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only"
+        },
+        {
+          "id": "lane_stability_lanes",
+          "path": "/api/powerbi/lane-stability/lanes?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": false,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only"
+        },
+        {
+          "id": "lane_stability_routes",
+          "path": "/api/powerbi/lane-stability/routes?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": false,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only"
+        },
+        {
+          "id": "lane_stability_daily",
+          "path": "/api/powerbi/lane-stability/daily?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": false,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only"
+        },
+        {
+          "id": "lane_stability_trend",
+          "path": "/api/powerbi/lane-stability/trend?days=7",
+          "payload_type": "list",
+          "required": true,
+          "require_non_empty": false,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only"
+        },
+        {
+          "id": "lane_stability_snapshot",
+          "path": "/api/powerbi/lane-stability-snapshot?days=7",
+          "payload_type": "object",
+          "required": true,
+          "expected_source_authority": "K1 Group LLC / Xcelerator",
+          "expected_projection_mode": "read_only",
+          "required_fields": [
+            "row_counts.by_service",
+            "row_counts.lanes",
+            "row_counts.routes",
+            "row_counts.daily",
+            "row_counts.trend",
+            "source_authority",
+            "projection_mode"
+          ]
+        }
+      ]
+    }
+  ]
+}
