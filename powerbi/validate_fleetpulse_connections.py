@@ -106,6 +106,9 @@ def validate_list_rows(endpoint: Endpoint, payload: Any) -> dict[str, Any]:
     if endpoint.require_non_empty and not payload:
         result["error"] = "empty_payload"
         return result
+    if not payload and not endpoint.require_non_empty:
+        result["ok"] = True
+        return result
 
     first_row = payload[0] if payload else {}
     if isinstance(first_row, dict):
