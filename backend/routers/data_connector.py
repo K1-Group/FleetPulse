@@ -13,6 +13,7 @@ Discovery rules:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,28 @@ _ODATA_SERVERS = [f"https://odata-connector-{i}.geotab.com/odata/v4/svc/" for i 
 _ODATA_DISCOVERY_SERVERS = [_ODATA_UNIFIED_SERVER, *_ODATA_SERVERS]
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _KM_TO_MILES = 0.621371
+try:
+    _ODATA_MAX_CONCURRENT_REQUESTS = max(
+        int(os.getenv("FLEETPULSE_DATA_CONNECTOR_MAX_CONCURRENT_REQUESTS", "1")),
+        1,
+    )
+except ValueError:
+    _ODATA_MAX_CONCURRENT_REQUESTS = 1
+try:
+    _ODATA_REQUEST_TIMEOUT_SECONDS = max(
+        float(os.getenv("FLEETPULSE_DATA_CONNECTOR_TIMEOUT_SECONDS", "20")),
+        1.0,
+    )
+except ValueError:
+    _ODATA_REQUEST_TIMEOUT_SECONDS = 20.0
+try:
+    _ODATA_RETRY_COUNT = max(
+        int(os.getenv("FLEETPULSE_DATA_CONNECTOR_RETRY_COUNT", "1")),
+        0,
+    )
+except ValueError:
+    _ODATA_RETRY_COUNT = 1
+_ODATA_REQUEST_SEMAPHORE = asyncio.Semaphore(_ODATA_MAX_CONCURRENT_REQUESTS)
 
 # Probe table that exists for every K1 database and is cheap to query.
 _PROBE_TABLE = "LatestVehicleMetadata"
@@ -254,14 +277,38 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
         url = f"{target_base}{table}"
         results: list[dict] = []
         redirects_remaining = 3
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=_ODATA_REQUEST_TIMEOUT_SECONDS) as client:
             while url:
-                r = await client.get(
-                    url,
-                    auth=auth,
-                    params=params if url.startswith(target_base) else None,
-                    follow_redirects=False,
-                )
+                last_timeout: Exception | None = None
+                for attempt in range(_ODATA_RETRY_COUNT + 1):
+                    try:
+                        async with _ODATA_REQUEST_SEMAPHORE:
+                            r = await client.get(
+                                url,
+                                auth=auth,
+                                params=params if url.startswith(target_base) else None,
+                                follow_redirects=False,
+                            )
+                        break
+                    except httpx.TimeoutException as exc:
+                        last_timeout = exc
+                        if attempt < _ODATA_RETRY_COUNT:
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                            continue
+                        raise HTTPException(
+                            504,
+                            f"Data Connector timeout while reading {table}.",
+                        ) from exc
+                    except httpx.HTTPError as exc:
+                        raise HTTPException(
+                            502,
+                            f"Data Connector network error while reading {table}: {type(exc).__name__}",
+                        ) from exc
+                else:  # pragma: no cover - loop always breaks or raises.
+                    raise HTTPException(
+                        504,
+                        f"Data Connector timeout while reading {table}: {type(last_timeout).__name__}",
+                    )
                 if r.status_code in _REDIRECT_STATUSES:
                     location = r.headers.get("location")
                     if not location or redirects_remaining <= 0:
@@ -318,6 +365,23 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
                 406,
                 f"Data Connector error: Jurisdiction Mismatch persists after refresh: {exc.detail}",
             )
+
+
+def _connector_error_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        return detail if isinstance(detail, str) else str(detail)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _degraded_source_payload(days: int, exc: Exception) -> dict[str, Any]:
+    return {
+        "period_days": days,
+        "feed_status": "degraded",
+        "source_authority": "K1 Logistics Inc / Geotab Data Connector",
+        "projection_mode": "read_only",
+        "message": _connector_error_message(exc),
+    }
 
 
 class _JurisdictionMismatch(Exception):
@@ -500,9 +564,36 @@ async def list_tables():
 async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
     """Fleet utilization KPIs per vehicle."""
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
-    rows = await _odata_get("VehicleKpi_Daily", search=search)
+    try:
+        rows = await _odata_get("VehicleKpi_Daily", search=search)
+    except Exception as exc:
+        logger.warning("VehicleKpi_Daily unavailable: %s", _connector_error_message(exc))
+        return {
+            "vehicles": [],
+            "summary": {
+                "total_vehicles": 0,
+                "total_distance_miles": 0,
+                "total_drive_hours": 0,
+                "total_idle_hours": 0,
+                "utilization_pct": 0,
+            },
+            **_degraded_source_payload(days, exc),
+        }
     if not rows:
-        return {"vehicles": [], "summary": {}}
+        return {
+            "vehicles": [],
+            "summary": {
+                "total_vehicles": 0,
+                "total_distance_miles": 0,
+                "total_drive_hours": 0,
+                "total_idle_hours": 0,
+                "utilization_pct": 0,
+            },
+            "period_days": days,
+            "feed_status": "empty",
+            "source_authority": "K1 Logistics Inc / Geotab Data Connector",
+            "projection_mode": "read_only",
+        }
 
     try:
         metadata_rows = await _odata_get(_PROBE_TABLE, search=search, top=2000)
@@ -528,6 +619,7 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
             "utilization_pct": round(total_drive / (total_drive + total_idle) * 100, 1) if (total_drive + total_idle) > 0 else 0,
         },
         "period_days": days,
+        "feed_status": "ok",
     }
 
 
@@ -537,13 +629,24 @@ async def safety_scores(days: int = Query(14, ge=1, le=90)):
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
 
     # Try fleet-level first, then vehicle-level
-    fleet_rows = await _odata_get("FleetSafety_Daily", search=search)
-    vehicle_rows = await _odata_get("VehicleSafety_Daily", search=search)
+    try:
+        fleet_rows, vehicle_rows = await asyncio.gather(
+            _odata_get("FleetSafety_Daily", search=search),
+            _odata_get("VehicleSafety_Daily", search=search),
+        )
+    except Exception as exc:
+        logger.warning("Safety Data Connector rows unavailable: %s", _connector_error_message(exc))
+        return {
+            "fleet_daily": [],
+            "vehicle_scores": [],
+            **_degraded_source_payload(days, exc),
+        }
 
     return {
         "fleet_daily": fleet_rows[:30],
         "vehicle_scores": vehicle_rows[:100],
         "period_days": days,
+        "feed_status": "ok",
     }
 
 
@@ -562,7 +665,17 @@ async def fault_trends(days: int = Query(14, ge=1, le=90)):
                 "feed_status": "table_unavailable",
                 "message": "FaultMonitoring_Daily is not available for this Geotab Data Connector feed.",
             }
-        raise
+        logger.warning("FaultMonitoring_Daily unavailable: %s", _connector_error_message(exc))
+        return {
+            "faults": [],
+            **_degraded_source_payload(days, exc),
+        }
+    except Exception as exc:
+        logger.warning("FaultMonitoring_Daily unavailable: %s", _connector_error_message(exc))
+        return {
+            "faults": [],
+            **_degraded_source_payload(days, exc),
+        }
     return {"faults": rows[:200], "period_days": days, "feed_status": "ok"}
 
 

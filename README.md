@@ -581,6 +581,15 @@ with `GEOTAB_ODATA_SERVER` so FleetPulse can skip discovery:
 
 `GEOTAB_ODATA_SERVER=https://odata-connector-2.geotab.com/odata/v4/svc/`
 
+To keep the Connector tab stable when Geotab OData is slow, cap live OData
+fan-out and retry short read timeouts:
+
+```env
+FLEETPULSE_DATA_CONNECTOR_MAX_CONCURRENT_REQUESTS=1
+FLEETPULSE_DATA_CONNECTOR_TIMEOUT_SECONDS=20
+FLEETPULSE_DATA_CONNECTOR_RETRY_COUNT=1
+```
+
 ### Endpoints
 
 | Endpoint | Description |

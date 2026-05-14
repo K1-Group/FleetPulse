@@ -295,6 +295,60 @@ def test_fault_trends_returns_empty_when_table_unavailable(monkeypatch):
     assert result["period_days"] == 1
 
 
+def test_fault_trends_returns_degraded_payload_on_timeout(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _timeout(*_args, **_kwargs):
+        raise mod.HTTPException(504, "Data Connector timeout while reading FaultMonitoring_Daily.")
+
+    monkeypatch.setattr(mod, "_odata_get", _timeout)
+
+    import asyncio
+
+    result = asyncio.run(mod.fault_trends(days=14))
+
+    assert result["faults"] == []
+    assert result["feed_status"] == "degraded"
+    assert result["period_days"] == 14
+    assert "timeout" in result["message"].lower()
+
+
+def test_vehicle_kpis_returns_degraded_payload_on_timeout(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _timeout(*_args, **_kwargs):
+        raise mod.HTTPException(504, "Data Connector timeout while reading VehicleKpi_Daily.")
+
+    monkeypatch.setattr(mod, "_odata_get", _timeout)
+
+    import asyncio
+
+    result = asyncio.run(mod.vehicle_kpis(days=14))
+
+    assert result["vehicles"] == []
+    assert result["summary"]["total_vehicles"] == 0
+    assert result["feed_status"] == "degraded"
+    assert "timeout" in result["message"].lower()
+
+
+def test_safety_scores_returns_degraded_payload_on_timeout(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _timeout(*_args, **_kwargs):
+        raise mod.HTTPException(504, "Data Connector timeout while reading FleetSafety_Daily.")
+
+    monkeypatch.setattr(mod, "_odata_get", _timeout)
+
+    import asyncio
+
+    result = asyncio.run(mod.safety_scores(days=14))
+
+    assert result["fleet_daily"] == []
+    assert result["vehicle_scores"] == []
+    assert result["feed_status"] == "degraded"
+    assert "timeout" in result["message"].lower()
+
+
 def test_invalidate_clears_cache():
     mod = _import_router_fresh()
     mod._ODATA_SERVER = "https://odata-connector-9.geotab.com/odata/v4/svc/"

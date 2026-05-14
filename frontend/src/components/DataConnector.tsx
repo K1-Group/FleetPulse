@@ -26,17 +26,23 @@ interface VehicleKpiResponse {
   vehicles: VehicleKpi[]
   summary: KpiSummary
   period_days: number
+  feed_status?: string
+  message?: string
 }
 
 interface SafetyResponse {
   fleet_daily: any[]
   vehicle_scores: any[]
   period_days: number
+  feed_status?: string
+  message?: string
 }
 
 interface FaultResponse {
   faults: any[]
   period_days: number
+  feed_status?: string
+  message?: string
 }
 
 type ConnectorEndpoint = 'vehicles' | 'safety' | 'faults'
@@ -106,6 +112,13 @@ export default function DataConnector() {
         : String(reason || 'Unavailable')
     }
 
+    const feedMessage = (payload: { feed_status?: string; message?: string } | null, fallback: string): string | null => {
+      if (!payload?.feed_status || ['ok', 'empty', 'table_unavailable'].includes(payload.feed_status)) {
+        return null
+      }
+      return payload.message || fallback
+    }
+
     const loadConnectorData = async () => {
       const [vehicleResult, safetyResult, faultResult] = await Promise.allSettled([
         fetchWithRetry<VehicleKpiResponse>(`/api/data-connector/vehicle-kpis?days=${days}`),
@@ -117,6 +130,7 @@ export default function DataConnector() {
 
       if (vehicleResult.status === 'fulfilled') {
         setKpis(vehicleResult.value)
+        nextErrors.vehicles = feedMessage(vehicleResult.value, 'Vehicle KPI feed is degraded.')
       } else {
         setKpis(null)
         nextErrors.vehicles = errorMessage(vehicleResult.reason)
@@ -124,6 +138,7 @@ export default function DataConnector() {
 
       if (safetyResult.status === 'fulfilled') {
         setSafety(safetyResult.value)
+        nextErrors.safety = feedMessage(safetyResult.value, 'Safety score feed is degraded.')
       } else {
         setSafety(null)
         nextErrors.safety = errorMessage(safetyResult.reason)
@@ -131,6 +146,7 @@ export default function DataConnector() {
 
       if (faultResult.status === 'fulfilled') {
         setFaults(faultResult.value)
+        nextErrors.faults = feedMessage(faultResult.value, 'Fault trend feed is degraded.')
       } else {
         setFaults(null)
         nextErrors.faults = errorMessage(faultResult.reason)
