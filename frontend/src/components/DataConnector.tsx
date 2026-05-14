@@ -3,8 +3,10 @@ import { motion } from 'framer-motion'
 import { Database, TrendingUp, AlertTriangle, Truck, Fuel, Clock, Activity } from 'lucide-react'
 
 interface VehicleKpi {
+  vehicle_id?: string
   vehicle_name: string
-  distance_km: number
+  distance_miles?: number
+  distance_km?: number
   drive_hours: number
   idle_hours: number
   trips: number
@@ -13,7 +15,8 @@ interface VehicleKpi {
 
 interface KpiSummary {
   total_vehicles: number
-  total_distance_km: number
+  total_distance_miles?: number
+  total_distance_km?: number
   total_drive_hours: number
   total_idle_hours: number
   utilization_pct: number
@@ -84,6 +87,28 @@ export default function DataConnector() {
       .finally(() => setLoading(false))
   }, [days])
 
+  const numeric = (value: unknown): number => {
+    const parsed = Number(value ?? 0)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  const vehicleDistanceMiles = (vehicle: VehicleKpi): number => {
+    if (vehicle.distance_miles !== undefined) {
+      return numeric(vehicle.distance_miles)
+    }
+    return numeric(vehicle.distance_km) * 0.621371
+  }
+
+  const summaryDistanceMiles = (value?: KpiSummary): number => {
+    if (!value) {
+      return 0
+    }
+    if (value.total_distance_miles !== undefined) {
+      return numeric(value.total_distance_miles)
+    }
+    return numeric(value.total_distance_km) * 0.621371
+  }
+
   if (error) {
     return (
       <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
@@ -98,6 +123,17 @@ export default function DataConnector() {
   }
 
   const summary = kpis?.summary
+  const vehicles = kpis?.vehicles || []
+  const topDistanceVehicle = vehicles[0]
+  const highestIdleVehicle = vehicles.reduce<VehicleKpi | null>(
+    (current, vehicle) => (current === null || numeric(vehicle.idle_hours) > numeric(current.idle_hours) ? vehicle : current),
+    null,
+  )
+  const faultCount = faults?.faults?.length || 0
+  const distanceLabel = summary ? `${(summaryDistanceMiles(summary) / 1000).toFixed(1)}k mi` : '0 mi'
+  const totalDriveHours = numeric(summary?.total_drive_hours)
+  const totalIdleHours = numeric(summary?.total_idle_hours)
+  const utilizationPct = numeric(summary?.utilization_pct)
 
   return (
     <div className="space-y-6">
@@ -136,10 +172,10 @@ export default function DataConnector() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               {[
                 { label: 'Vehicles', value: summary.total_vehicles, icon: Truck, color: 'text-blue-400' },
-                { label: 'Total Distance', value: `${(summary.total_distance_km / 1000).toFixed(1)}k km`, icon: TrendingUp, color: 'text-emerald-400' },
-                { label: 'Drive Hours', value: `${summary.total_drive_hours.toFixed(0)}h`, icon: Clock, color: 'text-purple-400' },
-                { label: 'Idle Hours', value: `${summary.total_idle_hours.toFixed(0)}h`, icon: Clock, color: 'text-amber-400' },
-                { label: 'Utilization', value: `${summary.utilization_pct}%`, icon: Activity, color: 'text-cyan-400' },
+                { label: 'Total Distance', value: distanceLabel, icon: TrendingUp, color: 'text-emerald-400' },
+                { label: 'Drive Hours', value: `${totalDriveHours.toFixed(0)}h`, icon: Clock, color: 'text-purple-400' },
+                { label: 'Idle Hours', value: `${totalIdleHours.toFixed(0)}h`, icon: Clock, color: 'text-amber-400' },
+                { label: 'Utilization', value: `${utilizationPct}%`, icon: Activity, color: 'text-cyan-400' },
               ].map(({ label, value, icon: Icon, color }, i) => (
                 <motion.div
                   key={label}
@@ -155,6 +191,72 @@ export default function DataConnector() {
                   <p className="text-2xl font-bold text-white">{value}</p>
                 </motion.div>
               ))}
+            </div>
+          )}
+
+          {summary && (
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <motion.div
+                className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.2 }}
+              >
+                <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-cyan-400" />
+                  Daily Ops Review
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Utilization</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{utilizationPct}%</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Fault Items</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{faultCount}</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Top Miler</p>
+                    <p className="mt-1 text-sm font-semibold text-white">{topDistanceVehicle?.vehicle_name || '—'}</p>
+                    <p className="text-xs text-gray-400">{topDistanceVehicle ? `${vehicleDistanceMiles(topDistanceVehicle).toFixed(1)} mi` : 'Awaiting feed'}</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Idle Watch</p>
+                    <p className="mt-1 text-sm font-semibold text-white">{highestIdleVehicle?.vehicle_name || '—'}</p>
+                    <p className="text-xs text-gray-400">{highestIdleVehicle ? `${numeric(highestIdleVehicle.idle_hours).toFixed(1)}h idle` : 'Awaiting feed'}</p>
+                  </div>
+                </div>
+              </motion.div>
+
+              <motion.div
+                className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.25 }}
+              >
+                <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-400" />
+                  Weekly Management Review
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Period Distance</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{distanceLabel}</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Active Assets</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{summary.total_vehicles}</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Drive vs Idle</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{totalDriveHours.toFixed(0)}h / {totalIdleHours.toFixed(0)}h</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-700/30 p-3">
+                    <p className="text-gray-400">Review Window</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{days} day{days === 1 ? '' : 's'}</p>
+                  </div>
+                </div>
+              </motion.div>
             </div>
           )}
 
@@ -175,7 +277,7 @@ export default function DataConnector() {
                   <thead>
                     <tr className="text-gray-400 border-b border-gray-700">
                       <th className="text-left py-2 px-2">Vehicle</th>
-                      <th className="text-right py-2 px-2">Distance (km)</th>
+                      <th className="text-right py-2 px-2">Distance (mi)</th>
                       <th className="text-right py-2 px-2">Drive (h)</th>
                       <th className="text-right py-2 px-2">Idle (h)</th>
                       <th className="text-right py-2 px-2">Trips</th>
@@ -185,17 +287,30 @@ export default function DataConnector() {
                   </thead>
                   <tbody>
                     {kpis.vehicles.slice(0, 20).map((v, i) => {
-                      const util = v.drive_hours + v.idle_hours > 0
-                        ? (v.drive_hours / (v.drive_hours + v.idle_hours) * 100)
+                      const driveHours = numeric(v.drive_hours)
+                      const idleHours = numeric(v.idle_hours)
+                      const util = driveHours + idleHours > 0
+                        ? (driveHours / (driveHours + idleHours) * 100)
                         : 0
+                      const geotabIdTitle = v.vehicle_id && v.vehicle_id !== v.vehicle_name
+                        ? `Geotab id: ${v.vehicle_id}`
+                        : undefined
                       return (
-                        <tr key={i} className="border-b border-gray-700/30 hover:bg-gray-700/20">
-                          <td className="py-2 px-2 text-white">{v.vehicle_name}</td>
-                          <td className="text-right py-2 px-2">{v.distance_km.toFixed(1)}</td>
-                          <td className="text-right py-2 px-2">{v.drive_hours.toFixed(1)}</td>
-                          <td className="text-right py-2 px-2 text-amber-400">{v.idle_hours.toFixed(1)}</td>
+                        <tr
+                          key={v.vehicle_id || v.vehicle_name || i}
+                          className="border-b border-gray-700/30 hover:bg-gray-700/20"
+                        >
+                          <td
+                            className="py-2 px-2 text-white"
+                            title={geotabIdTitle}
+                          >
+                            {v.vehicle_name}
+                          </td>
+                          <td className="text-right py-2 px-2">{vehicleDistanceMiles(v).toFixed(1)}</td>
+                          <td className="text-right py-2 px-2">{driveHours.toFixed(1)}</td>
+                          <td className="text-right py-2 px-2 text-amber-400">{idleHours.toFixed(1)}</td>
                           <td className="text-right py-2 px-2">{v.trips}</td>
-                          <td className="text-right py-2 px-2">{v.fuel_litres.toFixed(1)}</td>
+                          <td className="text-right py-2 px-2">{numeric(v.fuel_litres).toFixed(1)}</td>
                           <td className="text-right py-2 px-2">
                             <span className={util > 70 ? 'text-emerald-400' : util > 40 ? 'text-amber-400' : 'text-red-400'}>
                               {util.toFixed(0)}%
