@@ -202,6 +202,33 @@ def get_xcelerator_review_orders_summary(
     }
 
 
+def get_xcelerator_review_orders_weekly_driver_pay(
+    start: date,
+    end: date,
+    *,
+    store: XceleratorReviewOrdersStateStore | None = None,
+) -> dict[str, Any]:
+    rows = (store or XceleratorReviewOrdersStateStore()).rows()
+    weekly: dict[str, float] = {}
+    row_dates: list[date] = []
+    row_count = 0
+    for row in rows:
+        row_day = _row_date(row)
+        if row_day is None or not (start <= row_day <= end):
+            continue
+        row_dates.append(row_day)
+        weekly[_week_key(row_day)] = weekly.get(_week_key(row_day), 0.0) + _driver_pay(row)
+        row_count += 1
+
+    return {
+        "weekly": {key: round(value, 2) for key, value in weekly.items()},
+        "row_count": row_count,
+        "date_min": min(row_dates).isoformat() if row_dates else None,
+        "date_max": max(row_dates).isoformat() if row_dates else None,
+        "driver_pay_total": round(sum(weekly.values()), 2),
+    }
+
+
 def _state_path_from_env() -> Path:
     configured = (
         os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", "").strip()
@@ -217,6 +244,10 @@ def _retained_record_limit_from_env() -> int:
         return max(int(os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_RETAINED_RECORDS", "50000")), 1)
     except ValueError:
         return 50000
+
+
+def _week_key(day: date) -> str:
+    return (day - timedelta(days=day.weekday())).isoformat()
 
 
 def _load_export_rows(content: str, filename: str | None) -> list[dict[str, Any]]:

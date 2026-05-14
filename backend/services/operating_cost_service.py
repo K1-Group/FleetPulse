@@ -27,6 +27,9 @@ from services.lane_stability_service import (
     LaneStabilityConfig,
     get_lane_stability_snapshot,
 )
+from services.xcelerator_review_orders_import_service import (
+    get_xcelerator_review_orders_weekly_driver_pay,
+)
 
 
 GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab Data Connector"
@@ -265,21 +268,34 @@ async def _fetch_vehicle_kpi_rows(start: date, end: date) -> list[dict[str, Any]
 async def _geotab_weekly_metrics(
     weeks: list[tuple[date, date]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    metrics: dict[str, dict[str, Any]] = {}
+    metrics: dict[str, dict[str, Any]] = {
+        _week_key(start): _empty_week(start, end) for start, end in weeks
+    }
     row_count = 0
     failures: list[str] = []
+    if not weeks:
+        return metrics, _source("healthy", GEOTAB_AUTHORITY, row_count=0)
 
-    for start, end in weeks:
-        key = _week_key(start)
-        bucket = metrics.setdefault(key, _empty_week(start, end))
+    period_start = weeks[0][0]
+    period_end = weeks[-1][1]
+    chunk_start = period_start
+    while chunk_start <= period_end:
+        chunk_end = min(chunk_start + timedelta(days=30), period_end)
         try:
-            rows = await _fetch_vehicle_kpi_rows(start, end)
+            rows = await _fetch_vehicle_kpi_rows(chunk_start, chunk_end)
         except Exception as exc:  # pragma: no cover - exact upstream exception varies.
-            failures.append(f"{start.isoformat()}..{end.isoformat()}: {type(exc).__name__}")
+            failures.append(f"{chunk_start.isoformat()}..{chunk_end.isoformat()}: {type(exc).__name__}")
+            chunk_start = chunk_end + timedelta(days=1)
             continue
 
         row_count += len(rows)
         for row in rows:
+            row_day = _coerce_date(
+                _find_value(row, ("Local_Date", "Date", "date", "Report_Date"))
+            ) or chunk_start
+            if not (period_start <= row_day <= period_end):
+                continue
+            bucket = metrics.setdefault(_week_key(row_day), _empty_week(row_day, row_day))
             distance_km = _number(
                 _find_value(row, ("Distance_Km", "GPS_Distance_Km", "TotalDistance_Km"))
             )
@@ -291,6 +307,7 @@ async def _geotab_weekly_metrics(
             bucket["drive_hours"] += drive_hours
             bucket["idle_hours"] += idle_hours
             bucket["trips"] += int(_number(_find_value(row, ("Trip_Count", "TotalTrips"))))
+        chunk_start = chunk_end + timedelta(days=1)
 
     for bucket in metrics.values():
         bucket["miles"] = round(bucket["miles"], 2)
@@ -378,6 +395,39 @@ def _xcelerator_driver_pay_by_week(
     *,
     config: LaneStabilityConfig | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
+    if os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", "").strip():
+        try:
+            imported = get_xcelerator_review_orders_weekly_driver_pay(start, end)
+        except Exception as exc:
+            return {}, _source(
+                "unavailable",
+                XCELERATOR_AUTHORITY,
+                message=f"{type(exc).__name__}: {exc}",
+            )
+        row_count = int(imported.get("row_count") or 0)
+        if not row_count:
+            return {}, _source(
+                "awaiting_feed",
+                XCELERATOR_AUTHORITY,
+                message="Xcelerator ReviewOrders rows are not imported for this period.",
+            )
+        source_status = "healthy"
+        source_message = ""
+        date_min = _coerce_date(imported.get("date_min"))
+        date_max = _coerce_date(imported.get("date_max"))
+        if not date_min or not date_max or date_min > start or date_max < end:
+            source_status = "partial"
+            source_message = (
+                f"Driver-pay rows cover {imported.get('date_min')}..{imported.get('date_max')}, "
+                f"not the full requested {start.isoformat()}..{end.isoformat()} period."
+            )
+        return dict(imported.get("weekly") or {}), _source(
+            source_status,
+            XCELERATOR_AUTHORITY,
+            message=source_message,
+            row_count=row_count,
+        )
+
     config = config or LaneStabilityConfig.from_env()
     if not config.configured:
         return {}, _source(
