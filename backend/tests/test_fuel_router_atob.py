@@ -215,3 +215,36 @@ def test_operating_cost_endpoint_returns_weekly_snapshot(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["summary"]["known_cost_per_mile"] == 0.62
+
+
+def test_xcelerator_review_orders_import_endpoint_summarizes_driver_pay(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH",
+        str(tmp_path / "review-orders.json"),
+    )
+    clear_cached_prefix("fuel:")
+
+    csv_content = "\n".join(
+        [
+            "Route No,Driver No,Company Name,Order ID,PFrom Date,Grand Total,Order Charge,Driver Pay",
+            "--- FEB 1 (SUNDAY) --,,,,,,,",
+            "DFW 004,4,K1 Logistics Inc,1.020126,02/01/2026,0,0,280",
+            "DFW 005,155,K1 Logistics Inc,3.020126,02/01/2026,0,0,320",
+        ]
+    )
+
+    response = _client().post(
+        "/api/fuel/xcelerator/review-orders/import",
+        json={
+            "filename": "review-orders.csv",
+            "content": csv_content,
+            "dry_run": False,
+        },
+    )
+    summary = _client().get("/api/fuel/xcelerator/review-orders/summary?days=370")
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 2
+    assert response.json()["summary"]["driver_pay_total"] == 600.0
+    assert summary.status_code == 200
+    assert summary.json()["driver_pay_total"] == 600.0

@@ -22,6 +22,10 @@ from services.atob_fuel_expense_service import (
     import_atob_fuel_expenses,
 )
 from services.operating_cost_service import get_operating_cost_snapshot
+from services.xcelerator_review_orders_import_service import (
+    get_xcelerator_review_orders_summary,
+    import_xcelerator_review_orders,
+)
 
 router = APIRouter()
 
@@ -40,6 +44,12 @@ class AtoBSharePointSyncRequest(BaseModel):
     dry_run: bool = False
 
 
+class XceleratorReviewOrdersImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
+
+
 @router.post("/atob/import")
 async def import_atob_report(request: AtoBFuelImportRequest):
     """Import a downloaded AtoB fuel report as read-only expense evidence."""
@@ -51,6 +61,25 @@ async def import_atob_report(request: AtoBFuelImportRequest):
     if not request.dry_run and result.imported_count:
         clear_cached_prefix("fuel:")
     return result.as_dict()
+
+
+@router.post("/xcelerator/review-orders/import")
+async def import_xcelerator_review_orders_report(request: XceleratorReviewOrdersImportRequest):
+    """Import a downloaded Xcelerator ReviewOrders report as read-only driver-pay evidence."""
+    result = import_xcelerator_review_orders(
+        request.content,
+        filename=request.filename,
+        dry_run=request.dry_run,
+    )
+    if not request.dry_run and result.imported_count:
+        clear_cached_prefix("fuel:")
+    return result.as_dict()
+
+
+@router.get("/xcelerator/review-orders/summary")
+async def xcelerator_review_orders_summary(days: int = 370):
+    """Return actual imported Xcelerator ReviewOrders driver-pay summary."""
+    return get_xcelerator_review_orders_summary(days=days)
 
 
 @router.get("/atob/sharepoint/status")

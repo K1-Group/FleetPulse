@@ -113,6 +113,7 @@ Required variables for full true cost:
 FLEETPULSE_ATOB_FUEL_STATE_PATH=/home/data/fleetpulse_atob_fuel_expenses.json
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
+FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
@@ -122,6 +123,9 @@ FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,c
 
 QBO expense feeds can be CSV or JSON. FleetPulse excludes fuel and driver-pay
 accounts by default to avoid double-counting AtoB and Xcelerator.
+Manual ReviewOrders exports can be imported through
+`POST /api/fuel/xcelerator/review-orders/import` as an interim bridge until a
+live Xcelerator order feed is configured.
 
 ## Validation
 

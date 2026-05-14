@@ -51,6 +51,7 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
             [
                 "[P]From Date,Service,Ref#,DriverNo,RouteNo,Grand Total,Gross Margin($),Driver Pay",
                 "05/04/2026,LH,HDS K1,D1,R1,1000,700,250",
+                "05/10/2026,LH,HDS K1,D1,R1,10,10,0",
             ]
         ),
         encoding="utf-8",
@@ -129,4 +130,58 @@ def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tm
     assert "fuel" in snapshot["unresolved_sources"]
     assert "driver_pay" in snapshot["unresolved_sources"]
     assert "qbo_expenses" in snapshot["unresolved_sources"]
+    assert snapshot["summary"]["true_cost_per_mile"] is None
+
+
+def test_operating_cost_snapshot_marks_partial_driver_pay_as_incomplete(monkeypatch, tmp_path):
+    async def fake_vehicle_kpis(start, end):
+        return [
+            {
+                "Distance_Km": 160.934,
+                "TotalDriveTime_Hours": 5,
+                "TotalIdleTime_Hours": 0,
+            }
+        ]
+
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", fake_vehicle_kpis)
+    atob_store = AtoBFuelExpenseStateStore(path=tmp_path / "atob.json")
+    import_atob_fuel_expenses(
+        "Transaction ID,Transaction Date,Status,Amount,Net of Discount,Gallons,Type,Vehicle\n"
+        "A-1,2026-05-04,Approved,110.00,100.00,20.0,Diesel,Truck 1\n",
+        filename="atob.csv",
+        store=atob_store,
+    )
+    lane_path = tmp_path / "review-orders.csv"
+    lane_path.write_text(
+        "\n".join(
+            [
+                "[P]From Date,Service,Ref#,DriverNo,RouteNo,Grand Total,Gross Margin($),Driver Pay",
+                "05/04/2026,LH,HDS K1,D1,R1,1000,700,250",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    lane_config = LaneStabilityConfig(
+        order_feed=ReviewOrdersFeedConfig(path=str(lane_path)),
+        baseline_feed=ReviewOrdersFeedConfig(),
+        excluded_scoring_services=(),
+        excluded_scoring_ref_patterns=(),
+    )
+    qbo_path = tmp_path / "qbo-expenses.csv"
+    qbo_path.write_text("Date,Account,Amount\n2026-05-04,Insurance,50.00\n", encoding="utf-8")
+
+    snapshot = asyncio.run(
+        service.get_operating_cost_snapshot(
+            start="2026-05-04",
+            end="2026-05-10",
+            atob_store=atob_store,
+            lane_config=lane_config,
+            qbo_config=service.QboExpenseFeedConfig(path=str(qbo_path)),
+        )
+    )
+
+    assert snapshot["complete_cost_available"] is False
+    assert snapshot["sources"]["driver_pay"]["status"] == "partial"
+    assert "driver_pay" in snapshot["unresolved_sources"]
+    assert snapshot["summary"]["known_operating_cost"] == 400.0
     assert snapshot["summary"]["true_cost_per_mile"] is None

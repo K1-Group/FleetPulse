@@ -401,16 +401,33 @@ def _xcelerator_driver_pay_by_week(
         )
 
     weekly: dict[str, float] = {}
+    date_rows: list[date] = []
     row_count = 0
     for row in snapshot.get("daily") or []:
         day = _coerce_date(row.get("date"))
         if day is None or not (start <= day <= end):
             continue
+        date_rows.append(day)
         weekly[_week_key(day)] = weekly.get(_week_key(day), 0.0) + _number(row.get("driver_pay"))
         row_count += 1
+    if not row_count:
+        return {}, _source(
+            "awaiting_feed",
+            XCELERATOR_AUTHORITY,
+            message="Xcelerator ReviewOrders feed is configured, but no driver-pay rows are available for this period.",
+        )
+    source_status = "healthy"
+    source_message = ""
+    if min(date_rows) > start or max(date_rows) < end:
+        source_status = "partial"
+        source_message = (
+            f"Driver-pay rows cover {min(date_rows).isoformat()}..{max(date_rows).isoformat()}, "
+            f"not the full requested {start.isoformat()}..{end.isoformat()} period."
+        )
     return {key: _money(value) for key, value in weekly.items()}, _source(
-        "healthy",
+        source_status,
         XCELERATOR_AUTHORITY,
+        message=source_message,
         row_count=row_count,
     )
 

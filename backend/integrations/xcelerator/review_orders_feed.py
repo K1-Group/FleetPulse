@@ -31,7 +31,14 @@ class ReviewOrdersFeedConfig:
             timeout_seconds = 30.0
         return cls(
             url=os.getenv(f"{prefix}_ORDER_FEED_URL", "").strip(),
-            path=os.getenv(f"{prefix}_ORDER_FEED_PATH", "").strip(),
+            path=(
+                os.getenv(f"{prefix}_ORDER_FEED_PATH", "").strip()
+                or (
+                    os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", "").strip()
+                    if prefix == "FLEETPULSE_LANE_STABILITY"
+                    else ""
+                )
+            ),
             api_key=os.getenv(f"{prefix}_ORDER_FEED_API_KEY", "").strip(),
             api_key_header=os.getenv(
                 f"{prefix}_ORDER_FEED_API_KEY_HEADER",
@@ -117,4 +124,3 @@ def load_review_orders_rows(config: ReviewOrdersFeedConfig) -> list[dict[str, An
         return _load_json_or_csv(Path(config.path))
 
     return []
-

@@ -186,6 +186,7 @@ from the same governed location.
 ```env
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
+FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
@@ -199,6 +200,10 @@ cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
 AtoB fuel/DEF cost, Xcelerator driver pay, and QBO insurance/other expenses.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
+Downloaded Xcelerator ReviewOrders CSV/JSON exports can be loaded with
+`POST /api/fuel/xcelerator/review-orders/import`; FleetPulse stores them as
+read-only driver-pay evidence and marks the source partial when the imported
+date span does not cover the requested reporting window.
 
 #### Live Trailer Tracking
 ```env
