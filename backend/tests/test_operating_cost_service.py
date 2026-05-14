@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import date
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -17,6 +18,35 @@ from services.atob_fuel_expense_service import (  # noqa: E402
 from services.lane_stability_service import LaneStabilityConfig  # noqa: E402
 from services.qbo_expense_import_service import QboExpenseStateStore, import_qbo_expenses  # noqa: E402
 from integrations.xcelerator.review_orders_feed import ReviewOrdersFeedConfig  # noqa: E402
+
+
+def test_geotab_weekly_metrics_retries_transient_fetch_errors(monkeypatch):
+    calls = {"count": 0}
+
+    async def flaky_vehicle_kpis(start, end):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("temporary OData timeout")
+        return [
+            {
+                "Distance_Km": 160.934,
+                "TotalDriveTime_Hours": 5,
+                "TotalIdleTime_Hours": 1,
+                "TotalTrips": 2,
+            }
+        ]
+
+    monkeypatch.setenv("FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES", "1")
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", flaky_vehicle_kpis)
+
+    metrics, source = asyncio.run(
+        service._geotab_weekly_metrics([(date(2026, 5, 4), date(2026, 5, 10))])
+    )
+
+    assert calls["count"] == 2
+    assert source["status"] == "healthy"
+    assert source["row_count"] == 1
+    assert metrics["2026-05-04"]["miles"] == 100.0
 
 
 def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_path):

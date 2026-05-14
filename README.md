@@ -196,6 +196,8 @@ FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY=
 FLEETPULSE_QBO_EXPENSE_RETAINED_RECORDS=50000
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
 FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
+FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY=4
+FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES=2
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
@@ -203,6 +205,8 @@ cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
 AtoB fuel/DEF cost, Xcelerator driver pay, and QBO insurance/other expenses.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
+Geotab OData weeks are fetched concurrently and retried so transient Data
+Connector read timeouts do not silently shrink the mileage/hour denominator.
 Downloaded Xcelerator ReviewOrders CSV/JSON exports can be loaded with
 `POST /api/fuel/xcelerator/review-orders/import`; FleetPulse stores them as
 read-only driver-pay evidence and marks the source partial when the imported

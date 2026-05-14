@@ -276,19 +276,30 @@ async def _geotab_weekly_metrics(
     row_count = 0
     failures: list[str] = []
 
-    async def fetch_week(start: date, end: date) -> tuple[date, date, list[dict[str, Any]], str | None]:
-        try:
-            async with semaphore:
-                rows = await _fetch_vehicle_kpi_rows(start, end)
-            return start, end, rows, None
-        except Exception as exc:  # pragma: no cover - exact upstream exception varies.
-            return start, end, [], f"{start.isoformat()}..{end.isoformat()}: {type(exc).__name__}"
-
     try:
         concurrency = max(int(os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY", "4")), 1)
     except ValueError:
         concurrency = 4
+    try:
+        retries = max(int(os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES", "2")), 0)
+    except ValueError:
+        retries = 2
     semaphore = asyncio.Semaphore(min(concurrency, 8))
+
+    async def fetch_week(start: date, end: date) -> tuple[date, date, list[dict[str, Any]], str | None]:
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                async with semaphore:
+                    rows = await _fetch_vehicle_kpi_rows(start, end)
+                return start, end, rows, None
+            except Exception as exc:  # pragma: no cover - exact upstream exception varies.
+                last_error = exc
+                if attempt < retries:
+                    await asyncio.sleep(0.4 * (attempt + 1))
+                    continue
+        message = type(last_error).__name__ if last_error else "unknown"
+        return start, end, [], f"{start.isoformat()}..{end.isoformat()}: {message}"
 
     for start, end, rows, failure in await asyncio.gather(
         *(fetch_week(start, end) for start, end in weeks)
