@@ -268,34 +268,21 @@ async def _fetch_vehicle_kpi_rows(start: date, end: date) -> list[dict[str, Any]
 async def _geotab_weekly_metrics(
     weeks: list[tuple[date, date]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    metrics: dict[str, dict[str, Any]] = {
-        _week_key(start): _empty_week(start, end) for start, end in weeks
-    }
+    metrics: dict[str, dict[str, Any]] = {}
     row_count = 0
     failures: list[str] = []
-    if not weeks:
-        return metrics, _source("healthy", GEOTAB_AUTHORITY, row_count=0)
 
-    period_start = weeks[0][0]
-    period_end = weeks[-1][1]
-    chunk_start = period_start
-    while chunk_start <= period_end:
-        chunk_end = min(chunk_start + timedelta(days=30), period_end)
+    for start, end in weeks:
+        key = _week_key(start)
+        bucket = metrics.setdefault(key, _empty_week(start, end))
         try:
-            rows = await _fetch_vehicle_kpi_rows(chunk_start, chunk_end)
+            rows = await _fetch_vehicle_kpi_rows(start, end)
         except Exception as exc:  # pragma: no cover - exact upstream exception varies.
-            failures.append(f"{chunk_start.isoformat()}..{chunk_end.isoformat()}: {type(exc).__name__}")
-            chunk_start = chunk_end + timedelta(days=1)
+            failures.append(f"{start.isoformat()}..{end.isoformat()}: {type(exc).__name__}")
             continue
 
         row_count += len(rows)
         for row in rows:
-            row_day = _coerce_date(
-                _find_value(row, ("Local_Date", "Date", "date", "Report_Date"))
-            ) or chunk_start
-            if not (period_start <= row_day <= period_end):
-                continue
-            bucket = metrics.setdefault(_week_key(row_day), _empty_week(row_day, row_day))
             distance_km = _number(
                 _find_value(row, ("Distance_Km", "GPS_Distance_Km", "TotalDistance_Km"))
             )
@@ -307,7 +294,6 @@ async def _geotab_weekly_metrics(
             bucket["drive_hours"] += drive_hours
             bucket["idle_hours"] += idle_hours
             bucket["trips"] += int(_number(_find_value(row, ("Trip_Count", "TotalTrips"))))
-        chunk_start = chunk_end + timedelta(days=1)
 
     for bucket in metrics.values():
         bucket["miles"] = round(bucket["miles"], 2)
@@ -316,7 +302,12 @@ async def _geotab_weekly_metrics(
         bucket["operating_hours"] = round(bucket["drive_hours"] + bucket["idle_hours"], 2)
 
     if row_count:
-        return metrics, _source("healthy", GEOTAB_AUTHORITY, row_count=row_count)
+        return metrics, _source(
+            "partial" if failures else "healthy",
+            GEOTAB_AUTHORITY,
+            message="; ".join(failures[:3]) if failures else "",
+            row_count=row_count,
+        )
     if failures:
         return metrics, _source(
             "unavailable",
