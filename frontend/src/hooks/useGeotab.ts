@@ -13,7 +13,10 @@ import type {
   DriverScore,
   FleetCoachingSummary,
   FleetOverview,
+  OperatingSystemConfigurationResponse,
   LocationStats,
+  OperatingSystemOrgChartResponse,
+  OperatingSystemTaskKpiMatrixResponse,
   Vehicle,
   VehicleSafetyScore,
 } from '../types/fleet'
@@ -38,12 +41,16 @@ const fetchWithTimeout = async (url: string, timeout = 10000) => {
   }
 }
 
-function useFetch<T>(url: string, interval = 30000) {
+function useFetch<T>(url: string, interval = 30000, enabled = true) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
     try {
       const res = await fetchWithTimeout(url, 10000)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -55,47 +62,51 @@ function useFetch<T>(url: string, interval = 30000) {
     } finally {
       setLoading(false)
     }
-  }, [url])
+  }, [enabled, url])
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false)
+      return undefined
+    }
     fetchData()
     const id = setInterval(fetchData, interval)
     return () => clearInterval(id)
-  }, [fetchData, interval])
+  }, [enabled, fetchData, interval])
 
   return { data, loading, error, refresh: fetchData }
 }
 
-export function useFleetOverview() {
-  return useFetch<FleetOverview>(`${API}/dashboard/overview`)
+export function useFleetOverview(enabled = true) {
+  return useFetch<FleetOverview>(`${API}/dashboard/overview`, 30000, enabled)
 }
 
-export function useVehicles() {
-  return useFetch<Vehicle[]>(`${API}/vehicles/`)
+export function useVehicles(enabled = true) {
+  return useFetch<Vehicle[]>(`${API}/vehicles/`, 30000, enabled)
 }
 
-export function useSafetyScores() {
-  return useFetch<VehicleSafetyScore[]>(`${API}/safety/scores`)
+export function useSafetyScores(enabled = true) {
+  return useFetch<VehicleSafetyScore[]>(`${API}/safety/scores`, 30000, enabled)
 }
 
-export function useLeaderboard() {
-  return useFetch<DriverScore[]>(`${API}/gamification/leaderboard`)
+export function useLeaderboard(enabled = true) {
+  return useFetch<DriverScore[]>(`${API}/gamification/leaderboard`, 30000, enabled)
 }
 
-export function useAlerts() {
-  return useFetch<Alert[]>(`${API}/alerts/recent`, 15000)
+export function useAlerts(enabled = true) {
+  return useFetch<Alert[]>(`${API}/alerts/recent`, 15000, enabled)
 }
 
-export function useLocations() {
-  return useFetch<LocationStats[]>(`${API}/dashboard/locations`)
+export function useLocations(enabled = true) {
+  return useFetch<LocationStats[]>(`${API}/dashboard/locations`, 30000, enabled)
 }
 
-export function useMonitorAlerts() {
-  return useFetch<Alert[]>(`${API}/monitor/alerts`, 15000)
+export function useMonitorAlerts(enabled = true) {
+  return useFetch<Alert[]>(`${API}/monitor/alerts`, 15000, enabled)
 }
 
-export function useMonitorStatus() {
-  return useFetch<any>(`${API}/monitor/status`, 15000)
+export function useMonitorStatus(enabled = true) {
+  return useFetch<any>(`${API}/monitor/status`, 15000, enabled)
 }
 
 // Driver Coaching hooks
@@ -160,8 +171,8 @@ export function useControlTowerTrailers() {
   return useFetch<ControlTowerTrailersResponse>(`${API}/control-tower/trailers`, 60000)
 }
 
-export function useControlTowerTrailerTracking() {
-  return useFetch<ControlTowerTrailerTrackingResponse>(`${API}/control-tower/trailers/live`, 30000)
+export function useControlTowerTrailerTracking(enabled = true) {
+  return useFetch<ControlTowerTrailerTrackingResponse>(`${API}/control-tower/trailers/live`, 30000, enabled)
 }
 
 export function useControlTowerFinancial() {
@@ -174,4 +185,17 @@ export function useControlTowerAgents() {
 
 export function useControlTowerCodex() {
   return useFetch<ControlTowerCodexResponse>(`${API}/control-tower/codex`, 60000)
+}
+
+// K1 Seat-Based Operating System hooks
+export function useOperatingSystemOrgChart() {
+  return useFetch<OperatingSystemOrgChartResponse>(`${API}/operating-system/org-chart`, 60000)
+}
+
+export function useOperatingSystemTaskKpiMatrix() {
+  return useFetch<OperatingSystemTaskKpiMatrixResponse>(`${API}/operating-system/task-kpi-matrix`, 60000)
+}
+
+export function useOperatingSystemConfiguration() {
+  return useFetch<OperatingSystemConfigurationResponse>(`${API}/operating-system/configuration`, 60000)
 }

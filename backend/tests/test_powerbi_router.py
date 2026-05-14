@@ -143,6 +143,65 @@ def _client(monkeypatch) -> TestClient:
         },
     )
 
+    async def fake_operating_cost_snapshot(days=90, start=None, end=None):
+        return {
+            "period_start": start or "2026-05-03",
+            "period_end": end or "2026-05-09",
+            "generated_at": "2026-05-10T12:00:00+00:00",
+            "complete_cost_available": True,
+            "unresolved_sources": [],
+            "summary": {
+                "miles": 1000.0,
+                "drive_hours": 50.0,
+                "idle_hours": 5.0,
+                "operating_hours": 55.0,
+                "trips": 20,
+                "fuel_cost": 625.0,
+                "driver_pay": 1000.0,
+                "insurance_cost": 100.0,
+                "other_expense_cost": 200.0,
+                "known_operating_cost": 1925.0,
+                "true_operating_cost": 1925.0,
+                "known_cost_per_mile": 1.925,
+                "true_cost_per_mile": 1.925,
+                "known_cost_per_drive_hour": 38.5,
+                "true_cost_per_drive_hour": 38.5,
+                "known_cost_per_operating_hour": 35.0,
+                "true_cost_per_operating_hour": 35.0,
+            },
+            "weekly": [
+                {
+                    "week_start": "2026-05-04",
+                    "week_end": "2026-05-09",
+                    "period_start": "2026-05-04",
+                    "period_end": "2026-05-09",
+                    "miles": 1000.0,
+                    "drive_hours": 50.0,
+                    "idle_hours": 5.0,
+                    "operating_hours": 55.0,
+                    "trips": 20,
+                    "fuel_cost": 625.0,
+                    "driver_pay": 1000.0,
+                    "insurance_cost": 100.0,
+                    "other_expense_cost": 200.0,
+                    "known_operating_cost": 1925.0,
+                    "true_operating_cost": 1925.0,
+                    "known_cost_per_mile": 1.925,
+                    "true_cost_per_mile": 1.925,
+                    "known_cost_per_drive_hour": 38.5,
+                    "true_cost_per_drive_hour": 38.5,
+                    "known_cost_per_operating_hour": 35.0,
+                    "true_cost_per_operating_hour": 35.0,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        powerbi,
+        "get_operating_cost_snapshot",
+        fake_operating_cost_snapshot,
+    )
+
     app = FastAPI()
     app.include_router(powerbi.router, prefix="/api/powerbi")
     return TestClient(app)
@@ -252,3 +311,17 @@ def test_powerbi_lane_stability_snapshot(monkeypatch):
     assert payload["connection_name"] == "lane_stability_snapshot"
     assert payload["source_authority"] == "K1 Group LLC / Xcelerator"
     assert payload["row_counts"]["lanes"] == 1
+
+
+def test_powerbi_operating_cost_tables(monkeypatch):
+    client = _client(monkeypatch)
+    summary = client.get("/api/powerbi/operating-cost/summary?start=2026-05-03&end=2026-05-09")
+    weekly = client.get("/api/powerbi/operating-cost/weekly?start=2026-05-03&end=2026-05-09")
+
+    assert summary.status_code == 200
+    assert weekly.status_code == 200
+    assert summary.json()[0]["connection_name"] == "operating_cost_summary"
+    assert summary.json()[0]["source_system"] == "FleetPulse Cost Analytics"
+    assert summary.json()[0]["projection_mode"] == "read_only"
+    assert weekly.json()[0]["connection_name"] == "operating_cost_weekly"
+    assert weekly.json()[0]["true_cost_per_mile"] == 1.925

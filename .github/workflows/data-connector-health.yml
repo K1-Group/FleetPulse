@@ -1,0 +1,60 @@
+name: Data Connector Health Check
+
+on:
+  schedule:
+    # Daily ops review preflight, morning US Central.
+    - cron: "15 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  data-connector-health:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: ${{ secrets.AZURE_APP_NAME }}
+      HEALTHCHECK_BASE_URL: ${{ secrets.FLEETPULSE_HEALTHCHECK_BASE_URL }}
+    steps:
+      - name: Check Geotab Data Connector KPI feed
+        run: |
+          set -euo pipefail
+
+          base_url="${HEALTHCHECK_BASE_URL:-}"
+          if [ -z "$base_url" ]; then
+            if [ -z "${APP_NAME:-}" ]; then
+              echo "Set FLEETPULSE_HEALTHCHECK_BASE_URL or AZURE_APP_NAME."
+              exit 1
+            fi
+            base_url="https://${APP_NAME}.azurewebsites.net"
+          fi
+          base_url="${base_url%/}"
+
+          url="${base_url}/api/data-connector/vehicle-kpis?days=1"
+          status="$(curl --connect-timeout 10 --max-time 60 -sS -o data-connector-health.json -w "%{http_code}" "$url" || true)"
+          echo "Data Connector health status: $status"
+
+          if [ "$status" != "200" ]; then
+            cat data-connector-health.json || true
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("data-connector-health.json").read_text())
+          summary = payload.get("summary") or {}
+          vehicles = payload.get("vehicles") or []
+
+          if not isinstance(vehicles, list):
+              raise SystemExit("vehicles is not a list")
+          if "total_distance_miles" not in summary:
+              raise SystemExit("summary.total_distance_miles is missing")
+          if payload.get("period_days") != 1:
+              raise SystemExit("period_days must be 1")
+
+          print(
+              "Data Connector OK:",
+              f"vehicles={len(vehicles)}",
+              f"total_distance_miles={summary.get('total_distance_miles')}",
+              f"utilization_pct={summary.get('utilization_pct')}",
+          )
+          PY

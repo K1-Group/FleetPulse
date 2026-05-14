@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -171,3 +172,96 @@ def test_current_message_frames_context_as_live_not_static(monkeypatch):
     assert "fetched for this request" in prompt
     assert "It is not static, sample, or demo data" in prompt
     assert "USER QUESTION: refresh data" in prompt
+
+
+def test_live_data_fallback_answers_active_vehicle_question(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    overview = SimpleNamespace(
+        active=2,
+        avg_trip_distance_miles=0,
+        avg_trip_duration_hours=0,
+        idle=0,
+        offline=1,
+        parked=1,
+        source_mode="live_filtered",
+        total_distance_miles=0,
+        total_stops_today=0,
+        total_trips_today=0,
+        total_vehicles=4,
+        trip_definition="driver_session_with_stops_over_5_min",
+    )
+    vehicles = [
+        SimpleNamespace(
+            id="b1",
+            name="8763",
+            status="active",
+            position=SimpleNamespace(speed=112),
+            location_name=None,
+            last_contact="2026-05-14T04:11:44Z",
+        ),
+        SimpleNamespace(
+            id="b2",
+            name="6417",
+            status="active",
+            position=SimpleNamespace(speed=81),
+            location_name=None,
+            last_contact="2026-05-14T04:11:55Z",
+        ),
+        SimpleNamespace(id="b3", name="7754", status="parked", position=None),
+        SimpleNamespace(id="b4", name="2743", status="offline", position=None),
+    ]
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
+    monkeypatch.setattr("services.fleet_service.get_vehicles", lambda: vehicles)
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [])
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(message="Which vehicles are active right now?")
+        )
+    )
+
+    assert response.model == "live-data-fallback"
+    assert response.is_ai_powered is False
+    assert "2 of 4 scoped fleet vehicles are active right now" in response.response
+    assert "8763" in response.response
+    assert "6417" in response.response
+    assert response.data[0]["vehicle"] == "8763"
+    assert response.data[0]["score"] == 112
+
+
+def test_live_data_fallback_summarizes_fleet_status(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    overview = SimpleNamespace(
+        active=6,
+        avg_trip_distance_miles=247.3,
+        avg_trip_duration_hours=8.2,
+        idle=0,
+        offline=3,
+        parked=36,
+        source_mode="live_filtered",
+        total_distance_miles=17313.1,
+        total_stops_today=436,
+        total_trips_today=70,
+        total_vehicles=45,
+        trip_definition="driver_session_with_stops_over_5_min",
+    )
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
+    monkeypatch.setattr("services.fleet_service.get_vehicles", lambda: [])
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [])
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(message="Summarize current fleet status")
+        )
+    )
+
+    assert response.model == "live-data-fallback"
+    assert "45 scoped vehicles" in response.response
+    assert "6 active" in response.response
+    assert "13.3%" in response.response

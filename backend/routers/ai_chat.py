@@ -214,6 +214,215 @@ def _ai_unavailable_response() -> ChatResponse:
     )
 
 
+def _status_value(value: Any) -> str:
+    """Return a stable lowercase status string for enum or string values."""
+
+    return str(getattr(value, "value", value) or "").lower()
+
+
+def _vehicle_name(vehicle: Any) -> str:
+    return str(getattr(vehicle, "name", None) or getattr(vehicle, "id", None) or "Unknown vehicle").strip()
+
+
+def _vehicle_speed(vehicle: Any) -> float | None:
+    position = getattr(vehicle, "position", None)
+    if position is None:
+        return None
+    try:
+        return float(getattr(position, "speed", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_vehicle_summary(vehicle: Any) -> str:
+    name = _vehicle_name(vehicle)
+    speed = _vehicle_speed(vehicle)
+    location = getattr(vehicle, "location_name", None)
+    details: list[str] = []
+    if speed is not None:
+        details.append(f"speed {round(speed, 1)}")
+    if location:
+        details.append(str(location))
+    return f"{name} ({'; '.join(details)})" if details else name
+
+
+def _summarize_vehicle_names(vehicles: list[Any], *, limit: int = 12) -> str:
+    if not vehicles:
+        return "None in the current scoped FleetPulse snapshot."
+    names = [_format_vehicle_summary(vehicle) for vehicle in vehicles[:limit]]
+    extra_count = len(vehicles) - limit
+    if extra_count > 0:
+        names.append(f"+{extra_count} more")
+    return ", ".join(names)
+
+
+async def _live_data_fallback_response(message: str) -> ChatResponse:
+    """Answer supported live-data questions when the AI provider is unavailable."""
+
+    from services.alert_service import get_recent_alerts
+    from services.fleet_service import get_fleet_overview, get_vehicles
+    from services.safety_service import get_safety_scores
+
+    normalized = message.lower()
+
+    try:
+        overview = get_fleet_overview()
+    except Exception:
+        return _ai_unavailable_response()
+
+    response = ""
+    data: list[dict[str, Any]] | None = None
+    chart_type: str | None = None
+    insights: list[str] = []
+
+    if "active" in normalized and ("vehicle" in normalized or "truck" in normalized or "asset" in normalized):
+        try:
+            vehicles = get_vehicles()
+            vehicles_loaded = True
+        except Exception:
+            vehicles = []
+            vehicles_loaded = False
+        active_vehicles = [
+            vehicle
+            for vehicle in vehicles
+            if _status_value(getattr(vehicle, "status", "")) == "active"
+        ]
+        active_count = len(active_vehicles) if vehicles_loaded else overview.active
+        response = (
+            f"{active_count} of {overview.total_vehicles} scoped fleet vehicles are active right now. "
+            f"Active vehicles: {_summarize_vehicle_names(active_vehicles)}"
+        )
+        data = [
+            {
+                "location": _vehicle_name(vehicle),
+                "score": _vehicle_speed(vehicle) or 0,
+                "vehicle": _vehicle_name(vehicle),
+                "status": _status_value(getattr(vehicle, "status", "")),
+                "speed": _vehicle_speed(vehicle),
+                "location_name": getattr(vehicle, "location_name", None),
+                "last_contact": str(getattr(vehicle, "last_contact", "") or ""),
+            }
+            for vehicle in active_vehicles
+        ]
+        chart_type = "bar" if data else None
+        insights.append("Source: live Geotab-backed FleetPulse vehicle status.")
+
+    elif "offline" in normalized or "risk" in normalized:
+        try:
+            vehicles = get_vehicles()
+            vehicles_loaded = True
+        except Exception:
+            vehicles = []
+            vehicles_loaded = False
+        offline_vehicles = [
+            vehicle
+            for vehicle in vehicles
+            if _status_value(getattr(vehicle, "status", "")) == "offline"
+        ]
+        offline_count = len(offline_vehicles) if vehicles_loaded else overview.offline
+        response = (
+            f"{offline_count} of {overview.total_vehicles} scoped fleet vehicles are offline. "
+            f"Offline vehicles: {_summarize_vehicle_names(offline_vehicles)}"
+        )
+        insights.append("Offline units can indicate capacity, connectivity, or device-status risk.")
+
+    elif "trip" in normalized or "changed" in normalized:
+        response = (
+            "Today's live trip summary: "
+            f"{overview.total_trips_today} driver-session trips, "
+            f"{overview.total_stops_today} stops, "
+            f"{overview.total_distance_miles:.1f} miles, "
+            f"{overview.avg_trip_duration_hours:.1f} average trip hours, and "
+            f"{overview.avg_trip_distance_miles:.1f} average miles per trip."
+        )
+        insights.append(f"Trip definition: {overview.trip_definition}.")
+
+    elif "safety" in normalized or "score" in normalized:
+        try:
+            scores = get_safety_scores()
+        except Exception:
+            scores = []
+        attention_scores = sorted(
+            [score for score in scores if getattr(score, "event_count", 0) > 0 or getattr(score, "score", 100) < 95],
+            key=lambda score: (getattr(score, "score", 100), -getattr(score, "event_count", 0)),
+        )
+        if attention_scores:
+            top = attention_scores[:5]
+            response = (
+                "Safety scores needing attention: "
+                + ", ".join(
+                    f"{getattr(score, 'vehicle_name', 'Unknown')} score {getattr(score, 'score', 'n/a')}"
+                    f" with {getattr(score, 'event_count', 0)} event(s)"
+                    for score in top
+                )
+            )
+            data = [
+                {
+                    "location": getattr(score, "vehicle_name", "Unknown"),
+                    "vehicle": getattr(score, "vehicle_name", "Unknown"),
+                    "score": getattr(score, "score", None),
+                    "events": getattr(score, "event_count", None),
+                }
+                for score in top
+            ]
+            chart_type = "bar"
+        else:
+            response = "No live safety-score exceptions were found in the current FleetPulse safety context."
+        insights.append("Source: live FleetPulse safety scoring service.")
+
+    elif "alert" in normalized or "exception" in normalized:
+        try:
+            alerts = get_recent_alerts()
+        except Exception:
+            alerts = []
+        if alerts:
+            response = (
+                "Recent live alerts: "
+                + ", ".join(
+                    f"{getattr(alert, 'vehicle_name', 'Unknown')} {getattr(alert, 'alert_type', 'alert')}"
+                    for alert in alerts[:5]
+                )
+            )
+        else:
+            response = "No active FleetPulse alerts were found in the current live alert feed."
+        insights.append("Source: live FleetPulse alert service.")
+
+    elif "utilization" in normalized or "fleet status" in normalized or "summarize" in normalized:
+        total = max(overview.total_vehicles, 1)
+        active_pct = round((overview.active / total) * 100, 1)
+        response = (
+            "Current live fleet status: "
+            f"{overview.total_vehicles} scoped vehicles, {overview.active} active, "
+            f"{overview.idle} idle, {overview.parked} parked, {overview.offline} offline. "
+            f"Active utilization is {active_pct}%."
+        )
+        data = [
+            {"location": "active", "status": "active", "count": overview.active, "score": overview.active},
+            {"location": "idle", "status": "idle", "count": overview.idle, "score": overview.idle},
+            {"location": "parked", "status": "parked", "count": overview.parked, "score": overview.parked},
+            {"location": "offline", "status": "offline", "count": overview.offline, "score": overview.offline},
+        ]
+        chart_type = "bar"
+        insights.append(f"Source mode: {overview.source_mode}.")
+
+    else:
+        response = (
+            "AI is not currently available, but live FleetPulse data mode is online. "
+            "I can answer supported questions about active vehicles, offline vehicles, "
+            "fleet status, trips, alerts, utilization, and safety scores."
+        )
+
+    return ChatResponse(
+        response=response,
+        data=data,
+        chart_type=chart_type,
+        insights=insights or None,
+        confidence=0.75 if response else 0.0,
+        model="live-data-fallback",
+        is_ai_powered=False,
+    )
+
+
 async def _fetch_fleet_context() -> str:
     """Fetch current fleet data to provide model context."""
     # Import here to avoid circular imports
@@ -439,7 +648,7 @@ async def process_chat_query(chat_message: ChatMessage):
                 chat_message.conversation_history or []
             )
         else:
-            return _ai_unavailable_response()
+            return await _live_data_fallback_response(chat_message.message)
         
     except Exception as e:
         print(f"Error in chat processing: {e}")
@@ -466,8 +675,11 @@ async def process_chat_stream(chat_message: ChatMessage):
     async def stream_response():
         _ensure_env_initialized()
         if not _is_ai_enabled():
-            response = _ai_unavailable_response()
-            yield f"data: {json.dumps(response.dict())}\n\n"
+            response = await _live_data_fallback_response(chat_message.message)
+            yield f"data: {json.dumps({'chunk': response.response, 'type': 'text'})}\n\n"
+            final_data = response.dict()
+            final_data["type"] = "complete"
+            yield f"data: {json.dumps(final_data)}\n\n"
             return
         
         client = _get_ai_client()

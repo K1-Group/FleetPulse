@@ -347,3 +347,80 @@ export interface ControlTowerCodexResponse {
   message: string
   feeds: ControlTowerFeedStatus[]
 }
+
+// K1 Seat-Based Operating System
+export interface OperatingSystemSourceBoundary {
+  system: string
+  entity: string
+  authority: string[]
+  portal_rule: string
+}
+
+export interface OperatingSystemPortalStep {
+  step: number
+  name: string
+  contract: string
+}
+
+export interface OperatingSystemSeatContract {
+  seat_id: string
+  label: string
+  seat_type: 'accountability' | 'functional'
+  primary_score: string
+  entity_scope: string
+  source_authorities: string[]
+  manager_seat_id: string | null
+  managed_seat_ids: string[]
+  daily_work: string[]
+  targets: Record<string, string>
+  access_bundle: string[]
+  scorecard_weights: Record<string, number>
+}
+
+export interface OperatingSystemManagerNode {
+  manager_seat_id: string
+  manager_label: string
+  functional_seat_ids: string[]
+  functional_seats: OperatingSystemSeatContract[]
+}
+
+export interface OperatingSystemOrgChartResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_document: Record<string, string>
+  targets: Record<string, number>
+  total_seats: number
+  accountability_seats: number
+  functional_seats: number
+  seats: OperatingSystemSeatContract[]
+  management_tree: OperatingSystemManagerNode[]
+  source_boundaries: OperatingSystemSourceBoundary[]
+  portal_workflow: OperatingSystemPortalStep[]
+  endpoint_contract: string[]
+}
+
+export interface OperatingSystemTaskKpiMatrixResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  seats: OperatingSystemSeatContract[]
+  scorecard_weights: Record<string, number>
+}
+
+export interface OperatingSystemConfigurationItem {
+  name: string
+  env_var: string
+  fallback_env_var: string | null
+  system: string
+  secret: boolean
+  configured: boolean
+  purpose: string
+}
+
+export interface OperatingSystemConfigurationResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  api_key_required: boolean
+  auth_headers: string[]
+  items: OperatingSystemConfigurationItem[]
+  source_boundaries: OperatingSystemSourceBoundary[]
+}

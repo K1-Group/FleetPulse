@@ -501,3 +501,87 @@ class ControlTowerCodexResponse(BaseModel):
     run_id: Optional[str] = None
     message: str
     feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
+# ── K1 Seat-Based Operating System ─────────────────────────────
+class OperatingSystemSourceBoundary(BaseModel):
+    system: str
+    entity: str
+    authority: list[str] = Field(default_factory=list)
+    portal_rule: str
+
+
+class OperatingSystemPortalStep(BaseModel):
+    step: int
+    name: str
+    contract: str
+
+
+class OperatingSystemSeatContract(BaseModel):
+    seat_id: str
+    label: str
+    seat_type: str
+    primary_score: str
+    entity_scope: str
+    source_authorities: list[str] = Field(default_factory=list)
+    manager_seat_id: Optional[str] = None
+    managed_seat_ids: list[str] = Field(default_factory=list)
+    daily_work: list[str] = Field(default_factory=list)
+    targets: dict[str, str] = Field(default_factory=dict)
+    access_bundle: list[str] = Field(default_factory=list)
+    scorecard_weights: dict[str, int] = Field(default_factory=dict)
+
+
+class OperatingSystemManagerNode(BaseModel):
+    manager_seat_id: str
+    manager_label: str
+    functional_seat_ids: list[str] = Field(default_factory=list)
+    functional_seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
+
+
+class OperatingSystemOrgChartResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    source_document: dict[str, str]
+    targets: dict[str, Union[int, float]]
+    total_seats: int
+    accountability_seats: int
+    functional_seats: int
+    seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
+    management_tree: list[OperatingSystemManagerNode] = Field(default_factory=list)
+    source_boundaries: list[OperatingSystemSourceBoundary] = Field(default_factory=list)
+    portal_workflow: list[OperatingSystemPortalStep] = Field(default_factory=list)
+    endpoint_contract: list[str] = Field(default_factory=list)
+
+
+class OperatingSystemTaskKpiMatrixResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
+    scorecard_weights: dict[str, int] = Field(default_factory=dict)
+
+
+class OperatingSystemSeatResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    seat: OperatingSystemSeatContract
+    source_boundaries: list[OperatingSystemSourceBoundary] = Field(default_factory=list)
+
+
+class OperatingSystemConfigurationItem(BaseModel):
+    name: str
+    env_var: str
+    fallback_env_var: Optional[str] = None
+    system: str
+    secret: bool = False
+    configured: bool = False
+    purpose: str
+
+
+class OperatingSystemConfigurationResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    api_key_required: bool
+    auth_headers: list[str] = Field(default_factory=list)
+    items: list[OperatingSystemConfigurationItem] = Field(default_factory=list)
+    source_boundaries: list[OperatingSystemSourceBoundary] = Field(default_factory=list)

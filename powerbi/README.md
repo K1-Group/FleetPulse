@@ -41,6 +41,15 @@ The lane stability Xcelerator projection adds these read-only tables:
 | LaneStabilityTrend | `/api/powerbi/lane-stability/trend?days=7` |
 | LaneStabilitySnapshot | `/api/powerbi/lane-stability-snapshot?days=7` |
 
+The operating cost projection adds weekly true-cost reporting. FleetPulse
+calculates true cost only when every source feed is healthy; otherwise the
+tables retain known costs and leave true CPM/hour fields blank.
+
+| Table | Endpoint |
+| --- | --- |
+| OperatingCostSummary | `/api/powerbi/operating-cost/summary?start=<yyyy-mm-dd>&end=<yyyy-mm-dd>` |
+| OperatingCostWeekly | `/api/powerbi/operating-cost/weekly?start=<yyyy-mm-dd>&end=<yyyy-mm-dd>` |
+
 ## Build The Power BI Report
 
 1. Open Power BI Desktop.
@@ -88,6 +97,31 @@ Revenue methodology:
 - Company KPIs use the Xcelerator footer total when present, matching the TMS report total.
 - Lane scoring excludes configured pay-ticket/service-only rows and excluded services, but those rows still remain in company revenue.
 - Stable coverage is the primary-driver run count divided by total runs for the lane.
+
+## Operating Cost Source Configuration
+
+Operating cost charts use source-owned facts only:
+
+- Geotab Data Connector: miles, drive hours, idle hours, trips.
+- AtoB import or SharePoint sync: approved fuel/DEF card cost.
+- Xcelerator ReviewOrders feed: driver pay.
+- QuickBooks Online export/feed: insurance and other company expenses.
+
+Required variables for full true cost:
+
+```bash
+FLEETPULSE_ATOB_FUEL_STATE_PATH=/home/data/fleetpulse_atob_fuel_expenses.json
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
+FLEETPULSE_QBO_EXPENSE_FEED_URL=
+FLEETPULSE_QBO_EXPENSE_FEED_PATH=
+FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
+FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,diesel,driver pay,driver settlement,fuel,income,payroll,revenue,sales,wages
+```
+
+QBO expense feeds can be CSV or JSON. FleetPulse excludes fuel and driver-pay
+accounts by default to avoid double-counting AtoB and Xcelerator.
 
 ## Validation
 

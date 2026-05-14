@@ -101,7 +101,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
     const welcomeMessage: Message = {
       id: '1',
       type: 'assistant',
-      content: "Hello. I can answer questions using live FleetPulse fleet context. If a metric is not available from the connected telemetry, I will say that instead of guessing.",
+      content: "Hello. I can answer questions using live FleetPulse fleet context. If the AI provider is offline, I will still answer supported live-data questions from connected telemetry and say when a metric is unavailable.",
       timestamp: new Date(),
       model: 'welcome',
       isAIPowered: false
@@ -468,12 +468,12 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                   </div>
                 )}
               </div>
-              <p className="text-xs text-gray-400">
-                {aiConfig?.ai_enabled 
-                  ? `${aiProviderLabel} • ${aiConfig.model}`
-                  : 'AI unavailable • Live data only'
-                }
-              </p>
+                <p className="text-xs text-gray-400">
+                  {aiConfig?.ai_enabled
+                    ? `${aiProviderLabel} • ${aiConfig.model}`
+                    : 'Live data mode • AI provider offline'
+                  }
+                </p>
             </div>
           </div>
           
@@ -539,9 +539,9 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                             AI
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1 px-2 py-1 bg-gray-600 text-white text-xs rounded-full">
+                          <div className="flex items-center gap-1 px-2 py-1 bg-blue-700 text-white text-xs rounded-full">
                             <Bot className="w-3 h-3" />
-                            Offline
+                            Live
                           </div>
                         )}
                       </div>
@@ -559,7 +559,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                     {message.timestamp.toLocaleTimeString()}
                     {message.model && message.model !== 'welcome' && (
                       <span className="text-gray-600">
-                        • {message.isAIPowered ? message.model : 'Service unavailable'}
+                        • {message.isAIPowered ? message.model : 'Live data fallback'}
                       </span>
                     )}
                   </div>
@@ -592,8 +592,8 @@ export default function FleetChat({ isOpen, onClose }: Props) {
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
-                  <span className="text-xs text-gray-400">
-                    {isStreaming ? 'AI is thinking...' : 'Processing...'}
+                <span className="text-xs text-gray-400">
+                    {isStreaming ? 'AI is thinking...' : 'Checking live data...'}
                   </span>
                 </div>
               </div>
@@ -632,7 +632,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
               placeholder={
                 aiConfig?.ai_enabled 
                   ? "Ask me anything about your fleet..."
-                  : "AI is offline; retry after configuration is restored"
+                  : "Ask about live fleet status, active vehicles, trips, alerts..."
               }
               disabled={isTyping || isStreaming}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
@@ -652,7 +652,7 @@ export default function FleetChat({ isOpen, onClose }: Props) {
               <p className="text-xs text-gray-500">
                 {aiConfig.ai_enabled 
                   ? `Enhanced with ${aiProviderLabel} • ${aiConfig.model}`
-                  : 'AI provider unavailable'
+                  : 'Live data mode; AI provider offline'
                 }
               </p>
             </div>

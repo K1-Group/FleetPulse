@@ -147,6 +147,59 @@ curl -X POST https://k1-fleetpulse.azurewebsites.net/api/control-tower/trailers/
   -H "X-FleetPulse-Xtra-Key: $FLEETPULSE_XTRA_INGESTION_API_KEY"
 ```
 
+#### AtoB Fuel Expense Imports
+```env
+FLEETPULSE_ATOB_FUEL_STATE_PATH=/home/data/fleetpulse_atob_fuel_expenses.json
+FLEETPULSE_ATOB_FUEL_RETAINED_RECORDS=10000
+FLEETPULSE_ATOB_SHAREPOINT_ENABLED=true
+FLEETPULSE_ATOB_SHAREPOINT_SITE_URL=https://tenant.sharepoint.com/sites/operations
+FLEETPULSE_ATOB_SHAREPOINT_DRIVE_NAME=Documents
+FLEETPULSE_ATOB_SHAREPOINT_FOLDER_PATH=atob
+FLEETPULSE_ATOB_SHAREPOINT_SOURCE_FILE_URLS=
+FLEETPULSE_ATOB_SHAREPOINT_INGESTION_API_KEY=store-in-key-vault
+FLEETPULSE_ATOB_POWERBI_WORKSPACE_ID=b801f80d-5303-4121-abd1-1163639ef58b
+FLEETPULSE_ATOB_POWERBI_FOLDER_ID=5b6ccf55-37ff-436e-8e19-6d1152334928
+FLEETPULSE_ATOB_POWERBI_UI_SUBFOLDER_ID=52730
+FLEETPULSE_ATOB_POWERBI_REPORT_ID=42dd5456-e377-4fb2-bb77-d28ef3a4c25a
+FLEETPULSE_ATOB_POWERBI_SEMANTIC_MODEL_ID=8212573f-83a8-418d-b144-73b65b503230
+```
+
+The Fuel tab can import downloaded AtoB CSV, TSV, JSON, or JSONL fuel reports
+directly, or sync the BI-connected SharePoint folder used for fuel reporting.
+FleetPulse stores those rows as read-only expense references, deduplicates them
+with idempotency keys, redacts full card numbers in retained raw rows, and uses
+actual imported cost in fuel analytics when present. Geotab remains authoritative
+for miles, utilization, and telemetry; AtoB rows are cost evidence only. The
+SharePoint sync endpoint is `POST /api/fuel/atob/sharepoint/sync` and should be
+called by a scheduler with `X-FleetPulse-AtoB-Key`.
+
+The current K1 Operations Hub Power BI folder is `AtoB` in workspace
+`b801f80d-5303-4121-abd1-1163639ef58b`; Fabric reports the folder ID as
+`5b6ccf55-37ff-436e-8e19-6d1152334928`. The live `AtoB Fuel Transactions`
+semantic model (`8212573f-83a8-418d-b144-73b65b503230`) is backed by an
+uploaded SharePoint file today. Use `FLEETPULSE_ATOB_SHAREPOINT_SOURCE_FILE_URLS`
+as the short-term bridge for that file-backed source, then repoint the semantic
+model to the shared `atob` folder so FleetPulse, SharePoint, and Power BI read
+from the same governed location.
+
+#### Operating Cost Per Mile / Hour
+```env
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
+FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
+FLEETPULSE_QBO_EXPENSE_FEED_URL=
+FLEETPULSE_QBO_EXPENSE_FEED_PATH=
+FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
+FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
+FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,diesel,driver pay,driver settlement,fuel,income,payroll,revenue,sales,wages
+```
+
+`GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
+cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
+AtoB fuel/DEF cost, Xcelerator driver pay, and QBO insurance/other expenses.
+When a feed is missing, FleetPulse marks the source as unresolved and leaves
+the true CPM/hour fields blank while still showing the known cost stack.
+
 #### Live Trailer Tracking
 ```env
 FLEETPULSE_TRAILER_GROUP_IDS=GroupTrailerId
@@ -318,6 +371,11 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/gamification/leaderboard` | Driver rankings |
 | `GET /api/gamification/challenges` | Active challenges |
 | `GET /api/gamification/location-rankings` | Location competition |
+| `GET /api/fuel/summary` | Fuel summary using Geotab mileage estimates and AtoB actual cost when imported |
+| `POST /api/fuel/atob/import` | Import downloaded AtoB fuel report as read-only expense references |
+| `GET /api/fuel/atob/summary?days=30` | Actual imported AtoB fuel expense summary |
+| `GET /api/fuel/atob/sharepoint/status` | Readiness for the BI-connected AtoB SharePoint folder |
+| `POST /api/fuel/atob/sharepoint/sync` | Sync downloaded AtoB report files from SharePoint |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |
@@ -491,15 +549,28 @@ The Data Connector must be activated on your database:
 2. Add: `{"url": "https://app.geotab.com/addins/geotab/dataConnector/manifest.json"}`
 3. Save and wait 2-3 hours for the data pipeline to backfill
 
+### Access URL
+
+FleetPulse starts with Geotab's unified OData URL and follows the redirect to
+the current federation server:
+
+`https://data-connector.geotab.com/odata/v4/svc/`
+
+If MyGeotab shows a numbered Access URL in the Data Connector add-in, pin it
+with `GEOTAB_ODATA_SERVER` so FleetPulse can skip discovery:
+
+`GEOTAB_ODATA_SERVER=https://odata-connector-2.geotab.com/odata/v4/svc/`
+
 ### Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /api/data-connector/status` | Sanitized auth/server readiness without exposing Geotab secrets |
 | `GET /api/data-connector/tables` | List available OData tables |
-| `GET /api/data-connector/vehicle-kpis?days=14` | Per-vehicle utilization: distance, drive/idle hours, trips, fuel |
+| `GET /api/data-connector/vehicle-kpis?days=14` | Per-vehicle utilization: distance in miles, drive/idle hours, trips, fuel |
 | `GET /api/data-connector/safety-scores?days=14` | Fleet and vehicle safety scores |
 | `GET /api/data-connector/fault-trends?days=14` | Fault code frequency and trends |
-| `GET /api/data-connector/trip-summary?days=14` | Trip aggregates per vehicle |
+| `GET /api/data-connector/trip-summary?days=14` | Trip aggregates per vehicle with distance in miles |
 
 ### Frontend
 

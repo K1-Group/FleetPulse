@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity } from 'lucide-react'
+import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import FleetAnalytics from './components/FleetAnalytics'
 import FleetChat from './components/FleetChat'
@@ -23,21 +23,44 @@ import FuelAnalytics from './components/FuelAnalytics'
 import ComplianceDashboard from './components/ComplianceDashboard'
 import DataConnector from './components/DataConnector'
 import ControlTower from './components/ControlTower'
+import OperatingSystem from './components/OperatingSystem'
 import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
+
+type AppTab = 'dashboard' | 'control-tower' | 'operating-system' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
+
+const appTabs: AppTab[] = [
+  'dashboard',
+  'control-tower',
+  'operating-system',
+  'maintenance',
+  'coaching',
+  'replay',
+  'reports',
+  'geofences',
+  'fuel',
+  'compliance',
+  'data-connector',
+]
+
+function getInitialTab(): AppTab {
+  const hash = window.location.hash.replace('#', '') as AppTab
+  return appTabs.includes(hash) ? hash : 'dashboard'
+}
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'control-tower' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'>('dashboard')
+  const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab)
   
-  const overview = useFleetOverview()
-  const vehicles = useVehicles()
-  const safety = useSafetyScores()
-  const leaderboard = useLeaderboard()
-  const alerts = useAlerts()
-  const locations = useLocations()
-  const monitorAlerts = useMonitorAlerts()
-  const monitorStatus = useMonitorStatus()
-  const trailerTracking = useControlTowerTrailerTracking()
+  const dashboardActive = activeTab === 'dashboard'
+  const overview = useFleetOverview(dashboardActive)
+  const vehicles = useVehicles(dashboardActive)
+  const safety = useSafetyScores(dashboardActive)
+  const leaderboard = useLeaderboard(dashboardActive)
+  const alerts = useAlerts(dashboardActive)
+  const locations = useLocations(dashboardActive)
+  const monitorAlerts = useMonitorAlerts(dashboardActive)
+  const monitorStatus = useMonitorStatus(dashboardActive)
+  const trailerTracking = useControlTowerTrailerTracking(dashboardActive)
 
   const triggerCheck = useCallback(() => {
     fetch('/api/monitor/check', { method: 'POST' }).then(() => {
@@ -45,6 +68,11 @@ export default function App() {
       monitorStatus.refresh()
     })
   }, [monitorAlerts, monitorStatus])
+
+  const selectTab = useCallback((tab: AppTab) => {
+    setActiveTab(tab)
+    window.history.replaceState(null, '', `#${tab}`)
+  }, [])
 
   const pageVariants = {
     initial: { opacity: 0, y: 20 },
@@ -84,9 +112,9 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4">
           {/* Navigation Tabs */}
-          <nav className="flex gap-1 bg-gray-800/50 dark:bg-gray-800/50 light:bg-gray-200/50 rounded-lg p-1">
+          <nav className="flex flex-wrap gap-1 bg-gray-800/50 dark:bg-gray-800/50 light:bg-gray-200/50 rounded-lg p-1">
             <button
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => selectTab('dashboard')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'dashboard'
                   ? 'bg-blue-500 text-white'
@@ -97,7 +125,7 @@ export default function App() {
               <span className="hidden sm:inline">Dashboard</span>
             </button>
             <button
-              onClick={() => setActiveTab('control-tower')}
+              onClick={() => selectTab('control-tower')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'control-tower'
                   ? 'bg-blue-500 text-white'
@@ -108,7 +136,18 @@ export default function App() {
               <span className="hidden sm:inline">Tower</span>
             </button>
             <button
-              onClick={() => setActiveTab('maintenance')}
+              onClick={() => selectTab('operating-system')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === 'operating-system'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span className="hidden sm:inline">Org OS</span>
+            </button>
+            <button
+              onClick={() => selectTab('maintenance')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'maintenance'
                   ? 'bg-blue-500 text-white'
@@ -119,7 +158,7 @@ export default function App() {
               <span className="hidden sm:inline">Maintenance</span>
             </button>
             <button
-              onClick={() => setActiveTab('coaching')}
+              onClick={() => selectTab('coaching')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'coaching'
                   ? 'bg-blue-500 text-white'
@@ -130,7 +169,7 @@ export default function App() {
               <span className="hidden sm:inline">Coaching</span>
             </button>
             <button
-              onClick={() => setActiveTab('replay')}
+              onClick={() => selectTab('replay')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'replay'
                   ? 'bg-blue-500 text-white'
@@ -141,7 +180,7 @@ export default function App() {
               <span className="hidden sm:inline">Routes</span>
             </button>
             <button
-              onClick={() => setActiveTab('fuel')}
+              onClick={() => selectTab('fuel')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'fuel'
                   ? 'bg-blue-500 text-white'
@@ -152,7 +191,7 @@ export default function App() {
               <span className="hidden sm:inline">Fuel</span>
             </button>
             <button
-              onClick={() => setActiveTab('geofences')}
+              onClick={() => selectTab('geofences')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'geofences'
                   ? 'bg-blue-500 text-white'
@@ -163,7 +202,7 @@ export default function App() {
               <span className="hidden sm:inline">Zones</span>
             </button>
             <button
-              onClick={() => setActiveTab('compliance')}
+              onClick={() => selectTab('compliance')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'compliance'
                   ? 'bg-blue-500 text-white'
@@ -174,7 +213,7 @@ export default function App() {
               <span className="hidden sm:inline">ELD</span>
             </button>
             <button
-              onClick={() => setActiveTab('reports')}
+              onClick={() => selectTab('reports')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'reports'
                   ? 'bg-blue-500 text-white'
@@ -185,7 +224,7 @@ export default function App() {
               <span className="hidden sm:inline">Reports</span>
             </button>
             <button
-              onClick={() => setActiveTab('data-connector')}
+              onClick={() => selectTab('data-connector')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'data-connector'
                   ? 'bg-blue-500 text-white'
@@ -332,12 +371,16 @@ export default function App() {
           <ControlTower />
         )}
 
+        {activeTab === 'operating-system' && (
+          <OperatingSystem />
+        )}
+
         {activeTab === 'coaching' && (
           <DriverCoaching />
         )}
 
         {activeTab === 'replay' && (
-          <RouteReplay onClose={() => setActiveTab('dashboard')} />
+          <RouteReplay onClose={() => selectTab('dashboard')} />
         )}
 
         {activeTab === 'reports' && <FleetReports />}

@@ -40,6 +40,7 @@ _ROUTERS = [
     ("fuel", "/api/fuel", ["Fuel Analytics"]),
     ("compliance", "/api/compliance", ["Compliance & ELD"]),
     ("control_tower", "/api/control-tower", ["Control Tower"]),
+    ("operating_system", "/api/operating-system", ["K1 Operating System"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),
     ("zapier", "/api/zapier", ["Zapier"]),

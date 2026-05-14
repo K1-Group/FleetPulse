@@ -127,3 +127,30 @@ CALCULATE (
 
 Last Lane Stability Export =
 MAX ( LaneStabilityCompany[exported_at] )
+
+Known Operating Cost =
+SUM ( OperatingCostWeekly[known_operating_cost] )
+
+True Operating Cost =
+SUM ( OperatingCostWeekly[true_operating_cost] )
+
+Operating Miles =
+SUM ( OperatingCostWeekly[miles] )
+
+Operating Drive Hours =
+SUM ( OperatingCostWeekly[drive_hours] )
+
+Known Cost Per Mile =
+DIVIDE ( [Known Operating Cost], [Operating Miles] )
+
+True Cost Per Mile =
+DIVIDE ( [True Operating Cost], [Operating Miles] )
+
+Known Cost Per Drive Hour =
+DIVIDE ( [Known Operating Cost], [Operating Drive Hours] )
+
+True Cost Per Drive Hour =
+DIVIDE ( [True Operating Cost], [Operating Drive Hours] )
+
+Operating Cost Complete =
+IF ( SELECTEDVALUE ( OperatingCostSummary[complete_cost_available], FALSE () ), 1, 0 )

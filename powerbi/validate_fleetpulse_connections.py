@@ -76,6 +76,19 @@ ENDPOINTS = [
         False,
         expected_authority="K1 Group LLC / Xcelerator",
     ),
+    Endpoint(
+        "operating_cost_summary",
+        "/api/powerbi/operating-cost/summary?days=180",
+        True,
+        expected_authority="Geotab + AtoB + Xcelerator + QuickBooks",
+    ),
+    Endpoint(
+        "operating_cost_weekly",
+        "/api/powerbi/operating-cost/weekly?days=180",
+        True,
+        require_non_empty=False,
+        expected_authority="Geotab + AtoB + Xcelerator + QuickBooks",
+    ),
 ]
 
 

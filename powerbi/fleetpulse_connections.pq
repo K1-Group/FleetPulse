@@ -61,6 +61,16 @@ let
             Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/lane-stability/trend?days=7"))
         ),
 
+    OperatingCostSummary =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/operating-cost/summary?days=180"))
+        ),
+
+    OperatingCostWeekly =
+        Table.FromRecords(
+            Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/operating-cost/weekly?days=180"))
+        ),
+
     FleetPulseSnapshot =
         Json.Document(Web.Contents(FleetPulseBaseUrl & "/api/powerbi/fleetpulse-snapshot?days=7"))
 in
@@ -75,5 +85,7 @@ in
         LaneStabilityRoutes = LaneStabilityRoutes,
         LaneStabilityDaily = LaneStabilityDaily,
         LaneStabilityTrend = LaneStabilityTrend,
+        OperatingCostSummary = OperatingCostSummary,
+        OperatingCostWeekly = OperatingCostWeekly,
         FleetPulseSnapshot = FleetPulseSnapshot
     ]
