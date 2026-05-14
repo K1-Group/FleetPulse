@@ -56,6 +56,40 @@ def test_jurisdiction_helper_detects_message():
     assert mod._is_jurisdiction_error("") is False
 
 
+def test_missing_metadata_helper_detects_geotab_message():
+    mod = _import_router_fresh()
+    assert mod._is_missing_metadata_error('{"message":"Metadata is Not Found"}') is True
+    assert mod._is_missing_metadata_error("other error") is False
+
+
+def test_basic_auth_username_adds_database_prefix():
+    mod = _import_router_fresh()
+    assert mod._odata_auth_username("K1logistics", "AI_Enterprise@example.com") == (
+        "K1logistics/AI_Enterprise@example.com"
+    )
+
+
+def test_basic_auth_username_does_not_double_prefix():
+    mod = _import_router_fresh()
+    assert mod._odata_auth_username("K1logistics", "K1logistics/AI_Enterprise@example.com") == (
+        "K1logistics/AI_Enterprise@example.com"
+    )
+
+
+def test_status_is_sanitized_and_reports_auth_shape(monkeypatch):
+    mod = _import_router_fresh()
+    monkeypatch.setenv("GEOTAB_PASSWORD", "super-secret")
+    mod.GeotabClient._instance = None
+
+    status = mod._data_connector_config_status()
+
+    assert status["password_configured"] is True
+    assert status["basic_auth_username_format"] == "<database>/<username>"
+    assert status["basic_auth_database_matches_env"] is True
+    assert "super-secret" not in str(status)
+    assert "AI_Enterprise" not in str(status)
+
+
 def test_pinned_server_skips_discovery(monkeypatch):
     monkeypatch.setenv(
         "GEOTAB_ODATA_SERVER",
@@ -87,6 +121,180 @@ def test_pinned_server_appends_trailing_slash(monkeypatch):
     assert asyncio.run(_go()).endswith("/")
 
 
+def test_redirect_base_extracts_numbered_service_root():
+    mod = _import_router_fresh()
+
+    assert (
+        mod._odata_base_from_url(
+            "https://odata-connector-12.geotab.com/odata/v4/svc/"
+            "LatestVehicleMetadata?$search=last_1_day&$top=1"
+        )
+        == "https://odata-connector-12.geotab.com/odata/v4/svc/"
+    )
+    assert mod._odata_base_from_url("https://example.com/not-odata") is None
+    assert (
+        mod._normalize_server(
+            "https://odata-connector-12.geotab.com/odata/v4/svc/"
+            "VehicleKpi_Daily?$search=last_14_day"
+        )
+        == "https://odata-connector-12.geotab.com/odata/v4/svc/"
+    )
+
+
+def test_discovery_prefers_unified_redirect(monkeypatch):
+    mod = _import_router_fresh()
+    calls: list[str] = []
+
+    async def _fake_probe(_client, url, _auth):
+        calls.append(url)
+        if url == mod._ODATA_UNIFIED_SERVER:
+            return "https://odata-connector-8.geotab.com/odata/v4/svc/"
+        return None
+
+    monkeypatch.setattr(mod, "_probe_server", _fake_probe)
+
+    import asyncio
+
+    result = asyncio.run(mod._find_server())
+    assert result == "https://odata-connector-8.geotab.com/odata/v4/svc/"
+    assert calls == [mod._ODATA_UNIFIED_SERVER]
+
+
+def test_vehicle_kpi_aggregator_supports_current_geotab_schema():
+    mod = _import_router_fresh()
+
+    vehicles = mod._aggregate_vehicle_kpis(
+        [
+            {
+                "DeviceId": "b11A",
+                "Distance_Km": 12.5,
+                "DriveDuration_Seconds": 3600,
+                "IdleDuration_Seconds": 900,
+                "Trip_Count": 2,
+                "TotalFuel_Litres": 4.2,
+            },
+            {
+                "DeviceId": "b11A",
+                "GPS_Distance_Km": 7.5,
+                "DriveDuration_Seconds": 1800,
+                "IdleDuration_Seconds": 0,
+                "Trip_Count": 1,
+            },
+        ]
+    )
+
+    assert len(vehicles) == 1
+    assert vehicles[0]["vehicle_id"] == "b11A"
+    assert vehicles[0]["vehicle_name"] == "b11A"
+    assert vehicles[0]["distance_miles"] == pytest.approx(12.42742)
+    assert vehicles[0]["drive_hours"] == 1.5
+    assert vehicles[0]["idle_hours"] == 0.25
+    assert vehicles[0]["trips"] == 3
+    assert vehicles[0]["fuel_litres"] == 4.2
+
+
+def test_vehicle_kpi_aggregator_uses_geotab_asset_name_from_metadata():
+    mod = _import_router_fresh()
+    vehicle_names = mod._vehicle_metadata_name_map(
+        [
+            {
+                "DeviceId": "G8B120F4CFB4",
+                "SerialNo": "G8B120F4CFB4",
+                "Name": "K1-117",
+            }
+        ]
+    )
+
+    vehicles = mod._aggregate_vehicle_kpis(
+        [
+            {
+                "DeviceId": "G8B120F4CFB4",
+                "Distance_Km": 10,
+                "DriveDuration_Seconds": 1800,
+                "IdleDuration_Seconds": 300,
+                "Trip_Count": 1,
+            },
+            {
+                "DeviceId": "G8B120F4CFB4",
+                "Distance_Km": 5,
+                "DriveDuration_Seconds": 900,
+                "IdleDuration_Seconds": 0,
+                "Trip_Count": 1,
+            },
+        ],
+        vehicle_names,
+    )
+
+    assert len(vehicles) == 1
+    assert vehicles[0]["vehicle_id"] == "G8B120F4CFB4"
+    assert vehicles[0]["vehicle_name"] == "K1-117"
+    assert vehicles[0]["distance_miles"] == pytest.approx(9.320565)
+    assert vehicles[0]["drive_hours"] == 0.75
+    assert vehicles[0]["idle_hours"] == pytest.approx(0.08333333333333333)
+    assert vehicles[0]["trips"] == 2
+
+
+def test_vehicle_metadata_name_map_uses_unit_aliases():
+    mod = _import_router_fresh()
+
+    vehicle_names = mod._vehicle_metadata_name_map(
+        [
+            {
+                "DeviceSerialNumber": "G8B120F4CFB4",
+                "VehicleName": "G8B120F4CFB4",
+                "UnitNumber": "250",
+            }
+        ]
+    )
+
+    assert vehicle_names["g8b120f4cfb4"] == "250"
+
+
+def test_trip_summary_converter_returns_miles_only():
+    mod = _import_router_fresh()
+
+    rows = mod._convert_trip_summary_rows(
+        [
+            {
+                "VehicleName": "b11A",
+                "TotalTrips": 4,
+                "TotalDistance_Km": 10,
+                "TotalDriveTime_Hours": 1.25,
+            }
+        ]
+    )
+
+    assert rows == [
+        {
+            "VehicleName": "b11A",
+            "TotalTrips": 4,
+            "TotalDriveTime_Hours": 1.25,
+            "total_distance_miles": pytest.approx(6.21371),
+        }
+    ]
+    assert "TotalDistance_Km" not in rows[0]
+
+
+def test_fault_trends_returns_empty_when_table_unavailable(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _missing_table(*_args, **_kwargs):
+        raise mod.HTTPException(
+            404,
+            'Data Connector error: {"event":"Metadata","message":"Metadata is Not Found"}',
+        )
+
+    monkeypatch.setattr(mod, "_odata_get", _missing_table)
+
+    import asyncio
+
+    result = asyncio.run(mod.fault_trends(days=1))
+
+    assert result["faults"] == []
+    assert result["feed_status"] == "table_unavailable"
+    assert result["period_days"] == 1
+
+
 def test_invalidate_clears_cache():
     mod = _import_router_fresh()
     mod._ODATA_SERVER = "https://odata-connector-9.geotab.com/odata/v4/svc/"
@@ -107,6 +315,7 @@ def test_jurisdiction_mismatch_class_carries_detail():
 def test_servers_list_extended_to_15():
     """Defensive: ensure we did not regress the broader probe range."""
     mod = _import_router_fresh()
+    assert mod._ODATA_DISCOVERY_SERVERS[0] == "https://data-connector.geotab.com/odata/v4/svc/"
     assert len(mod._ODATA_SERVERS) == 15
     assert mod._ODATA_SERVERS[0].startswith("https://odata-connector-1.geotab.com/")
     assert mod._ODATA_SERVERS[-1].startswith("https://odata-connector-15.geotab.com/")
