@@ -47,6 +47,28 @@ def _sample_csv(transaction_id: str = "A-100") -> str:
     )
 
 
+def _sample_atob_export_csv() -> str:
+    return "\n".join(
+        [
+            (
+                "Transaction Date (GMT),Posted Date (GMT),Status,Card Last Four,"
+                "Merchant,Amount,Net of Discount,Discount,Driver Name,Vehicle Name,"
+                "Merchant Category,Type,Gallons,Price Per Gallon,UUID"
+            ),
+            (
+                "05/14/2026 15:15:53,05/14/2026 16:11:20,Approved,**** 6763,"
+                "PILOT_00507,$495.00,$490.48,$4.52,Taleise Oliver,Truck 1,"
+                "automated_fuel_dispensers,Diesel,90.345,$5.479,txn-1"
+            ),
+            (
+                "05/14/2026 15:19:14,,Pending,**** 4913,Love's #0269 C Outside,"
+                "$904.99,,,Roddrick Blow,Truck 2,automated_fuel_dispensers,,,"
+                ",txn-2"
+            ),
+        ]
+    )
+
+
 def test_atob_import_endpoint_summarizes_actual_expenses(monkeypatch, tmp_path):
     monkeypatch.setenv("FLEETPULSE_ATOB_FUEL_STATE_PATH", str(tmp_path / "atob-state.json"))
     clear_cached_prefix("fuel:")
@@ -66,6 +88,28 @@ def test_atob_import_endpoint_summarizes_actual_expenses(monkeypatch, tmp_path):
     assert summary.status_code == 200
     assert summary.json()["transaction_count"] == 1
     assert summary.json()["total_cost"] == 250.0
+
+
+def test_atob_import_endpoint_accepts_generic_export_headers(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEETPULSE_ATOB_FUEL_STATE_PATH", str(tmp_path / "atob-state.json"))
+    clear_cached_prefix("fuel:")
+
+    response = _client().post(
+        "/api/fuel/atob/import",
+        json={
+            "filename": "K1_Logistics_Inc_Transactions_generic_Export_2026-05-14.csv",
+            "content": _sample_atob_export_csv(),
+            "dry_run": False,
+        },
+    )
+    summary = _client().get("/api/fuel/atob/summary?days=30")
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 2
+    assert response.json()["summary"]["transaction_count"] == 1
+    assert summary.status_code == 200
+    assert summary.json()["transaction_count"] == 1
+    assert summary.json()["total_cost"] == 490.48
 
 
 def test_fuel_summary_prefers_atob_actual_cost_when_imported(monkeypatch, tmp_path):
