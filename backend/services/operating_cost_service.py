@@ -10,6 +10,7 @@ This service joins cost evidence without changing any source system:
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -268,17 +269,33 @@ async def _fetch_vehicle_kpi_rows(start: date, end: date) -> list[dict[str, Any]
 async def _geotab_weekly_metrics(
     weeks: list[tuple[date, date]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    metrics: dict[str, dict[str, Any]] = {}
+    metrics: dict[str, dict[str, Any]] = {
+        _week_key(start): _empty_week(start, end) for start, end in weeks
+    }
     row_count = 0
     failures: list[str] = []
 
-    for start, end in weeks:
+    async def fetch_week(start: date, end: date) -> tuple[date, date, list[dict[str, Any]], str | None]:
+        try:
+            async with semaphore:
+                rows = await _fetch_vehicle_kpi_rows(start, end)
+            return start, end, rows, None
+        except Exception as exc:  # pragma: no cover - exact upstream exception varies.
+            return start, end, [], f"{start.isoformat()}..{end.isoformat()}: {type(exc).__name__}"
+
+    try:
+        concurrency = max(int(os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY", "4")), 1)
+    except ValueError:
+        concurrency = 4
+    semaphore = asyncio.Semaphore(min(concurrency, 8))
+
+    for start, end, rows, failure in await asyncio.gather(
+        *(fetch_week(start, end) for start, end in weeks)
+    ):
         key = _week_key(start)
         bucket = metrics.setdefault(key, _empty_week(start, end))
-        try:
-            rows = await _fetch_vehicle_kpi_rows(start, end)
-        except Exception as exc:  # pragma: no cover - exact upstream exception varies.
-            failures.append(f"{start.isoformat()}..{end.isoformat()}: {type(exc).__name__}")
+        if failure:
+            failures.append(failure)
             continue
 
         row_count += len(rows)
