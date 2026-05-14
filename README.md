@@ -188,9 +188,12 @@ FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
 FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
+FLEETPULSE_QBO_EXPENSE_STATE_PATH=/home/data/fleetpulse_qbo_expenses.json
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
+FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY=
+FLEETPULSE_QBO_EXPENSE_RETAINED_RECORDS=50000
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
 FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
 ```
@@ -204,6 +207,11 @@ Downloaded Xcelerator ReviewOrders CSV/JSON exports can be loaded with
 `POST /api/fuel/xcelerator/review-orders/import`; FleetPulse stores them as
 read-only driver-pay evidence and marks the source partial when the imported
 date span does not cover the requested reporting window.
+Downloaded QBO transaction-detail expense CSV/JSON exports can be loaded with
+`POST /api/fuel/qbo/expenses/import`; FleetPulse stores insurance and other
+operating expenses as read-only QBO evidence, excludes known fuel/driver-pay/COGS
+accounts to prevent double counting, and uses import coverage dates when
+provided to avoid certifying partial finance feeds as complete.
 
 #### Live Trailer Tracking
 ```env
@@ -381,6 +389,9 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/fuel/atob/summary?days=30` | Actual imported AtoB fuel expense summary |
 | `GET /api/fuel/atob/sharepoint/status` | Readiness for the BI-connected AtoB SharePoint folder |
 | `POST /api/fuel/atob/sharepoint/sync` | Sync downloaded AtoB report files from SharePoint |
+| `POST /api/fuel/qbo/expenses/import` | Import downloaded QBO expense report as read-only finance references |
+| `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO insurance and other expense summary |
+| `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, AtoB, Xcelerator, and QBO |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |

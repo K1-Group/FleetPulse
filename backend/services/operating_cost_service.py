@@ -81,7 +81,8 @@ class QboExpenseFeedConfig:
                 or os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", "").strip()
             ),
             path=(
-                os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_PATH", "").strip()
+                os.getenv("FLEETPULSE_QBO_EXPENSE_STATE_PATH", "").strip()
+                or os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_PATH", "").strip()
                 or os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_PATH", "").strip()
             ),
             api_key=os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_API_KEY", "").strip(),
@@ -490,7 +491,7 @@ def _xcelerator_driver_pay_by_week(
     )
 
 
-def _load_qbo_rows(config: QboExpenseFeedConfig) -> list[dict[str, Any]]:
+def _load_qbo_feed(config: QboExpenseFeedConfig) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if config.url:
         headers = {"Accept": "application/json,text/csv"}
         if config.api_key:
@@ -498,36 +499,47 @@ def _load_qbo_rows(config: QboExpenseFeedConfig) -> list[dict[str, Any]]:
         with httpx.Client(timeout=config.timeout_seconds) as client:
             response = client.get(config.url, headers=headers)
         response.raise_for_status()
-        return _coerce_rows(response.text, response.headers.get("content-type", ""))
+        return _coerce_feed(response.text, response.headers.get("content-type", ""))
     if config.path:
-        return _coerce_rows(Path(config.path).read_text(encoding="utf-8-sig"), "")
-    return []
+        path = Path(config.path)
+        if not path.exists():
+            return [], {}
+        return _coerce_feed(path.read_text(encoding="utf-8-sig"), "")
+    return [], {}
 
 
-def _coerce_rows(text: str, content_type: str) -> list[dict[str, Any]]:
+def _coerce_feed(text: str, content_type: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     stripped = text.lstrip("\ufeff").strip()
     if not stripped:
-        return []
+        return [], {}
     if "json" in content_type or stripped[:1] in {"[", "{"}:
         payload = json.loads(stripped)
         if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
+            return [item for item in payload if isinstance(item, dict)], {}
         if isinstance(payload, dict):
+            metadata = {
+                key: payload.get(key)
+                for key in ("coverage_start", "coverage_end", "last_imported_at")
+                if payload.get(key)
+            }
             for key in ("rows", "value", "expenses", "data", "items"):
                 value = payload.get(key)
                 if isinstance(value, list):
-                    return [item for item in value if isinstance(item, dict)]
-            return [payload]
+                    return [item for item in value if isinstance(item, dict)], metadata
+            return [payload], metadata
     sample = stripped[:4096]
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
     except csv.Error:
         dialect = csv.excel_tab if "\t" in sample else csv.excel
-    return [
-        dict(row)
-        for row in csv.DictReader(io.StringIO(stripped), dialect=dialect)
-        if any(str(value or "").strip() for value in row.values())
-    ]
+    return (
+        [
+            dict(row)
+            for row in csv.DictReader(io.StringIO(stripped), dialect=dialect)
+            if any(str(value or "").strip() for value in row.values())
+        ],
+        {},
+    )
 
 
 def _qbo_row_day(row: dict[str, Any]) -> date | None:
@@ -540,6 +552,7 @@ def _qbo_row_day(row: dict[str, Any]) -> date | None:
                 "Transaction Date",
                 "Posted Date",
                 "Accounting Date",
+                "transaction_date",
             ),
         )
     )
@@ -555,6 +568,7 @@ def _qbo_row_amount(row: dict[str, Any]) -> float:
             "Expense Amount",
             "Debit",
             "Total",
+            "amount_usd",
         ),
     )
     return abs(_number(amount))
@@ -568,12 +582,18 @@ def _qbo_row_bucket(row: dict[str, Any], config: QboExpenseFeedConfig) -> str | 
                 (
                     "Account",
                     "Account Name",
+                    "account_name",
                     "Category",
                     "Expense Category",
+                    "category",
                     "Name",
+                    "vendor_name",
                     "Memo",
+                    "memo",
                     "Description",
+                    "description",
                     "Transaction Type",
+                    "transaction_type",
                 ),
             )
             or ""
@@ -603,26 +623,63 @@ def _qbo_weekly_costs(
             message="QBO expense feed URL/path is not configured.",
         )
 
-    rows = _load_qbo_rows(config)
+    rows, metadata = _load_qbo_feed(config)
+    if not rows:
+        return {}, _source(
+            "awaiting_feed",
+            QBO_AUTHORITY,
+            message="QBO expense feed is configured, but no expense rows are available yet.",
+        )
+
     weekly: dict[str, dict[str, float]] = {}
-    row_count = 0
+    source_row_count = 0
+    included_row_count = 0
     for row in rows:
         day = _qbo_row_day(row)
         if day is None or not (start <= day <= end):
             continue
+        source_row_count += 1
         bucket_name = _qbo_row_bucket(row, config)
         if bucket_name is None:
             continue
         week = weekly.setdefault(_week_key(day), {"insurance": 0.0, "other": 0.0})
         week[bucket_name] += _qbo_row_amount(row)
-        row_count += 1
+        included_row_count += 1
+
+    if not source_row_count:
+        return {}, _source(
+            "awaiting_feed",
+            QBO_AUTHORITY,
+            message="QBO expense feed has no rows inside the requested reporting period.",
+        )
+
+    source_status = "healthy"
+    source_message = ""
+    coverage_start = _coerce_date(metadata.get("coverage_start"))
+    coverage_end = _coerce_date(metadata.get("coverage_end"))
+    if coverage_start and coverage_end and (coverage_start > start or coverage_end < end):
+        source_status = "partial"
+        source_message = (
+            f"QBO expense rows are declared for {coverage_start.isoformat()}..{coverage_end.isoformat()}, "
+            f"not the full requested {start.isoformat()}..{end.isoformat()} period."
+        )
 
     return (
         {
             key: {"insurance": _money(value["insurance"]), "other": _money(value["other"])}
             for key, value in weekly.items()
         },
-        _source("healthy", QBO_AUTHORITY, row_count=row_count),
+        _source(
+            source_status,
+            QBO_AUTHORITY,
+            message=source_message
+            or (
+                f"{included_row_count} QBO expense rows included after account exclusions."
+                if included_row_count != source_row_count
+                else ""
+            ),
+            row_count=source_row_count,
+        ),
     )
 
 

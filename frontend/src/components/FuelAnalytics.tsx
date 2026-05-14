@@ -8,6 +8,7 @@ import {
   Fuel,
   Gauge,
   Loader2,
+  ReceiptText,
   TrendingDown,
   TrendingUp,
   Upload,
@@ -127,6 +128,41 @@ interface AtoBSharePointSyncResult {
   errors: string[]
 }
 
+interface QboExpenseSummary {
+  source_authority?: string
+  projection_mode?: string
+  period_days?: number
+  coverage_start?: string | null
+  coverage_end?: string | null
+  last_imported_at?: string | null
+  row_count: number
+  included_expense_count: number
+  excluded_expense_count: number
+  insurance_total: number
+  other_expense_total: number
+  included_expense_total: number
+  date_min: string | null
+  date_max: string | null
+}
+
+interface QboExpenseStatus {
+  api_key_required: boolean
+  state_path_configured: boolean
+  state_exists: boolean
+  missing_config: string[]
+}
+
+interface QboExpenseImportResult {
+  status: string
+  dry_run: boolean
+  total_records: number
+  imported_count: number
+  duplicate_count: number
+  invalid_count: number
+  errors: string[]
+  summary: QboExpenseSummary
+}
+
 interface OperatingCostSummary {
   miles: number
   drive_hours: number
@@ -215,14 +251,20 @@ export default function FuelAnalytics() {
   const [summary, setSummary] = useState<FuelSummary | null>(null)
   const [atobSummary, setAtobSummary] = useState<AtoBSummary | null>(null)
   const [sharePointStatus, setSharePointStatus] = useState<AtoBSharePointStatus | null>(null)
+  const [qboSummary, setQboSummary] = useState<QboExpenseSummary | null>(null)
+  const [qboStatus, setQboStatus] = useState<QboExpenseStatus | null>(null)
   const [operatingCost, setOperatingCost] = useState<OperatingCostSnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedQboFile, setSelectedQboFile] = useState<File | null>(null)
+  const [qboApiKey, setQboApiKey] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importingQbo, setImportingQbo] = useState(false)
   const [syncingSharePoint, setSyncingSharePoint] = useState(false)
   const [importResult, setImportResult] = useState<AtoBImportResult | null>(null)
+  const [qboImportResult, setQboImportResult] = useState<QboExpenseImportResult | null>(null)
   const [sharePointResult, setSharePointResult] = useState<AtoBSharePointSyncResult | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
 
@@ -230,18 +272,22 @@ export default function FuelAnalytics() {
     setLoading(true)
     try {
       const ytdStart = `${new Date().getFullYear()}-01-01`
-      const [s, t, e, a, sp] = await Promise.all([
+      const [s, t, e, a, sp, qbo, qboReady] = await Promise.all([
         fetchJson<FuelSummary | null>('/api/fuel/summary', null),
         fetchJson<FuelTrend[]>('/api/fuel/trends', []),
         fetchJson<VehicleEfficiency[]>('/api/fuel/efficiency', []),
         fetchJson<AtoBSummary | null>('/api/fuel/atob/summary?days=30', null),
         fetchJson<AtoBSharePointStatus | null>('/api/fuel/atob/sharepoint/status', null),
+        fetchJson<QboExpenseSummary | null>('/api/fuel/qbo/expenses/summary?days=370', null),
+        fetchJson<QboExpenseStatus | null>('/api/fuel/qbo/expenses/status', null),
       ])
       setSummary(s)
       setTrends(t)
       setEfficiency(e)
       setAtobSummary(a)
       setSharePointStatus(sp)
+      setQboSummary(qbo)
+      setQboStatus(qboReady)
       setLoading(false)
 
       const oc = await fetchJson<OperatingCostSnapshot | null>(
@@ -317,7 +363,49 @@ export default function FuelAnalytics() {
     }
   }
 
+  const handleQboImport = async (dryRun: boolean) => {
+    if (!selectedQboFile) {
+      setImportError('Select a downloaded QBO CSV, TSV, or JSON expense report first.')
+      return
+    }
+    setImportingQbo(true)
+    setImportError(null)
+    try {
+      const content = await selectedQboFile.text()
+      const now = new Date()
+      const periodStart = `${now.getFullYear()}-01-01`
+      const periodEnd = now.toISOString().slice(0, 10)
+      const response = await fetch('/api/fuel/qbo/expenses/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(qboApiKey ? { 'X-FleetPulse-QBO-Key': qboApiKey } : {}),
+        },
+        body: JSON.stringify({
+          filename: selectedQboFile.name,
+          content,
+          dry_run: dryRun,
+          period_start: periodStart,
+          period_end: periodEnd,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error(`QBO import failed with HTTP ${response.status}`)
+      }
+      const result = await response.json() as QboExpenseImportResult
+      setQboImportResult(result)
+      if (!dryRun) {
+        await loadFuelData()
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'QBO import failed')
+    } finally {
+      setImportingQbo(false)
+    }
+  }
+
   const actualFuelCost = summary?.fuel_cost_source === 'atob_manual_import'
+  const qboImportLocked = Boolean(qboStatus?.api_key_required && !qboApiKey)
   const sharePointReady = Boolean(sharePointStatus?.sync_ready)
   const operatingSummary = operatingCost?.summary
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
@@ -579,6 +667,102 @@ export default function FuelAnalytics() {
               <div className="rounded-lg border border-gray-700 bg-gray-950/50 px-3 py-2 text-sm text-gray-300">
                 <span className="font-semibold text-white">{sharePointResult.dry_run ? 'Folder preview' : 'SharePoint sync'} complete:</span>{' '}
                 {sharePointResult.fetched_count} files, {sharePointResult.imported_count} new, {sharePointResult.duplicate_count} duplicate, {sharePointResult.invalid_count} invalid.
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      {/* QBO Expense Intake */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.48 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <ReceiptText className="w-5 h-5 text-purple-400" />
+              QBO Insurance & Operating Expense Import
+            </h3>
+            <div className="mt-2 text-sm text-gray-400">
+              {qboStatus?.state_path_configured ? 'State path configured' : 'State path pending'} · {qboStatus?.api_key_required ? 'API key required' : 'Operator upload enabled'}
+            </div>
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div>
+                <div className="text-xs uppercase text-gray-500">Rows</div>
+                <div className="text-xl font-semibold text-white">{qboSummary?.row_count ?? 0}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase text-gray-500">Insurance</div>
+                <div className="text-xl font-semibold text-purple-400">{formatCurrency(qboSummary?.insurance_total ?? 0)}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase text-gray-500">Other</div>
+                <div className="text-xl font-semibold text-amber-400">{formatCurrency(qboSummary?.other_expense_total ?? 0)}</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase text-gray-500">Coverage</div>
+                <div className="text-sm font-semibold text-gray-200">
+                  {qboSummary?.coverage_start && qboSummary?.coverage_end
+                    ? `${qboSummary.coverage_start.slice(5)}-${qboSummary.coverage_end.slice(5)}`
+                    : qboSummary?.date_max ?? 'Pending'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full lg:w-[460px] space-y-3">
+            <label className="block">
+              <span className="sr-only">QBO expense report</span>
+              <input
+                type="file"
+                accept=".csv,.tsv,.txt,.json,.jsonl"
+                onChange={(event) => {
+                  setSelectedQboFile(event.target.files?.[0] ?? null)
+                  setQboImportResult(null)
+                  setImportError(null)
+                }}
+                className="block w-full text-sm text-gray-300 file:mr-4 file:rounded-lg file:border-0 file:bg-purple-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-purple-400"
+              />
+            </label>
+            {qboStatus?.api_key_required && (
+              <input
+                type="password"
+                value={qboApiKey}
+                onChange={(event) => setQboApiKey(event.target.value)}
+                placeholder="QBO import key"
+                className="w-full rounded-lg border border-gray-700 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:border-purple-400 focus:outline-none"
+              />
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={importingQbo || qboImportLocked}
+                onClick={() => void handleQboImport(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {importingQbo ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileCheck2 className="w-4 h-4" />}
+                Preview
+              </button>
+              <button
+                type="button"
+                disabled={importingQbo || qboImportLocked}
+                onClick={() => void handleQboImport(false)}
+                className="inline-flex items-center gap-2 rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {importingQbo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                Import
+              </button>
+            </div>
+            {selectedQboFile && (
+              <div className="text-xs text-gray-500">Selected: {selectedQboFile.name}</div>
+            )}
+            {qboImportResult && (
+              <div className="rounded-lg border border-gray-700 bg-gray-950/50 px-3 py-2 text-sm text-gray-300">
+                <span className="font-semibold text-white">{qboImportResult.dry_run ? 'Preview' : 'Import'} complete:</span>{' '}
+                {qboImportResult.imported_count} new, {qboImportResult.duplicate_count} duplicate, {qboImportResult.invalid_count} invalid.
               </div>
             )}
           </div>

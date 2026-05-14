@@ -248,3 +248,65 @@ def test_xcelerator_review_orders_import_endpoint_summarizes_driver_pay(monkeypa
     assert response.json()["summary"]["driver_pay_total"] == 600.0
     assert summary.status_code == 200
     assert summary.json()["driver_pay_total"] == 600.0
+
+
+def test_qbo_expense_import_endpoint_summarizes_operating_expenses(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEETPULSE_QBO_EXPENSE_STATE_PATH", str(tmp_path / "qbo-expenses.json"))
+    clear_cached_prefix("fuel:")
+
+    csv_content = "\n".join(
+        [
+            "Date,Transaction Type,Name,Account,Amount",
+            "01/05/2026,Expense,Insurance Co,Commercial Auto Insurance,500",
+            "01/06/2026,Expense,Repair Shop,Repairs and Maintenance,125.25",
+            "01/07/2026,Expense,AtoB,Fuel Expense,999",
+        ]
+    )
+
+    response = _client().post(
+        "/api/fuel/qbo/expenses/import",
+        json={
+            "filename": "qbo-expenses.csv",
+            "content": csv_content,
+            "period_start": "2026-01-01",
+            "period_end": "2026-01-31",
+            "dry_run": False,
+        },
+    )
+    summary = _client().get("/api/fuel/qbo/expenses/summary?days=370")
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 3
+    assert response.json()["summary"]["insurance_total"] == 500.0
+    assert response.json()["summary"]["other_expense_total"] == 125.25
+    assert response.json()["summary"]["excluded_expense_count"] == 1
+    assert summary.status_code == 200
+    assert summary.json()["coverage_start"] == "2026-01-01"
+    assert summary.json()["coverage_end"] == "2026-01-31"
+
+
+def test_qbo_expense_import_endpoint_honors_optional_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEETPULSE_QBO_EXPENSE_STATE_PATH", str(tmp_path / "qbo-expenses.json"))
+    monkeypatch.setenv("FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY", "expected")
+
+    response = _client().post(
+        "/api/fuel/qbo/expenses/import",
+        json={
+            "filename": "qbo-expenses.csv",
+            "content": "Date,Account,Amount\n01/05/2026,Insurance,500\n",
+            "dry_run": False,
+        },
+    )
+    authorized = _client().post(
+        "/api/fuel/qbo/expenses/import",
+        json={
+            "filename": "qbo-expenses.csv",
+            "content": "Date,Account,Amount\n01/05/2026,Insurance,500\n",
+            "dry_run": False,
+        },
+        headers={"X-FleetPulse-QBO-Key": "expected"},
+    )
+
+    assert response.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["imported_count"] == 1

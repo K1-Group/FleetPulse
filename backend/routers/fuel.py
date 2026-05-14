@@ -22,6 +22,13 @@ from services.atob_fuel_expense_service import (
     import_atob_fuel_expenses,
 )
 from services.operating_cost_service import get_operating_cost_snapshot
+from services.qbo_expense_import_service import (
+    get_qbo_expense_summary,
+    get_qbo_expense_transactions,
+    import_qbo_expenses,
+    qbo_expense_import_status,
+    validate_qbo_expense_import_api_key,
+)
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_summary,
     import_xcelerator_review_orders,
@@ -48,6 +55,14 @@ class XceleratorReviewOrdersImportRequest(BaseModel):
     filename: str | None = Field(default=None, max_length=255)
     content: str = Field(min_length=1)
     dry_run: bool = False
+
+
+class QboExpenseImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
+    period_start: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period_end: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 @router.post("/atob/import")
@@ -80,6 +95,50 @@ async def import_xcelerator_review_orders_report(request: XceleratorReviewOrders
 async def xcelerator_review_orders_summary(days: int = 370):
     """Return actual imported Xcelerator ReviewOrders driver-pay summary."""
     return get_xcelerator_review_orders_summary(days=days)
+
+
+@router.get("/qbo/expenses/status")
+async def qbo_expenses_status():
+    """Return readiness for manual QBO expense imports."""
+    return qbo_expense_import_status()
+
+
+@router.post("/qbo/expenses/import")
+async def import_qbo_expense_report(
+    request: QboExpenseImportRequest,
+    x_fleetpulse_qbo_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    """Import a downloaded QBO expense report as read-only operating-cost evidence."""
+    try:
+        validate_qbo_expense_import_api_key(x_fleetpulse_qbo_key or x_api_key)
+        result = import_qbo_expenses(
+            request.content,
+            filename=request.filename,
+            dry_run=request.dry_run,
+            period_start=request.period_start,
+            period_end=request.period_end,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not request.dry_run and result.imported_count:
+        clear_cached_prefix("fuel:")
+    return result.as_dict()
+
+
+@router.get("/qbo/expenses/summary")
+async def qbo_expenses_summary(days: int = 370):
+    """Return imported QBO insurance and other expense summary."""
+    return get_qbo_expense_summary(days=days)
+
+
+@router.get("/qbo/expenses/transactions")
+async def qbo_expense_transactions(limit: int = 100):
+    """Return latest imported QBO expense records."""
+    return get_qbo_expense_transactions(limit=limit)
 
 
 @router.get("/atob/sharepoint/status")
