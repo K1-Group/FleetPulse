@@ -39,17 +39,28 @@ interface FaultResponse {
   period_days: number
 }
 
+type ConnectorEndpoint = 'vehicles' | 'safety' | 'faults'
+type EndpointErrors = Record<ConnectorEndpoint, string | null>
+
+const EMPTY_ENDPOINT_ERRORS: EndpointErrors = {
+  vehicles: null,
+  safety: null,
+  faults: null,
+}
+
 export default function DataConnector() {
   const [kpis, setKpis] = useState<VehicleKpiResponse | null>(null)
   const [safety, setSafety] = useState<SafetyResponse | null>(null)
   const [faults, setFaults] = useState<FaultResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [endpointErrors, setEndpointErrors] = useState<EndpointErrors>(EMPTY_ENDPOINT_ERRORS)
   const [days, setDays] = useState(14)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
+    setEndpointErrors(EMPTY_ENDPOINT_ERRORS)
     // Helper: turn a fetch into either parsed JSON or a thrown Error so a
     // FastAPI 4xx body like { detail: "...Jurisdiction Mismatch..." } can no
     // longer slip past the .catch and crash downstream renders.
@@ -73,17 +84,69 @@ export default function DataConnector() {
       }
       return body as T
     }
-    Promise.all([
-      safeFetch<VehicleKpiResponse>(`/api/data-connector/vehicle-kpis?days=${days}`),
-      safeFetch<SafetyResponse>(`/api/data-connector/safety-scores?days=${days}`),
-      safeFetch<FaultResponse>(`/api/data-connector/fault-trends?days=${days}`),
-    ])
-      .then(([k, s, f]) => {
-        setKpis(k)
-        setSafety(s)
-        setFaults(f)
+
+    const fetchWithRetry = async <T,>(url: string, attempts = 2): Promise<T> => {
+      let lastError: unknown = null
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          return await safeFetch<T>(url)
+        } catch (fetchError) {
+          lastError = fetchError
+          if (attempt < attempts) {
+            await new Promise(resolve => window.setTimeout(resolve, 700))
+          }
+        }
+      }
+      throw lastError
+    }
+
+    const errorMessage = (reason: unknown): string => {
+      return reason instanceof Error
+        ? reason.message
+        : String(reason || 'Unavailable')
+    }
+
+    const loadConnectorData = async () => {
+      const [vehicleResult, safetyResult, faultResult] = await Promise.allSettled([
+        fetchWithRetry<VehicleKpiResponse>(`/api/data-connector/vehicle-kpis?days=${days}`),
+        fetchWithRetry<SafetyResponse>(`/api/data-connector/safety-scores?days=${days}`),
+        fetchWithRetry<FaultResponse>(`/api/data-connector/fault-trends?days=${days}`),
+      ])
+
+      const nextErrors: EndpointErrors = { ...EMPTY_ENDPOINT_ERRORS }
+
+      if (vehicleResult.status === 'fulfilled') {
+        setKpis(vehicleResult.value)
+      } else {
+        setKpis(null)
+        nextErrors.vehicles = errorMessage(vehicleResult.reason)
+      }
+
+      if (safetyResult.status === 'fulfilled') {
+        setSafety(safetyResult.value)
+      } else {
+        setSafety(null)
+        nextErrors.safety = errorMessage(safetyResult.reason)
+      }
+
+      if (faultResult.status === 'fulfilled') {
+        setFaults(faultResult.value)
+      } else {
+        setFaults(null)
+        nextErrors.faults = errorMessage(faultResult.reason)
+      }
+
+      setEndpointErrors(nextErrors)
+
+      if (nextErrors.vehicles && nextErrors.safety && nextErrors.faults) {
+        setError('All Data Connector feeds are temporarily unavailable.')
+      }
+    }
+
+    loadConnectorData()
+      .catch(e => {
+        setError(e.message || 'Failed to load Data Connector')
       })
-      .catch(e => setError(e.message || 'Failed to load Data Connector'))
       .finally(() => setLoading(false))
   }, [days])
 
@@ -109,19 +172,6 @@ export default function DataConnector() {
     return numeric(value.total_distance_km) * 0.621371
   }
 
-  if (error) {
-    return (
-      <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
-        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-2" />
-        <p className="text-red-300 font-medium">Data Connector Error</p>
-        <p className="text-red-400/70 text-sm mt-1">{error}</p>
-        <p className="text-gray-500 text-xs mt-3">
-          Make sure the Data Connector add-in is activated in MyGeotab → Administration → System Settings → Add-Ins
-        </p>
-      </div>
-    )
-  }
-
   const summary = kpis?.summary
   const vehicles = kpis?.vehicles || []
   const topDistanceVehicle = vehicles[0]
@@ -134,6 +184,7 @@ export default function DataConnector() {
   const totalDriveHours = numeric(summary?.total_drive_hours)
   const totalIdleHours = numeric(summary?.total_idle_hours)
   const utilizationPct = numeric(summary?.utilization_pct)
+  const activeEndpointErrors = Object.entries(endpointErrors).filter(([, message]) => Boolean(message))
 
   return (
     <div className="space-y-6">
@@ -158,6 +209,35 @@ export default function DataConnector() {
           <option value={90}>Last 90 days</option>
         </select>
       </div>
+
+      {(error || activeEndpointErrors.length > 0) && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5" />
+            <div>
+              <p className="text-amber-200 font-medium">
+                {error ? 'Data Connector is in degraded mode' : 'Some Data Connector panels are retrying'}
+              </p>
+              <p className="text-amber-100/70 text-sm mt-1">
+                Live Geotab vehicle data remains read-only. Any temporary OData 500 will be isolated to its panel instead of blocking the full tab.
+              </p>
+              {activeEndpointErrors.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {activeEndpointErrors.map(([endpoint, message]) => (
+                    <span
+                      key={endpoint}
+                      className="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-100/80"
+                      title={message || undefined}
+                    >
+                      {endpoint}: {message}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -391,6 +471,14 @@ export default function DataConnector() {
               <Database className="w-10 h-10 text-gray-600 mx-auto mb-3" />
               <p className="text-gray-400">No Data Connector data available yet.</p>
               <p className="text-gray-500 text-sm mt-1">Data pipeline may take 2-3 hours to backfill after activation.</p>
+            </div>
+          )}
+
+          {!kpis && endpointErrors.vehicles && (
+            <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-8 text-center">
+              <Database className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400">Vehicle KPI feed is temporarily unavailable.</p>
+              <p className="text-gray-500 text-sm mt-1">The Connector tab will keep safety and fault panels available when those feeds respond.</p>
             </div>
           )}
         </>
