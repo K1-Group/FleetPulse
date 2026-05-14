@@ -191,7 +191,7 @@ FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
-FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,diesel,driver pay,driver settlement,fuel,income,payroll,revenue,sales,wages
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly

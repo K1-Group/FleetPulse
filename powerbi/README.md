@@ -117,7 +117,7 @@ FLEETPULSE_QBO_EXPENSE_FEED_URL=
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
-FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,diesel,driver pay,driver settlement,fuel,income,payroll,revenue,sales,wages
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
 ```
 
 QBO expense feeds can be CSV or JSON. FleetPulse excludes fuel and driver-pay

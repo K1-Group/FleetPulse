@@ -69,6 +69,8 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
                 "Date,Account,Amount",
                 "2026-05-04,Commercial Auto Insurance,50.00",
                 "2026-05-05,Repairs and Maintenance,75.00",
+                "2026-05-05,Carrier & Factoring Company,900.00",
+                "2026-05-05,Contractors,100.00",
                 "2026-05-05,Fuel Expense,999.00",
             ]
         ),

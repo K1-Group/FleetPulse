@@ -52,10 +52,16 @@ class QboExpenseFeedConfig:
     excluded_patterns: tuple[str, ...] = (
         "accounts receivable",
         "atob",
+        "carrier",
+        "cogs",
+        "contractor",
+        "cost of goods sold",
         "diesel",
         "driver pay",
         "driver settlement",
+        "factoring",
         "fuel",
+        "freight in",
         "income",
         "payroll",
         "revenue",
@@ -91,7 +97,8 @@ class QboExpenseFeedConfig:
                 "FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS",
                 (
                     "accounts receivable,atob,diesel,driver pay,driver settlement,"
-                    "fuel,income,payroll,revenue,sales,wages"
+                    "carrier,cogs,contractor,cost of goods sold,factoring,fuel,"
+                    "freight in,income,payroll,revenue,sales,wages"
                 ),
             ),
         )
