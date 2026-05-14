@@ -349,6 +349,28 @@ def test_safety_scores_returns_degraded_payload_on_timeout(monkeypatch):
     assert "timeout" in result["message"].lower()
 
 
+def test_odata_get_fails_fast_when_request_slots_are_busy(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _server(*_args, **_kwargs):
+        return "https://odata-connector-2.geotab.com/odata/v4/svc/"
+
+    monkeypatch.setattr(mod, "_find_server", _server)
+    monkeypatch.setattr(mod, "_basic_auth", lambda: ("db/user", "secret"))
+    monkeypatch.setattr(mod, "_ODATA_QUEUE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(mod, "_ODATA_REQUEST_SEMAPHORE", mod.asyncio.Semaphore(0))
+
+    import asyncio
+
+    try:
+        asyncio.run(mod._odata_get("VehicleKpi_Daily"))
+    except mod.HTTPException as exc:
+        assert exc.status_code == 503
+        assert "busy" in exc.detail
+    else:
+        raise AssertionError("_odata_get should fail fast when all slots are busy")
+
+
 def test_invalidate_clears_cache():
     mod = _import_router_fresh()
     mod._ODATA_SERVER = "https://odata-connector-9.geotab.com/odata/v4/svc/"

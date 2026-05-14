@@ -58,6 +58,13 @@ try:
     )
 except ValueError:
     _ODATA_RETRY_COUNT = 1
+try:
+    _ODATA_QUEUE_TIMEOUT_SECONDS = max(
+        float(os.getenv("FLEETPULSE_DATA_CONNECTOR_QUEUE_TIMEOUT_SECONDS", "5")),
+        0.1,
+    )
+except ValueError:
+    _ODATA_QUEUE_TIMEOUT_SECONDS = 5.0
 _ODATA_REQUEST_SEMAPHORE = asyncio.Semaphore(_ODATA_MAX_CONCURRENT_REQUESTS)
 
 # Probe table that exists for every K1 database and is cheap to query.
@@ -265,6 +272,19 @@ async def _invalidate_server() -> None:
     _ODATA_SERVER = None
 
 
+async def _acquire_odata_slot(table: str) -> None:
+    try:
+        await asyncio.wait_for(
+            _ODATA_REQUEST_SEMAPHORE.acquire(),
+            timeout=_ODATA_QUEUE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            503,
+            f"Data Connector is busy while reading {table}; retry shortly.",
+        ) from exc
+
+
 async def _odata_get(table: str, search: str = "last_14_day", select: str | None = None, top: int = 1000) -> list[dict]:
     base = await _find_server()
     auth = _basic_auth()
@@ -282,15 +302,23 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
                 last_timeout: Exception | None = None
                 for attempt in range(_ODATA_RETRY_COUNT + 1):
                     try:
-                        async with _ODATA_REQUEST_SEMAPHORE:
-                            r = await client.get(
-                                url,
-                                auth=auth,
-                                params=params if url.startswith(target_base) else None,
-                                follow_redirects=False,
+                        await _acquire_odata_slot(table)
+                        try:
+                            r = await asyncio.wait_for(
+                                client.get(
+                                    url,
+                                    auth=auth,
+                                    params=params if url.startswith(target_base) else None,
+                                    follow_redirects=False,
+                                ),
+                                timeout=_ODATA_REQUEST_TIMEOUT_SECONDS + 2,
                             )
+                        finally:
+                            _ODATA_REQUEST_SEMAPHORE.release()
                         break
-                    except httpx.TimeoutException as exc:
+                    except HTTPException:
+                        raise
+                    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
                         last_timeout = exc
                         if attempt < _ODATA_RETRY_COUNT:
                             await asyncio.sleep(0.5 * (attempt + 1))
@@ -303,6 +331,11 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
                         raise HTTPException(
                             502,
                             f"Data Connector network error while reading {table}: {type(exc).__name__}",
+                        ) from exc
+                    except Exception as exc:
+                        raise HTTPException(
+                            502,
+                            f"Data Connector unexpected error while reading {table}: {type(exc).__name__}",
                         ) from exc
                 else:  # pragma: no cover - loop always breaks or raises.
                     raise HTTPException(
