@@ -424,3 +424,65 @@ export interface OperatingSystemConfigurationResponse {
   items: OperatingSystemConfigurationItem[]
   source_boundaries: OperatingSystemSourceBoundary[]
 }
+
+// HR recruiting worklist monitor
+export interface HrRecruitingSummary {
+  active_leads: number
+  new_leads_today: number
+  avg_process_age_hours: number
+  stale_leads: number
+  completed_today: number
+}
+
+export interface HrRecruitingWorklistRow {
+  worklist: string
+  active_leads: number
+  new_leads_today: number
+  avg_age_hours: number
+  max_age_hours: number
+  stale_24h: number
+  stale_48h: number
+  stale_72h: number
+}
+
+export interface HrRecruitingDailyRow {
+  date: string
+  worklist: string
+  new_leads: number
+  completed_leads: number
+  active_leads: number
+  avg_process_time_hours: number
+}
+
+export interface HrRecruitingStatusCount {
+  status: string
+  count: number
+}
+
+export interface HrRecruitingTrendRow {
+  date: string
+  active_leads: number
+  new_leads: number
+  stale_leads: number
+  avg_age_hours: number
+}
+
+export interface HrRecruitingDataset {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_system: string
+  source_authority: string
+  source: string
+  table_id: string
+  source_status: string
+  source_message: string | null
+  pii_suppressed: boolean
+  sla_hours: number[]
+  summary: HrRecruitingSummary
+  by_worklist: HrRecruitingWorklistRow[]
+  daily: HrRecruitingDailyRow[]
+  status_counts: HrRecruitingStatusCount[]
+  trend: HrRecruitingTrendRow[]
+  row_counts: Record<string, number>
+  validation_errors: Record<string, number>
+}

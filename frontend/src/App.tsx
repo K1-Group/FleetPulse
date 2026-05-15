@@ -24,14 +24,16 @@ import ComplianceDashboard from './components/ComplianceDashboard'
 import DataConnector from './components/DataConnector'
 import ControlTower from './components/ControlTower'
 import OperatingSystem from './components/OperatingSystem'
+import HrRecruitingWorklist from './components/HrRecruitingWorklist'
 import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
 
-type AppTab = 'dashboard' | 'control-tower' | 'operating-system' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
+type AppTab = 'dashboard' | 'control-tower' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
 const appTabs: AppTab[] = [
   'dashboard',
   'control-tower',
   'operating-system',
+  'hr-recruiting',
   'maintenance',
   'coaching',
   'replay',
@@ -87,10 +89,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 light:from-gray-50 light:via-white light:to-gray-50 text-white dark:text-white light:text-gray-900">
+    <div className="min-h-screen overflow-x-hidden bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 light:from-gray-50 light:via-white light:to-gray-50 text-white dark:text-white light:text-gray-900">
       {/* Header */}
       <motion.header 
-        className="border-b border-gray-800/50 dark:border-gray-800/50 light:border-gray-200/50 px-4 sm:px-6 py-4 flex items-center justify-between backdrop-blur-xl bg-gray-950/80 dark:bg-gray-950/80 light:bg-white/80"
+        className="border-b border-gray-800/50 dark:border-gray-800/50 light:border-gray-200/50 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4 backdrop-blur-xl bg-gray-950/80 dark:bg-gray-950/80 light:bg-white/80"
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
@@ -110,7 +112,7 @@ export default function App() {
             <p className="text-xs text-gray-500 dark:text-gray-500 light:text-gray-600 hidden sm:block">K1 Logistics · FTW · Justin · OKC · Kansas City · 4 Locations</p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {/* Navigation Tabs */}
           <nav className="flex flex-wrap gap-1 bg-gray-800/50 dark:bg-gray-800/50 light:bg-gray-200/50 rounded-lg p-1">
             <button
@@ -145,6 +147,17 @@ export default function App() {
             >
               <Users className="w-4 h-4" />
               <span className="hidden sm:inline">Org OS</span>
+            </button>
+            <button
+              onClick={() => selectTab('hr-recruiting')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === 'hr-recruiting'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span className="hidden sm:inline">HR</span>
             </button>
             <button
               onClick={() => selectTab('maintenance')}
@@ -373,6 +386,10 @@ export default function App() {
 
         {activeTab === 'operating-system' && (
           <OperatingSystem />
+        )}
+
+        {activeTab === 'hr-recruiting' && (
+          <HrRecruitingWorklist />
         )}
 
         {activeTab === 'coaching' && (
