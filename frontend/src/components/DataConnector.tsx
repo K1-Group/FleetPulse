@@ -549,15 +549,22 @@ export default function DataConnector() {
                   </thead>
                   <tbody>
                     {faults.faults.slice(0, 15).map((f: any, i: number) => {
-                      const dateValue = f.Date || f.Day || f.Local_Date || f.AnyStatesDateTimeFirstSeen
+                      const vehicleName = f.vehicle_name || f.VehicleName || f.DeviceName || f.DeviceId || f.DeviceID || f.Vin || '—'
+                      const sourceVehicleId = f.source_vehicle_id || f.vehicle_id
+                      const dateValue = f.date || f.Date || f.Day || f.Local_Date || f.AnyStatesDateTimeFirstSeen
                       const displayDate = typeof dateValue === 'string'
                         ? dateValue.slice(0, 10)
                         : '—'
                       return (
                         <tr key={i} className="border-b border-gray-700/30">
-                          <td className="py-2 px-2 text-white">{f.VehicleName || f.DeviceId || f.DeviceID || f.Vin || '—'}</td>
-                          <td className="py-2 px-2">{f.FaultCode || f.DiagnosticName || f.FaultCodeDescription || '—'}</td>
-                          <td className="text-right py-2 px-2 text-red-400">{f.Count || f.FaultCount || f.Count_Daily || 1}</td>
+                          <td
+                            className="py-2 px-2 text-white"
+                            title={sourceVehicleId && sourceVehicleId !== vehicleName ? `Source ID: ${sourceVehicleId}` : undefined}
+                          >
+                            {vehicleName}
+                          </td>
+                          <td className="py-2 px-2">{f.fault_code || f.FaultCode || f.DiagnosticName || f.FaultCodeDescription || '—'}</td>
+                          <td className="text-right py-2 px-2 text-red-400">{f.count || f.Count || f.FaultCount || f.Count_Daily || 1}</td>
                           <td className="py-2 px-2 text-gray-400">{displayDate}</td>
                         </tr>
                       )

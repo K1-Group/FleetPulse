@@ -313,6 +313,44 @@ def test_fault_trends_returns_degraded_payload_on_timeout(monkeypatch):
     assert "timeout" in result["message"].lower()
 
 
+def test_fault_trends_uses_geotab_asset_name_from_metadata(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _rows(table, *_args, **_kwargs):
+        if table == "FaultMonitoring_Daily":
+            return [
+                {
+                    "DeviceId": "G8B120F4CFB4",
+                    "FaultCode": "1378",
+                    "Count": 2,
+                    "Date": "2026-05-02T00:00:00Z",
+                }
+            ]
+        if table == mod._PROBE_TABLE:
+            return [
+                {
+                    "DeviceId": "G8B120F4CFB4",
+                    "SerialNo": "G8B120F4CFB4",
+                    "Name": "K1-117",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(mod, "_odata_get", _rows)
+
+    import asyncio
+
+    result = asyncio.run(mod.fault_trends(days=14))
+
+    assert result["feed_status"] == "ok"
+    assert result["period_days"] == 14
+    assert result["faults"][0]["source_vehicle_id"] == "G8B120F4CFB4"
+    assert result["faults"][0]["vehicle_name"] == "K1-117"
+    assert result["faults"][0]["fault_code"] == "1378"
+    assert result["faults"][0]["count"] == 2
+    assert result["faults"][0]["date"] == "2026-05-02"
+
+
 def test_vehicle_kpis_returns_degraded_payload_on_timeout(monkeypatch):
     mod = _import_router_fresh()
 

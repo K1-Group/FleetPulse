@@ -575,6 +575,43 @@ def _convert_trip_summary_rows(rows: list[dict]) -> list[dict]:
     return converted
 
 
+def _fault_vehicle_identity(row: dict) -> str:
+    return _vehicle_kpi_identity(row)
+
+
+def _fault_code(row: dict) -> str | None:
+    return _text(row, "FaultCode", "DiagnosticName", "FaultCodeDescription", "DiagnosticId")
+
+
+def _fault_count(row: dict) -> int:
+    return max(
+        int(_number(row, "Count", "FaultCount", "Count_Daily", "EventCount") or 1),
+        1,
+    )
+
+
+def _fault_date(row: dict) -> str | None:
+    value = _text(row, "Date", "Day", "Local_Date", "AnyStatesDateTimeFirstSeen")
+    return value[:10] if value else None
+
+
+def _annotate_fault_rows(rows: list[dict], vehicle_names: dict[str, str] | None = None) -> list[dict]:
+    vehicle_names = vehicle_names or {}
+    annotated: list[dict] = []
+    for row in rows:
+        source_vehicle_id = _fault_vehicle_identity(row)
+        vehicle_name = _vehicle_display_name(row, vehicle_names)
+        item = dict(row)
+        item["source_vehicle_id"] = source_vehicle_id
+        item["vehicle_id"] = source_vehicle_id
+        item["vehicle_name"] = vehicle_name
+        item["fault_code"] = _fault_code(row)
+        item["count"] = _fault_count(row)
+        item["date"] = _fault_date(row)
+        annotated.append(item)
+    return annotated
+
+
 @router.get("/tables")
 async def list_tables():
     """List available Data Connector tables.
@@ -709,7 +746,18 @@ async def fault_trends(days: int = Query(14, ge=1, le=90)):
             "faults": [],
             **_degraded_source_payload(days, exc),
         }
-    return {"faults": rows[:200], "period_days": days, "feed_status": "ok"}
+
+    try:
+        metadata_rows = await _odata_get(_PROBE_TABLE, search=search, top=2000)
+    except HTTPException as exc:
+        logger.warning(
+            "Fault trend vehicle metadata lookup failed; falling back to fault identifiers: status=%s",
+            exc.status_code,
+        )
+        metadata_rows = []
+
+    faults = _annotate_fault_rows(rows[:200], _vehicle_metadata_name_map(metadata_rows))
+    return {"faults": faults, "period_days": days, "feed_status": "ok"}
 
 
 @router.get("/trip-summary")
