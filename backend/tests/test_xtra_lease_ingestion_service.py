@@ -35,7 +35,7 @@ def _configure_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FLEETPULSE_GRAPH_CLIENT_ID", "client")
     monkeypatch.setenv("FLEETPULSE_GRAPH_CLIENT_SECRET", "secret")
     monkeypatch.setenv("FLEETPULSE_XTRA_STATE_PATH", str(tmp_path / "xtra-state.json"))
-    monkeypatch.setenv("FLEETPULSE_XTRA_LOOKBACK_HOURS", "72")
+    monkeypatch.setenv("FLEETPULSE_XTRA_LOOKBACK_HOURS", "240")
     return XtraLeaseIngestionConfig.from_env()
 
 

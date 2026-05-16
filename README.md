@@ -251,6 +251,15 @@ is shown as a candidate tractor/driver, not as an authoritative dispatch
 assignment. Xcelerator should remain the final dispatch/load owner when that
 assignment feed is connected.
 
+#### K1 Operations Hub Migration
+
+FleetPulse is the planned replacement shell for legacy K1 Command Center
+front-end surfaces. This is a read-only UI migration: FleetPulse may display AP
+lifecycle, FinanceOps health, QBO status, Xcelerator reference, and Power BI
+cards, but those backend services remain separate owners. See
+[`docs/architecture/k1-operations-hub-migration.md`](docs/architecture/k1-operations-hub-migration.md)
+for the replacement matrix and production gates.
+
 ### Backend
 ```bash
 # Create virtual environment

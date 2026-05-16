@@ -8,6 +8,7 @@ import {
   Clock,
   Code2,
   DollarSign,
+  Layers3,
   MapPin,
   RadioTower,
   Truck,
@@ -161,13 +162,23 @@ export default function ControlTower() {
         <div className="flex items-center gap-3">
           <RadioTower className="h-6 w-6 text-cyan-300" />
           <div>
-            <h2 className="text-xl font-bold text-white light:text-gray-900">Control Tower</h2>
-            <p className="text-sm text-gray-400 light:text-gray-600">Read-only operating surfaces restored from the original Fleet Pulse build</p>
+            <h2 className="text-xl font-bold text-white light:text-gray-900">K1 Operations Hub</h2>
+            <p className="text-sm text-gray-400 light:text-gray-600">FleetPulse replacement shell for K1 Command Center front-end surfaces</p>
           </div>
         </div>
         <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200 light:text-cyan-700">
           Projection mode: read-only
         </span>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-cyan-500/25 bg-cyan-500/10 p-4 text-sm text-cyan-100 light:bg-cyan-50 light:text-cyan-900 sm:flex-row sm:items-start">
+        <Layers3 className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <p className="font-semibold">Command Center front-end replacement is enabled as a read-only migration path.</p>
+          <p className="mt-1 text-cyan-100/80 light:text-cyan-800">
+            FleetPulse displays operating status only. AP/QBO writes, FinanceOps lineage, Xcelerator dispatch state, and Geotab telemetry remain in their owning services.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
