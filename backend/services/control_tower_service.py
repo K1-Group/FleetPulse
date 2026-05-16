@@ -39,6 +39,7 @@ from models import (
 from services.alert_service import get_recent_alerts
 from services.fleet_service import LOCATIONS
 from services.monitor_service import get_monitor_alerts, get_monitor_status
+from services.xcelerator_gross_margin_service import get_xcelerator_gross_margin_snapshot
 from services.xtra_lease_ingestion_service import XtraLeaseProjection, get_xtra_lease_projection
 
 
@@ -297,6 +298,14 @@ def _feed(
         required_config=required_config or [],
         last_updated=last_updated,
     )
+
+
+def _control_tower_status(value: str) -> ControlTowerStatus:
+    if value in {status.value for status in ControlTowerStatus}:
+        return ControlTowerStatus(value)
+    if value == "partial":
+        return ControlTowerStatus.WARNING
+    return ControlTowerStatus.AWAITING_FEED
 
 
 def _alert_to_attention(alert: Alert, source_authority: str) -> ControlTowerAttentionItem:
@@ -643,6 +652,7 @@ def get_financial() -> ControlTowerFinancialResponse:
     xcelerator_last_updated: datetime | None = None
     xcelerator_required_config = ["FLEETPULSE_FINANCIAL_FEED_ENABLED", XCELERATOR_EVENT_FEED_ENV]
     xcelerator_event_error: Exception | None = None
+    gross_margin_snapshot: dict[str, Any] | None = None
     if enabled and xcelerator_event_url_configured:
         try:
             xcelerator_rows, xcelerator_last_updated = _fetch_xcelerator_event_rows()
@@ -691,32 +701,57 @@ def get_financial() -> ControlTowerFinancialResponse:
         elif xcelerator_event_error:
             xcelerator_status = ControlTowerStatus.UNAVAILABLE
             xcelerator_message = f"Xcelerator financial event feed unavailable: {type(xcelerator_event_error).__name__}"
+    if enabled:
+        gross_margin_snapshot = get_xcelerator_gross_margin_snapshot()
+        if (
+            gross_margin_snapshot.get("status") in {"healthy", "partial"}
+            and xcelerator_status != ControlTowerStatus.HEALTHY
+        ):
+            xcelerator_status = _control_tower_status(str(gross_margin_snapshot.get("status")))
+            xcelerator_message = gross_margin_snapshot.get("message") or xcelerator_message
+            xcelerator_last_updated = _parse_datetime(gross_margin_snapshot.get("last_updated")) or xcelerator_last_updated
+            xcelerator_required_config = gross_margin_snapshot.get("required_config") or xcelerator_required_config
+    feeds = [
+        _feed(
+            "Xcelerator financial events",
+            XCELERATOR_SOURCE_AUTHORITY,
+            xcelerator_status,
+            xcelerator_message,
+            xcelerator_required_config,
+            xcelerator_last_updated,
+        )
+    ]
+    if gross_margin_snapshot:
+        feeds.append(
+            _feed(
+                "Xcelerator gross margin",
+                gross_margin_snapshot.get("source_authority") or XCELERATOR_SOURCE_AUTHORITY,
+                _control_tower_status(str(gross_margin_snapshot.get("status"))),
+                str(gross_margin_snapshot.get("message") or "Xcelerator gross margin projection is awaiting rows."),
+                list(gross_margin_snapshot.get("required_config") or []),
+                _parse_datetime(gross_margin_snapshot.get("last_updated")),
+            )
+        )
+    feeds.append(
+        _feed(
+            "QuickBooks AR/AP snapshots",
+            "K1 Group LLC / QuickBooks",
+            ControlTowerStatus.WARNING if qbo_feed_configured else ControlTowerStatus.AWAITING_FEED,
+            (
+                "QuickBooks financial feed URL is configured, but the read-only adapter is not live yet."
+                if qbo_feed_configured
+                else "QuickBooks financial snapshots are not connected to this FleetPulse service yet."
+            ),
+            ["FLEETPULSE_QBO_FINANCIAL_FEED_URL"],
+        )
+    )
     return ControlTowerFinancialResponse(
         generated_at=_now(),
         accounts_receivable=[ControlTowerFinancialBucket(bucket=bucket) for bucket in AR_BUCKETS],
         cash_flow={"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None},
         audit_queue={"pending_audits": 0, "passed_today": 0, "failed_today": 0, "fail_reasons": []},
-        feeds=[
-            _feed(
-                "Xcelerator financial events",
-                XCELERATOR_SOURCE_AUTHORITY,
-                xcelerator_status,
-                xcelerator_message,
-                xcelerator_required_config,
-                xcelerator_last_updated,
-            ),
-            _feed(
-                "QuickBooks AR/AP snapshots",
-                "K1 Group LLC / QuickBooks",
-                ControlTowerStatus.WARNING if qbo_feed_configured else ControlTowerStatus.AWAITING_FEED,
-                (
-                    "QuickBooks financial feed URL is configured, but the read-only adapter is not live yet."
-                    if qbo_feed_configured
-                    else "QuickBooks financial snapshots are not connected to this FleetPulse service yet."
-                ),
-                ["FLEETPULSE_QBO_FINANCIAL_FEED_URL"],
-            ),
-        ],
+        gross_margin=gross_margin_snapshot,
+        feeds=feeds,
     )
 
 

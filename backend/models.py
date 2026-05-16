@@ -461,6 +461,34 @@ class ControlTowerFinancialSummary(BaseModel):
     total: Optional[float] = None
 
 
+class ControlTowerGrossMarginBucket(BaseModel):
+    entity: str
+    week_start: Optional[str] = None
+    orders: int = 0
+    revenue: float = 0
+    driver_pay: float = 0
+    gross_margin: float = 0
+    gross_margin_pct: Optional[float] = None
+
+
+class ControlTowerGrossMarginSnapshot(BaseModel):
+    status: str = "awaiting_feed"
+    source_authority: str = "K1 Group LLC / Xcelerator ReviewOrders"
+    projection_mode: str = "read_only"
+    period_start: str
+    period_end: str
+    generated_at: str
+    message: str
+    required_config: list[str] = Field(default_factory=list)
+    summary: ControlTowerGrossMarginBucket
+    entities: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
+    weekly: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
+    row_count: int = 0
+    excluded_row_count: int = 0
+    source_method: str = "unconfigured"
+    last_updated: Optional[str] = None
+
+
 class ControlTowerFinancialResponse(BaseModel):
     generated_at: datetime
     projection_mode: str = "read_only"
@@ -469,6 +497,7 @@ class ControlTowerFinancialResponse(BaseModel):
     accounts_receivable: list[ControlTowerFinancialBucket] = Field(default_factory=list)
     cash_flow: dict[str, Optional[float]] = Field(default_factory=dict)
     audit_queue: dict[str, Union[int, list[str]]] = Field(default_factory=dict)
+    gross_margin: Optional[ControlTowerGrossMarginSnapshot] = None
     feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
 
 

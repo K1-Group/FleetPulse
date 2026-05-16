@@ -10,6 +10,7 @@ import {
   DollarSign,
   MapPin,
   RadioTower,
+  TrendingUp,
   Truck,
 } from 'lucide-react'
 import {
@@ -66,6 +67,16 @@ function formatTime(value: string | null | undefined) {
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Awaiting feed'
   return value.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+}
+
+function percent(value: number | null | undefined) {
+  if (value === null || value === undefined) return 'Awaiting feed'
+  return `${(value * 100).toFixed(1)}%`
+}
+
+function number(value: number | null | undefined) {
+  if (value === null || value === undefined) return '0'
+  return value.toLocaleString()
 }
 
 function StatusPill({ status }: { status: ControlTowerStatus }) {
@@ -154,6 +165,7 @@ export default function ControlTower() {
     })
     return map
   }, [overview.data])
+  const grossMarginReady = financial.data?.gross_margin?.status === 'healthy' || financial.data?.gross_margin?.status === 'partial'
 
   return (
     <div className="space-y-6">
@@ -287,6 +299,100 @@ export default function ControlTower() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <Panel className="xl:col-span-2">
             <h3 className="mb-3 text-lg font-semibold text-white light:text-gray-900">Financial Ops</h3>
+            <div className="mb-5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 light:bg-emerald-50">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-white light:text-gray-900">
+                    <TrendingUp className="h-4 w-4 text-emerald-300 light:text-emerald-700" />
+                    Xcelerator Gross Margin
+                  </h4>
+                  <p className="mt-1 text-xs text-gray-400 light:text-gray-600">
+                    {financial.data?.gross_margin
+                      ? `${financial.data.gross_margin.period_start} to ${financial.data.gross_margin.period_end} · ${financial.data.gross_margin.source_authority}`
+                      : 'Awaiting Xcelerator ReviewOrders gross-margin rows'}
+                  </p>
+                </div>
+                <StatusPill status={financial.data?.gross_margin?.status === 'healthy' ? 'healthy' : financial.data?.gross_margin?.status === 'partial' ? 'warning' : 'awaiting_feed'} />
+              </div>
+
+              {financial.data?.gross_margin ? (
+                <>
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-lg border border-gray-700/40 bg-gray-900/60 p-3 light:bg-white light:border-gray-200">
+                      <p className="text-xs text-gray-400 light:text-gray-600">Gross Margin Profit</p>
+                      <p className="mt-1 text-xl font-bold text-emerald-300 light:text-emerald-700">
+                        {money(grossMarginReady ? financial.data.gross_margin.summary.gross_margin : null)}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">{grossMarginReady ? number(financial.data.gross_margin.summary.orders) : 0} orders</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-700/40 bg-gray-900/60 p-3 light:bg-white light:border-gray-200">
+                      <p className="text-xs text-gray-400 light:text-gray-600">Gross Margin %</p>
+                      <p className="mt-1 text-xl font-bold text-cyan-200 light:text-cyan-700">
+                        {percent(grossMarginReady ? financial.data.gross_margin.summary.gross_margin_pct : null)}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">{financial.data.gross_margin.source_method.replace(/_/g, ' ')}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-700/40 bg-gray-900/60 p-3 light:bg-white light:border-gray-200">
+                      <p className="text-xs text-gray-400 light:text-gray-600">Revenue</p>
+                      <p className="mt-1 text-xl font-bold text-white light:text-gray-900">
+                        {money(grossMarginReady ? financial.data.gross_margin.summary.revenue : null)}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">Xcelerator Grand Total</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-700/40 bg-gray-900/60 p-3 light:bg-white light:border-gray-200">
+                      <p className="text-xs text-gray-400 light:text-gray-600">Driver Pay</p>
+                      <p className="mt-1 text-xl font-bold text-amber-200 light:text-amber-700">
+                        {money(grossMarginReady ? financial.data.gross_margin.summary.driver_pay : null)}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">Xcelerator settlement/pay</p>
+                    </div>
+                  </div>
+
+                  {grossMarginReady && <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    {financial.data.gross_margin.entities.map(entity => (
+                      <div key={entity.entity} className="rounded-lg border border-gray-700/40 bg-gray-950/40 p-3 light:bg-white light:border-gray-200">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-white light:text-gray-900">{entity.entity}</p>
+                            <p className="mt-1 text-xs text-gray-500">{number(entity.orders)} orders · {money(entity.revenue)} revenue</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-emerald-300 light:text-emerald-700">{money(entity.gross_margin)}</p>
+                            <p className="text-xs text-gray-400 light:text-gray-600">{percent(entity.gross_margin_pct)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>}
+
+                  {grossMarginReady && financial.data.gross_margin.weekly.length > 0 && (
+                    <div className="mt-4 overflow-hidden rounded-lg border border-gray-700/40 light:border-gray-200">
+                      <div className="grid grid-cols-5 gap-2 bg-gray-950/50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500 light:bg-gray-100">
+                        <span>Week</span>
+                        <span className="text-right">Orders</span>
+                        <span className="text-right">Revenue</span>
+                        <span className="text-right">GM $</span>
+                        <span className="text-right">GM %</span>
+                      </div>
+                      <div className="max-h-56 divide-y divide-gray-800/80 overflow-y-auto text-sm light:divide-gray-200">
+                        {financial.data.gross_margin.weekly.slice(-10).reverse().map(row => (
+                          <div key={row.week_start || row.entity} className="grid grid-cols-5 gap-2 px-3 py-2">
+                            <span className="font-medium text-white light:text-gray-900">{row.week_start}</span>
+                            <span className="text-right text-gray-300 light:text-gray-700">{number(row.orders)}</span>
+                            <span className="text-right text-gray-300 light:text-gray-700">{money(row.revenue)}</span>
+                            <span className="text-right font-semibold text-emerald-300 light:text-emerald-700">{money(row.gross_margin)}</span>
+                            <span className="text-right text-cyan-200 light:text-cyan-700">{percent(row.gross_margin_pct)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="mt-3 text-xs text-gray-500">{financial.data.gross_margin.message}</p>
+                </>
+              ) : (
+                <EmptyState label="Gross-margin dashboard appears after Xcelerator ReviewOrders evidence is configured." />
+              )}
+            </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-lg bg-gray-800/50 p-4 light:bg-gray-50">
                 <p className="text-xs text-gray-400 light:text-gray-600">AP Pending</p>

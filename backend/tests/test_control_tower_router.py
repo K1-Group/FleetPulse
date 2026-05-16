@@ -106,6 +106,7 @@ def test_attention_projects_xcelerator_feed_rows(monkeypatch):
 def test_financial_surface_is_k1_group_read_only_and_awaits_feed(monkeypatch):
     monkeypatch.delenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", raising=False)
     monkeypatch.delenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", raising=False)
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", raising=False)
 
     response = _client().get("/api/control-tower/financial")
 
@@ -121,6 +122,7 @@ def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monk
     monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")
     monkeypatch.setenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", "https://example.invalid/qbo")
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", raising=False)
     monkeypatch.setattr(
         control_tower_service,
         "_fetch_xcelerator_event_rows",
@@ -144,7 +146,8 @@ def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monk
     payload = response.json()
     assert payload["accounts_payable"]["pending_amount"] is None
     assert payload["feeds"][0]["status"] == "healthy"
-    assert payload["feeds"][1]["status"] == "warning"
+    qbo_feed = next(feed for feed in payload["feeds"] if feed["name"] == "QuickBooks AR/AP snapshots")
+    assert qbo_feed["status"] == "warning"
     assert "Read 1 Xcelerator row" in payload["feeds"][0]["message"]
     assert "adapter is not live yet" not in payload["feeds"][0]["message"]
     assert "12345" not in response.text
@@ -152,10 +155,25 @@ def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monk
 
 def test_financial_uses_review_orders_evidence_when_event_url_is_not_row_feed(monkeypatch, tmp_path):
     evidence_path = tmp_path / "review-orders.json"
-    evidence_path.write_text('{"rows":[{"Order ID":"1.020126","Driver Pay":280}]}', encoding="utf-8")
+    evidence_path.write_text(
+        """
+        {"rows":[
+          {
+            "[P]From Date":"2026-05-04",
+            "Delivery Center":"K1 Logistics Inc",
+            "Order ID":"1.020126",
+            "Grand Total":1000,
+            "Driver Pay":280,
+            "Gross Margin($)":720
+          }
+        ]}
+        """,
+        encoding="utf-8",
+    )
     monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", str(evidence_path))
+    monkeypatch.setenv("FLEETPULSE_GROSS_MARGIN_START_DATE", "2026-01-01")
     monkeypatch.setattr(
         control_tower_service,
         "_fetch_xcelerator_event_rows",
@@ -171,6 +189,34 @@ def test_financial_uses_review_orders_evidence_when_event_url_is_not_row_feed(mo
     assert "ReviewOrders evidence file is available" in xcelerator_feed["message"]
     assert "using persisted Xcelerator evidence" in xcelerator_feed["message"]
     assert "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH" in xcelerator_feed["required_config"]
+    assert payload["gross_margin"]["summary"]["gross_margin"] == 720.0
+    assert payload["gross_margin"]["summary"]["gross_margin_pct"] == 0.72
+    assert payload["gross_margin"]["entities"][0]["entity"] == "K1 Logistics Inc"
+
+
+def test_gross_margin_rebuild_endpoint_requires_admin_key(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_CONTROL_TOWER_ADMIN_KEY", "expected")
+
+    response = _client().post("/api/control-tower/financial/gross-margin/rebuild")
+
+    assert response.status_code == 401
+
+
+def test_gross_margin_rebuild_endpoint_starts_background_job(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_CONTROL_TOWER_ADMIN_KEY", "expected")
+    monkeypatch.setattr(
+        control_tower,
+        "start_gross_margin_summary_rebuild",
+        lambda start=None, end=None: {"status": "running", "started_at": "2026-05-16T12:00:00Z"},
+    )
+
+    response = _client().post(
+        "/api/control-tower/financial/gross-margin/rebuild?start=2026-01-01",
+        headers={"X-FleetPulse-Admin-Key": "expected"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
 
 
 def test_trailer_mailbox_config_reports_adapter_pending(monkeypatch):

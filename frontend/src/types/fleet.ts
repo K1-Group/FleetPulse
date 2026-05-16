@@ -342,6 +342,34 @@ export interface ControlTowerFinancialSummary {
   total: number | null
 }
 
+export interface ControlTowerGrossMarginBucket {
+  entity: string
+  week_start: string | null
+  orders: number
+  revenue: number
+  driver_pay: number
+  gross_margin: number
+  gross_margin_pct: number | null
+}
+
+export interface ControlTowerGrossMarginSnapshot {
+  status: string
+  source_authority: string
+  projection_mode: 'read_only'
+  period_start: string
+  period_end: string
+  generated_at: string
+  message: string
+  required_config: string[]
+  summary: ControlTowerGrossMarginBucket
+  entities: ControlTowerGrossMarginBucket[]
+  weekly: ControlTowerGrossMarginBucket[]
+  row_count: number
+  excluded_row_count: number
+  source_method: string
+  last_updated: string | null
+}
+
 export interface ControlTowerFinancialResponse {
   generated_at: string
   projection_mode: 'read_only'
@@ -350,6 +378,7 @@ export interface ControlTowerFinancialResponse {
   accounts_receivable: ControlTowerFinancialBucket[]
   cash_flow: Record<string, number | null>
   audit_queue: Record<string, number | string[]>
+  gross_margin: ControlTowerGrossMarginSnapshot | null
   feeds: ControlTowerFeedStatus[]
 }
 
