@@ -366,6 +366,7 @@ export interface ControlTowerGrossMarginSnapshot {
   entities: ControlTowerGrossMarginBucket[]
   weekly: ControlTowerGrossMarginBucket[]
   monthly: ControlTowerGrossMarginBucket[]
+  monthly_entities: ControlTowerGrossMarginBucket[]
   row_count: number
   excluded_row_count: number
   source_method: string

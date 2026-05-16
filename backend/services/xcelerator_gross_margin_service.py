@@ -296,6 +296,7 @@ def _missing_summary_cache_payload(
         "entities": [],
         "weekly": [],
         "monthly": [],
+        "monthly_entities": [],
         "row_count": 0,
         "excluded_row_count": 0,
         "source_method": "summary_cache_missing",
@@ -323,7 +324,7 @@ def _load_summary_cache(
     if tuple(payload.get("signature") or ()) != signature:
         return None
     snapshot = payload.get("snapshot")
-    if isinstance(snapshot, dict) and "monthly" not in snapshot:
+    if isinstance(snapshot, dict) and ("monthly" not in snapshot or "monthly_entities" not in snapshot):
         return None
     return snapshot if isinstance(snapshot, dict) else None
 
@@ -462,6 +463,7 @@ def get_xcelerator_gross_margin_snapshot(
             "entities": [],
             "weekly": [],
             "monthly": [],
+            "monthly_entities": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unconfigured",
@@ -493,6 +495,7 @@ def get_xcelerator_gross_margin_snapshot(
             "entities": [],
             "weekly": [],
             "monthly": [],
+            "monthly_entities": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unavailable",
@@ -504,6 +507,7 @@ def get_xcelerator_gross_margin_snapshot(
     }
     weekly: dict[str, dict[str, Any]] = {}
     monthly: dict[str, dict[str, Any]] = {}
+    monthly_entities: dict[tuple[str, str], dict[str, Any]] = {}
     total = _empty_bucket("K1 total")
     source_methods: set[str] = set()
     excluded_row_count = 0
@@ -566,6 +570,24 @@ def get_xcelerator_gross_margin_snapshot(
             month["revenue"] += revenue
             month["driver_pay"] += driver_pay
             month["gross_margin"] += gross_margin
+
+            entity_month_key = (entity, _month_key(row_day))
+            entity_month = monthly_entities.setdefault(
+                entity_month_key,
+                {
+                    "entity": entity,
+                    "month_start": _month_key(row_day),
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "driver_pay": 0.0,
+                    "gross_margin": 0.0,
+                    "gross_margin_pct": None,
+                },
+            )
+            entity_month["orders"] += orders
+            entity_month["revenue"] += revenue
+            entity_month["driver_pay"] += driver_pay
+            entity_month["gross_margin"] += gross_margin
     except Exception as exc:
         return {
             "status": "unavailable",
@@ -580,6 +602,7 @@ def get_xcelerator_gross_margin_snapshot(
             "entities": [],
             "weekly": [],
             "monthly": [],
+            "monthly_entities": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unavailable",
@@ -597,6 +620,10 @@ def get_xcelerator_gross_margin_snapshot(
     finished_monthly = [
         _finish_bucket(row)
         for _, row in sorted(monthly.items())
+    ]
+    finished_monthly_entities = [
+        _finish_bucket(row)
+        for _, row in sorted(monthly_entities.items(), key=lambda item: (item[0][1], item[0][0]))
     ]
     finished_summary = _finish_bucket(total)
     status = "healthy" if included_row_count and float(total["revenue"]) > 0 else "awaiting_feed"
@@ -626,6 +653,7 @@ def get_xcelerator_gross_margin_snapshot(
         "entities": finished_entities,
         "weekly": finished_weekly,
         "monthly": finished_monthly,
+        "monthly_entities": finished_monthly_entities,
         "row_count": included_row_count,
         "excluded_row_count": excluded_row_count,
         "source_method": method,
@@ -681,6 +709,7 @@ def start_gross_margin_summary_rebuild(
                             "source_method": snapshot.get("source_method"),
                             "summary": snapshot.get("summary"),
                             "monthly": snapshot.get("monthly"),
+                            "monthly_entities": snapshot.get("monthly_entities"),
                         },
                     }
                 )

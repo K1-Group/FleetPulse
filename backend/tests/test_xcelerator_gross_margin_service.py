@@ -45,6 +45,13 @@ def test_gross_margin_snapshot_uses_xcelerator_gross_margin_field(tmp_path):
     assert snapshot["monthly"][0]["month_start"] == "2026-05-01"
     assert snapshot["monthly"][0]["revenue"] == 1500.0
     assert snapshot["monthly"][0]["gross_margin"] == 810.0
+    assert {
+        (row["entity"], row["month_start"], row["revenue"], row["gross_margin"])
+        for row in snapshot["monthly_entities"]
+    } == {
+        ("K1 Logistics Inc", "2026-05-01", 1000.0, 760.0),
+        ("K1 Group LLC", "2026-05-01", 500.0, 50.0),
+    }
 
 
 def test_gross_margin_snapshot_falls_back_to_revenue_minus_driver_pay(tmp_path):

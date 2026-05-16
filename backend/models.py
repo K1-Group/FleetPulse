@@ -485,6 +485,7 @@ class ControlTowerGrossMarginSnapshot(BaseModel):
     entities: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
     weekly: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
     monthly: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
+    monthly_entities: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
     row_count: int = 0
     excluded_row_count: int = 0
     source_method: str = "unconfigured"

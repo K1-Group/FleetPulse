@@ -49,6 +49,19 @@ const sections: Array<{ key: SectionKey; label: string; icon: typeof AlertTriang
   { key: 'codex', label: 'Codex', icon: Code2 },
 ]
 
+type EntityMonthlyTrendRow = {
+  month_start: string
+  month_label: string
+  k1l_revenue?: number
+  k1l_driver_pay?: number
+  k1l_gross_margin?: number
+  k1l_gross_margin_pct?: number | null
+  k1g_revenue?: number
+  k1g_driver_pay?: number
+  k1g_gross_margin?: number
+  k1g_gross_margin_pct?: number | null
+}
+
 const statusStyles: Record<ControlTowerStatus, string> = {
   healthy: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
   warning: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
@@ -204,6 +217,30 @@ export default function ControlTower() {
       gross_margin_pct_axis: row.gross_margin_pct === null ? null : row.gross_margin_pct * 100,
     }))
   }, [financial.data?.gross_margin?.monthly])
+  const entityMonthlyGrossMarginTrend = useMemo(() => {
+    const byMonth = new Map<string, EntityMonthlyTrendRow>()
+    ;(financial.data?.gross_margin?.monthly_entities || []).forEach(row => {
+      if (!row.month_start) return
+      const entry = byMonth.get(row.month_start) || {
+        month_start: row.month_start,
+        month_label: monthLabel(row.month_start),
+      }
+      if (row.entity === 'K1 Logistics Inc') {
+        entry.k1l_revenue = row.revenue
+        entry.k1l_driver_pay = row.driver_pay
+        entry.k1l_gross_margin = row.gross_margin
+        entry.k1l_gross_margin_pct = row.gross_margin_pct === null ? null : row.gross_margin_pct * 100
+      }
+      if (row.entity === 'K1 Group LLC') {
+        entry.k1g_revenue = row.revenue
+        entry.k1g_driver_pay = row.driver_pay
+        entry.k1g_gross_margin = row.gross_margin
+        entry.k1g_gross_margin_pct = row.gross_margin_pct === null ? null : row.gross_margin_pct * 100
+      }
+      byMonth.set(row.month_start, entry)
+    })
+    return Array.from(byMonth.values()).sort((left, right) => left.month_start.localeCompare(right.month_start))
+  }, [financial.data?.gross_margin?.monthly_entities])
 
   return (
     <div className="space-y-6">
@@ -436,6 +473,65 @@ export default function ControlTower() {
                             <Line yAxisId="percent" type="monotone" dataKey="gross_margin_pct_axis" name="GM %" stroke="#fbbf24" strokeWidth={3} dot={{ r: 4 }} />
                           </ComposedChart>
                         </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+
+                  {grossMarginReady && entityMonthlyGrossMarginTrend.length > 0 && (
+                    <div className="mt-4 rounded-lg border border-gray-700/40 bg-gray-950/30 p-3 light:bg-white light:border-gray-200">
+                      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <h5 className="text-sm font-semibold text-white light:text-gray-900">K1L vs K1G Monthly Trend</h5>
+                          <p className="text-xs text-gray-500 light:text-gray-600">Xcelerator ReviewOrders</p>
+                        </div>
+                        <p className="text-xs text-gray-400 light:text-gray-600">{entityMonthlyGrossMarginTrend.length} months</p>
+                      </div>
+                      <div className="h-72 min-w-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={entityMonthlyGrossMarginTrend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis dataKey="month_label" stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                            <YAxis yAxisId="money" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={compactMoney} width={58} />
+                            <YAxis yAxisId="percent" orientation="right" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={percentAxis} width={42} />
+                            <Tooltip
+                              contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                              labelStyle={{ color: '#d1d5db' }}
+                              formatter={(value: number, name: string) => {
+                                if (name.includes('%')) return [percent(Number(value) / 100), name]
+                                return [money(Number(value)), name]
+                              }}
+                            />
+                            <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 12 }} />
+                            <Bar yAxisId="money" dataKey="k1l_gross_margin" name="K1L GM $" fill="#10b981" radius={[4, 4, 0, 0]} />
+                            <Bar yAxisId="money" dataKey="k1g_gross_margin" name="K1G GM $" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                            <Line yAxisId="percent" type="monotone" dataKey="k1l_gross_margin_pct" name="K1L GM %" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4 }} />
+                            <Line yAxisId="percent" type="monotone" dataKey="k1g_gross_margin_pct" name="K1G GM %" stroke="#fbbf24" strokeWidth={3} dot={{ r: 4 }} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="mt-3 overflow-x-auto rounded-lg border border-gray-800/80 light:border-gray-200">
+                        <div className="grid min-w-[860px] grid-cols-7 gap-2 bg-gray-950/50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500 light:bg-gray-100">
+                          <span>Month</span>
+                          <span className="text-right">K1L Rev</span>
+                          <span className="text-right">K1L GM</span>
+                          <span className="text-right">K1L GM %</span>
+                          <span className="text-right">K1G Rev</span>
+                          <span className="text-right">K1G GM</span>
+                          <span className="text-right">K1G GM %</span>
+                        </div>
+                        <div className="divide-y divide-gray-800/80 text-sm light:divide-gray-200">
+                          {entityMonthlyGrossMarginTrend.map(row => (
+                            <div key={row.month_start} className="grid min-w-[860px] grid-cols-7 gap-2 px-3 py-2">
+                              <span className="font-medium text-white light:text-gray-900">{row.month_label}</span>
+                              <span className="text-right text-gray-300 light:text-gray-700">{money(row.k1l_revenue)}</span>
+                              <span className="text-right font-semibold text-emerald-300 light:text-emerald-700">{money(row.k1l_gross_margin)}</span>
+                              <span className="text-right text-cyan-200 light:text-cyan-700">{percent(row.k1l_gross_margin_pct === undefined || row.k1l_gross_margin_pct === null ? null : row.k1l_gross_margin_pct / 100)}</span>
+                              <span className="text-right text-gray-300 light:text-gray-700">{money(row.k1g_revenue)}</span>
+                              <span className="text-right font-semibold text-violet-300 light:text-violet-700">{money(row.k1g_gross_margin)}</span>
+                              <span className="text-right text-amber-200 light:text-amber-700">{percent(row.k1g_gross_margin_pct === undefined || row.k1g_gross_margin_pct === null ? null : row.k1g_gross_margin_pct / 100)}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   )}
