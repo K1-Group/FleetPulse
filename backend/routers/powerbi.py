@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from services.entity_margin_service import get_entity_margin_snapshot
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
 from services.lane_stability_service import get_lane_stability_snapshot
 from services.operating_cost_service import get_operating_cost_snapshot
@@ -63,6 +64,15 @@ def _with_operating_cost_meta(row: dict[str, Any], connection_name: str) -> dict
         connection_name,
         source_system="FleetPulse Cost Analytics",
         source_authority="Geotab + AtoB + Xcelerator + QuickBooks",
+    )
+
+
+def _with_entity_margin_meta(row: dict[str, Any], connection_name: str) -> dict[str, Any]:
+    return _with_export_meta(
+        row,
+        connection_name,
+        source_system="FleetPulse Entity Margin",
+        source_authority="Geotab + AtoB + QBO + Xcelerator",
     )
 
 
@@ -268,6 +278,55 @@ async def powerbi_operating_cost_weekly(
     }
     return [
         _with_operating_cost_meta({**period, **row}, "operating_cost_weekly")
+        for row in snapshot["weekly"]
+    ]
+
+
+@router.get("/entity-margin/summary")
+async def powerbi_entity_margin_summary(
+    days: int = Query(90, ge=1, le=370),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    """Power BI entity margin table: K1L CPM and K1G/K1L margin summary."""
+    snapshot = await get_entity_margin_snapshot(days=days, start=start, end=end)
+    row = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "generated_at": snapshot["generated_at"],
+        "k1l_margin_target_pct": snapshot["k1l_margin_target_pct"],
+        "k1g_margin_target_pct": snapshot["k1g_margin_target_pct"],
+        "complete_k1l_cpm_available": snapshot["complete_k1l_cpm_available"],
+        "complete_k1l_true_cpm_available": snapshot["complete_k1l_true_cpm_available"],
+        "unresolved_sources": ",".join(snapshot["unresolved_sources"]),
+        "true_cpm_unresolved_sources": ",".join(snapshot["true_cpm_unresolved_sources"]),
+        "xcelerator_source_type": snapshot["xcelerator_source_type"],
+        **snapshot["summary"],
+    }
+    return [_with_entity_margin_meta(row, "entity_margin_summary")]
+
+
+@router.get("/entity-margin/weekly")
+async def powerbi_entity_margin_weekly(
+    days: int = Query(90, ge=1, le=370),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    """Power BI entity margin table: weekly K1L CPM and K1G/K1L margin trend."""
+    snapshot = await get_entity_margin_snapshot(days=days, start=start, end=end)
+    period = {
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "k1l_margin_target_pct": snapshot["k1l_margin_target_pct"],
+        "k1g_margin_target_pct": snapshot["k1g_margin_target_pct"],
+        "complete_k1l_cpm_available": snapshot["complete_k1l_cpm_available"],
+        "complete_k1l_true_cpm_available": snapshot["complete_k1l_true_cpm_available"],
+        "unresolved_sources": ",".join(snapshot["unresolved_sources"]),
+        "true_cpm_unresolved_sources": ",".join(snapshot["true_cpm_unresolved_sources"]),
+        "xcelerator_source_type": snapshot["xcelerator_source_type"],
+    }
+    return [
+        _with_entity_margin_meta({**period, **row}, "entity_margin_weekly")
         for row in snapshot["weekly"]
     ]
 

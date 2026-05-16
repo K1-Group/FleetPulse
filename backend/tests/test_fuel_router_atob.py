@@ -217,6 +217,62 @@ def test_operating_cost_endpoint_returns_weekly_snapshot(monkeypatch):
     assert response.json()["summary"]["known_cost_per_mile"] == 0.62
 
 
+def test_entity_margin_endpoint_returns_k1_entity_snapshot(monkeypatch):
+    async def fake_snapshot(days=90, start=None, end=None):
+        return {
+            "period_start": start,
+            "period_end": end or "2026-05-14",
+            "projection_mode": "read_only",
+            "complete_k1l_cpm_available": True,
+            "summary": {
+                "k1l_fuel_plus_driver_cpm": 1.63,
+                "k1g_target_gross_margin": 194283.57,
+            },
+            "weekly": [],
+        }
+
+    monkeypatch.setattr(fuel, "get_entity_margin_snapshot", fake_snapshot)
+
+    response = _client().get("/api/fuel/entity-margin?start=2026-01-01&end=2026-05-14")
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["k1l_fuel_plus_driver_cpm"] == 1.63
+    assert response.json()["summary"]["k1g_target_gross_margin"] == 194283.57
+
+
+def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57
+            }
+          ]
+        }
+        """,
+    )
+
+    response = _client().get("/api/fuel/k1l-operating-kpi?date=2026-05-14")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    assert payload["status"] == "configured"
+    assert payload["entity"] == "K1 Logistics Inc"
+    assert payload["summary"]["total_cost"] == 743858.57
+    assert payload["summary"]["cost_per_mile"] == 2.365
+    assert payload["monthly"][0]["added_p_and_l_ops"] == 190491.03
+
+
 def test_xcelerator_review_orders_import_endpoint_summarizes_driver_pay(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH",

@@ -349,6 +349,32 @@ def test_safety_scores_returns_degraded_payload_on_timeout(monkeypatch):
     assert "timeout" in result["message"].lower()
 
 
+@pytest.mark.parametrize("route_name", ["vehicle_kpis", "safety_scores", "fault_trends"])
+def test_operational_data_connector_routes_return_degraded_payload_on_500(monkeypatch, route_name):
+    mod = _import_router_fresh()
+
+    async def _upstream_500(*_args, **_kwargs):
+        raise mod.HTTPException(500, "Data Connector error: 500 Internal Server Error")
+
+    monkeypatch.setattr(mod, "_odata_get", _upstream_500)
+
+    import asyncio
+
+    result = asyncio.run(getattr(mod, route_name)(days=14))
+
+    assert result["feed_status"] == "degraded"
+    assert result["period_days"] == 14
+    assert "500 Internal Server Error" in result["message"]
+    if route_name == "vehicle_kpis":
+        assert result["vehicles"] == []
+        assert result["summary"]["total_vehicles"] == 0
+    elif route_name == "safety_scores":
+        assert result["fleet_daily"] == []
+        assert result["vehicle_scores"] == []
+    else:
+        assert result["faults"] == []
+
+
 def test_odata_get_fails_fast_when_request_slots_are_busy(monkeypatch):
     mod = _import_router_fresh()
 

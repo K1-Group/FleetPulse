@@ -198,6 +198,15 @@ FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
 FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
 FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY=4
 FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES=2
+FLEETPULSE_XCELERATOR_CEO_POWERBI_WORKSPACE_ID=b801f80d-5303-4121-abd1-1163639ef58b
+FLEETPULSE_XCELERATOR_CEO_POWERBI_REPORT_ID=6dbafd45-ff63-4bb1-a790-87d528efdf74
+FLEETPULSE_XCELERATOR_CEO_POWERBI_SEMANTIC_MODEL_ID=891e7334-af84-4889-ba7f-ae89864777c0
+FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN=
+FLEETPULSE_XCELERATOR_CEO_POWERBI_TENANT_ID=
+FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_ID=
+FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_SECRET=
+FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_URL=
+FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
@@ -216,6 +225,17 @@ Downloaded QBO transaction-detail expense CSV/JSON exports can be loaded with
 operating expenses as read-only QBO evidence, excludes known fuel/driver-pay/COGS
 accounts to prevent double counting, and uses import coverage dates when
 provided to avoid certifying partial finance feeds as complete.
+
+`GET /api/fuel/entity-margin?start=YYYY-MM-DD&end=YYYY-MM-DD` adds the dashboard
+split requested for K1 operations review. K1 Logistics Inc CPM uses only orders
+assigned to the `K1 Logistics Inc` delivery center for revenue and driver pay,
+with Geotab miles, AtoB fuel, and optional QBO overhead applied to the K1L cost
+stack. K1 Group LLC is shown as gross-margin tracking only with no CPM field.
+The dashboard policy targets are 72% gross margin for K1 Logistics Inc and 20%
+for K1 Group LLC. The preferred Xcelerator source is the `Xcelerator CEO
+Dashboard` semantic model (`891e7334-af84-4889-ba7f-ae89864777c0`); if Power BI
+executeQueries credentials are not configured, FleetPulse falls back to the
+read-only ReviewOrders feed/import path and marks the source status accordingly.
 
 #### Live Trailer Tracking
 ```env
@@ -396,6 +416,7 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `POST /api/fuel/qbo/expenses/import` | Import downloaded QBO expense report as read-only finance references |
 | `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO insurance and other expense summary |
 | `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, AtoB, Xcelerator, and QBO |
+| `GET /api/fuel/entity-margin` | K1L CPM plus K1L/K1G gross-margin target rollups by delivery center |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |

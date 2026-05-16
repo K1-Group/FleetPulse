@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 const operatingSystemApiKey = process.env.FLEETPULSE_OPERATING_SYSTEM_API_KEY || process.env.OPERATING_SYSTEM_API_KEY
 const atobSharePointApiKey = process.env.FLEETPULSE_ATOB_SHAREPOINT_INGESTION_API_KEY
+const apiProxyTarget = process.env.FLEETPULSE_API_PROXY_TARGET || 'http://localhost:8080'
 
 export default defineConfig({
   plugins: [react()],
@@ -10,7 +11,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: apiProxyTarget,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq, req) => {

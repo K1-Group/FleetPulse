@@ -21,6 +21,8 @@ from services.atob_fuel_expense_service import (
     get_atob_vehicle_costs,
     import_atob_fuel_expenses,
 )
+from services.entity_margin_service import get_entity_margin_snapshot
+from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
 from services.operating_cost_service import get_operating_cost_snapshot
 from services.qbo_expense_import_service import (
     get_qbo_expense_summary,
@@ -196,6 +198,27 @@ async def operating_cost(
         return await get_operating_cost_snapshot(days=days, start=start, end=end)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/entity-margin")
+async def entity_margin(
+    days: int = Query(90, ge=1, le=370),
+    start: str | None = Query(default=None, description="Inclusive YYYY-MM-DD start date."),
+    end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
+):
+    """Return K1L CPM and K1G/K1L gross-margin rollups by delivery center."""
+    try:
+        return await get_entity_margin_snapshot(days=days, start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/k1l-operating-kpi")
+async def k1l_operating_kpi(
+    date: str | None = Query(default=None, description="Optional YYYY-MM-DD cutoff date."),
+):
+    """Return the lightweight K1 Logistics final CPM card snapshot."""
+    return get_k1l_operating_kpi_snapshot(date_value=date)
 
 
 @router.get("/summary")

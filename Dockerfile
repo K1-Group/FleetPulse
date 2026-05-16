@@ -37,23 +37,8 @@ COPY .env.example ./.env.example
 # Copy built frontend into backend static dir
 COPY --from=frontend-build /app/frontend/dist ./backend/static
 
-# Patch app.py to serve frontend static files
-RUN echo '\n\
-from fastapi.staticfiles import StaticFiles\n\
-from fastapi.responses import FileResponse\n\
-import os\n\
-\n\
-_static_dir = os.path.join(os.path.dirname(__file__), "static")\n\
-if os.path.isdir(_static_dir):\n\
-    app.mount("/assets", StaticFiles(directory=os.path.join(_static_dir, "assets")), name="assets")\n\
-\n\
-    @app.get("/{full_path:path}")\n\
-    async def serve_spa(full_path: str):\n\
-        file_path = os.path.join(_static_dir, full_path)\n\
-        if os.path.isfile(file_path):\n\
-            return FileResponse(file_path)\n\
-        return FileResponse(os.path.join(_static_dir, "index.html"))\n\
-' >> ./backend/app.py
+# Patch app.py to serve frontend static files.
+RUN cat ./backend/static_frontend_mount.py >> ./backend/app.py
 
 # Set ownership
 RUN chown -R fleetpulse:fleetpulse /app

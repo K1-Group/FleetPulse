@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   AlertTriangle,
+  Building2,
   Database,
   DollarSign,
   FileCheck2,
@@ -9,6 +10,7 @@ import {
   Gauge,
   Loader2,
   ReceiptText,
+  Target,
   TrendingDown,
   TrendingUp,
   Upload,
@@ -217,6 +219,98 @@ interface OperatingCostSnapshot {
   weekly: WeeklyOperatingCost[]
 }
 
+interface EntityMarginSummary {
+  miles: number
+  drive_hours: number
+  fuel_cost: number
+  insurance_cost: number
+  other_expense_cost: number
+  k1l_orders: number
+  k1l_grand_total: number
+  k1l_driver_pay: number
+  k1l_target_gross_margin: number
+  k1l_actual_gross_margin_before_fuel: number
+  k1l_actual_gross_margin_pct_before_fuel: number | null
+  k1l_actual_gross_margin_after_fuel: number
+  k1l_actual_gross_margin_pct_after_fuel: number | null
+  k1l_revenue_per_mile: number | null
+  k1l_driver_pay_cpm: number | null
+  k1l_fuel_cpm: number | null
+  k1l_fuel_plus_driver_cpm: number | null
+  k1l_true_operating_cpm: number | null
+  k1l_true_operating_cost: number | null
+  k1g_orders: number
+  k1g_grand_total: number
+  k1g_driver_pay: number
+  k1g_target_gross_margin: number
+  k1g_actual_gross_margin_before_overhead: number
+  k1g_actual_gross_margin_pct_before_overhead: number | null
+  qbo_expenses_available: boolean
+}
+
+interface WeeklyEntityMargin extends EntityMarginSummary {
+  week_start: string
+  week_end: string
+  period_start: string
+  period_end: string
+}
+
+interface EntityMarginSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: string
+  grain: string
+  k1l_margin_target_pct: number
+  k1g_margin_target_pct: number
+  complete_k1l_cpm_available: boolean
+  complete_k1l_true_cpm_available: boolean
+  unresolved_sources: string[]
+  true_cpm_unresolved_sources: string[]
+  xcelerator_source_type: string
+  sources: {
+    telemetry: OperatingCostSource
+    fuel: OperatingCostSource
+    xcelerator_entity: OperatingCostSource
+    qbo_expenses: OperatingCostSource
+  }
+  summary: EntityMarginSummary
+  weekly: WeeklyEntityMargin[]
+  excluded_delivery_centers: Record<string, number>
+}
+
+interface K1OperatingCostMonth {
+  added_p_and_l_ops: number
+  cost_per_mile: number | null
+  driver_pay: number
+  fleet_maintenance: number
+  fuel: number
+  miles: number
+  month: string
+  other_ops: number
+  payroll: number
+  prior_cost: number
+  total_cost: number
+}
+
+interface K1OperatingCostKpiSnapshot {
+  as_of_date?: string | null
+  entity: string
+  error?: string
+  generated_at?: string
+  method?: string
+  monthly?: K1OperatingCostMonth[]
+  projection_mode: 'read_only'
+  source?: string
+  status: 'configured' | 'configuration_error' | 'not_configured'
+  summary: {
+    cost_per_mile: number | null
+    miles: number
+    total_cost: number
+  } | null
+}
+
 const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
   value === null || value === undefined
     ? 'Pending'
@@ -227,8 +321,18 @@ const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
       })
 )
 
+const formatNumber = (value?: number | null, maximumFractionDigits = 0) => (
+  value === null || value === undefined
+    ? 'Pending'
+    : value.toLocaleString(undefined, { maximumFractionDigits })
+)
+
 const formatRate = (value?: number | null, suffix = '/mi') => (
   value === null || value === undefined ? 'Pending' : `${formatCurrency(value, 2)}${suffix}`
+)
+
+const formatPercent = (value?: number | null) => (
+  value === null || value === undefined ? 'Pending' : `${(value * 100).toFixed(1)}%`
 )
 
 async function fetchJson<T>(url: string, fallback: T, timeoutMs = 20000): Promise<T> {
@@ -254,6 +358,8 @@ export default function FuelAnalytics() {
   const [qboSummary, setQboSummary] = useState<QboExpenseSummary | null>(null)
   const [qboStatus, setQboStatus] = useState<QboExpenseStatus | null>(null)
   const [operatingCost, setOperatingCost] = useState<OperatingCostSnapshot | null>(null)
+  const [entityMargin, setEntityMargin] = useState<EntityMarginSnapshot | null>(null)
+  const [k1OperatingKpi, setK1OperatingKpi] = useState<K1OperatingCostKpiSnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
@@ -290,12 +396,26 @@ export default function FuelAnalytics() {
       setQboStatus(qboReady)
       setLoading(false)
 
-      const oc = await fetchJson<OperatingCostSnapshot | null>(
-        `/api/fuel/operating-cost?start=${ytdStart}`,
-        null,
-        45000,
-      )
+      const [oc, em, k1Kpi] = await Promise.all([
+        fetchJson<OperatingCostSnapshot | null>(
+          `/api/fuel/operating-cost?start=${ytdStart}`,
+          null,
+          45000,
+        ),
+        fetchJson<EntityMarginSnapshot | null>(
+          `/api/fuel/entity-margin?start=${ytdStart}`,
+          null,
+          45000,
+        ),
+        fetchJson<K1OperatingCostKpiSnapshot | null>(
+          '/api/fuel/k1l-operating-kpi',
+          null,
+          20000,
+        ),
+      ])
       setOperatingCost(oc)
+      setEntityMargin(em)
+      setK1OperatingKpi(k1Kpi)
     } finally {
       setLoading(false)
     }
@@ -410,6 +530,11 @@ export default function FuelAnalytics() {
   const operatingSummary = operatingCost?.summary
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
   const unresolvedCostSources = operatingCost?.unresolved_sources.join(', ') || ''
+  const entitySummary = entityMargin?.summary
+  const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available)
+  const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available)
+  const unresolvedEntitySources = entityMargin?.unresolved_sources.join(', ') || ''
+  const monthlyK1CpmRows = (k1OperatingKpi?.monthly ?? []).filter((row) => row.cost_per_mile !== null)
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -470,6 +595,181 @@ export default function FuelAnalytics() {
           <div className="text-xs text-gray-500 mt-1">{summary?.waste.harsh_events} harsh events</div>
         </motion.div>
       </div>
+
+      {/* Entity Margin and CPM */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-emerald-400" />
+              K1 Entity CPM & Margin
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              {entityMargin?.period_start ?? 'YTD'} to {entityMargin?.period_end ?? 'today'} · {completeEntityCpm ? 'K1L CPM ready' : `K1L CPM pending${unresolvedEntitySources ? ` · ${unresolvedEntitySources}` : ''}`}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            {Object.entries((entityMargin?.sources ?? {}) as Record<string, OperatingCostSource>).map(([key, source]) => (
+              <div key={key} className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-gray-500">{key.replace('_', ' ')}</div>
+                <div className={source.status === 'healthy' ? 'text-emerald-400' : source.status === 'awaiting_feed' ? 'text-amber-400' : 'text-red-300'}>
+                  {source.status.replace('_', ' ')}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">K1L Fuel + Driver CPM</div>
+            <div className="mt-1 text-2xl font-bold text-emerald-400">
+              {formatRate(entitySummary?.k1l_fuel_plus_driver_cpm)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">{formatCurrency(entitySummary?.k1l_grand_total)} revenue</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">K1L True CPM</div>
+            <div className="mt-1 text-2xl font-bold text-blue-400">
+              {formatRate(completeEntityTrueCpm ? entitySummary?.k1l_true_operating_cpm : null)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">Incl. QBO overhead</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
+              <Target className="h-3.5 w-3.5" /> K1L GM Target
+            </div>
+            <div className="mt-1 text-2xl font-bold text-white">{formatCurrency(entitySummary?.k1l_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">72% · actual {formatPercent(entitySummary?.k1l_actual_gross_margin_pct_before_fuel)}</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
+              <Target className="h-3.5 w-3.5" /> K1G GM Target
+            </div>
+            <div className="mt-1 text-2xl font-bold text-purple-400">{formatCurrency(entitySummary?.k1g_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">20% · actual {formatPercent(entitySummary?.k1g_actual_gross_margin_pct_before_overhead)}</div>
+          </div>
+        </div>
+
+        {(entityMargin?.weekly.length ?? 0) > 0 ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <ComposedChart data={entityMargin?.weekly ?? []}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="week_start" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
+              <YAxis yAxisId="margin" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
+              <YAxis yAxisId="rate" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
+              <Tooltip
+                contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                labelStyle={{ color: '#9ca3af' }}
+                formatter={(value: number, name: string) => [
+                  name.includes('CPM') || name.includes('Mile')
+                    ? formatRate(value)
+                    : formatCurrency(value),
+                  name,
+                ]}
+              />
+              <Legend />
+              <Bar yAxisId="margin" dataKey="k1l_target_gross_margin" name="K1L 72% GM Target" fill="#10b981" />
+              <Bar yAxisId="margin" dataKey="k1g_target_gross_margin" name="K1G 20% GM Target" fill="#a855f7" />
+              <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_mile" name="K1L Revenue/Mile" stroke="#f8fafc" strokeWidth={2} dot={false} />
+              <Line yAxisId="rate" type="monotone" dataKey="k1l_fuel_plus_driver_cpm" name="K1L Fuel+Driver CPM" stroke="#38bdf8" strokeWidth={2} dot={false} />
+              <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cpm" name="K1L True CPM" stroke="#fb7185" strokeWidth={2} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
+            Entity margin trend appears after Xcelerator delivery-center rows are available.
+          </div>
+        )}
+      </motion.div>
+
+      {/* K1L Monthly Final CPM Trend */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.41 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-emerald-400" />
+              K1L Monthly Final CPM Trend
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              {k1OperatingKpi?.as_of_date ? `Finalized through ${k1OperatingKpi.as_of_date}` : 'Finalized monthly snapshot'} · {k1OperatingKpi?.source || 'QBO + Xcelerator + AtoB + Geotab'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Final CPM</div>
+              <div className="text-emerald-400">{formatRate(k1OperatingKpi?.summary?.cost_per_mile)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Total Cost</div>
+              <div className="text-white">{formatCurrency(k1OperatingKpi?.summary?.total_cost)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Miles</div>
+              <div className="text-purple-300">{formatNumber(k1OperatingKpi?.summary?.miles)}</div>
+            </div>
+          </div>
+        </div>
+
+        {monthlyK1CpmRows.length > 0 ? (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <ResponsiveContainer width="100%" height={320}>
+              <ComposedChart data={monthlyK1CpmRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
+                <YAxis yAxisId="cost" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
+                <YAxis yAxisId="rate" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => {
+                    if (name === 'Final CPM') return [formatRate(value), name]
+                    if (name === 'Miles') return [formatNumber(value), name]
+                    return [formatCurrency(value), name]
+                  }}
+                />
+                <Legend />
+                <Bar yAxisId="cost" dataKey="total_cost" name="Total Cost" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="rate" type="monotone" dataKey="cost_per_mile" name="Final CPM" stroke="#f8fafc" strokeWidth={3} dot={{ r: 4 }} />
+                <Line yAxisId="rate" type="monotone" dataKey="miles" name="Miles" stroke="#a78bfa" strokeWidth={2} dot={false} hide />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid grid-cols-4 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span>Month</span>
+                <span className="text-right">CPM</span>
+                <span className="text-right">Cost</span>
+                <span className="text-right">Miles</span>
+              </div>
+              <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
+                {monthlyK1CpmRows.map((row) => (
+                  <div key={row.month} className="grid grid-cols-4 gap-2 px-3 py-2">
+                    <span className="font-medium text-white">{row.month}</span>
+                    <span className="text-right font-semibold text-emerald-400">{formatRate(row.cost_per_mile)}</span>
+                    <span className="text-right text-gray-300">{formatCurrency(row.total_cost)}</span>
+                    <span className="text-right text-gray-400">{formatNumber(row.miles)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
+            Monthly K1L CPM trend appears after `K1L_OPERATING_COST_MONTHLY_JSON` is configured.
+          </div>
+        )}
+      </motion.div>
 
       {/* True Operating Cost Stack */}
       <motion.div

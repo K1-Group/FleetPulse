@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Database, TrendingUp, AlertTriangle, Truck, Fuel, Clock, Activity } from 'lucide-react'
+import { Database, TrendingUp, AlertTriangle, Truck, Fuel, Clock, Activity, RefreshCw } from 'lucide-react'
 
 interface VehicleKpi {
   vehicle_id?: string
@@ -53,25 +53,49 @@ const EMPTY_ENDPOINT_ERRORS: EndpointErrors = {
   safety: null,
   faults: null,
 }
+const DATA_CONNECTOR_FETCH_TIMEOUT_MS = 25000
 
 export default function DataConnector() {
   const [kpis, setKpis] = useState<VehicleKpiResponse | null>(null)
   const [safety, setSafety] = useState<SafetyResponse | null>(null)
   const [faults, setFaults] = useState<FaultResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [endpointErrors, setEndpointErrors] = useState<EndpointErrors>(EMPTY_ENDPOINT_ERRORS)
   const [days, setDays] = useState(14)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null)
 
   useEffect(() => {
-    setLoading(true)
+    let cancelled = false
+    let retryTimer: number | undefined
+    const hasRenderedData = Boolean(kpis || safety || faults)
+
+    setLoading(!hasRenderedData)
+    setRefreshing(true)
     setError(null)
     setEndpointErrors(EMPTY_ENDPOINT_ERRORS)
     // Helper: turn a fetch into either parsed JSON or a thrown Error so a
     // FastAPI 4xx body like { detail: "...Jurisdiction Mismatch..." } can no
     // longer slip past the .catch and crash downstream renders.
     const safeFetch = async <T,>(url: string): Promise<T> => {
-      const res = await fetch(url)
+      const controller = new AbortController()
+      const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        DATA_CONNECTOR_FETCH_TIMEOUT_MS,
+      )
+      let res: Response
+      try {
+        res = await fetch(url, { cache: 'no-store', signal: controller.signal })
+      } catch (fetchError) {
+        if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
+          throw new Error('Data Connector request timed out before the upstream feed responded.')
+        }
+        throw fetchError
+      } finally {
+        window.clearTimeout(timeoutId)
+      }
       let body: any = null
       try { body = await res.json() } catch { /* non-JSON body */ }
       if (!res.ok) {
@@ -91,7 +115,7 @@ export default function DataConnector() {
       return body as T
     }
 
-    const fetchWithRetry = async <T,>(url: string, attempts = 2): Promise<T> => {
+    const fetchWithRetry = async <T,>(url: string, attempts = 1): Promise<T> => {
       let lastError: unknown = null
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         try {
@@ -126,13 +150,20 @@ export default function DataConnector() {
         fetchWithRetry<FaultResponse>(`/api/data-connector/fault-trends?days=${days}`),
       ])
 
+      if (cancelled) {
+        return
+      }
+
       const nextErrors: EndpointErrors = { ...EMPTY_ENDPOINT_ERRORS }
+      const hasSuccessfulPanel =
+        vehicleResult.status === 'fulfilled' ||
+        safetyResult.status === 'fulfilled' ||
+        faultResult.status === 'fulfilled'
 
       if (vehicleResult.status === 'fulfilled') {
         setKpis(vehicleResult.value)
         nextErrors.vehicles = feedMessage(vehicleResult.value, 'Vehicle KPI feed is degraded.')
       } else {
-        setKpis(null)
         nextErrors.vehicles = errorMessage(vehicleResult.reason)
       }
 
@@ -140,7 +171,6 @@ export default function DataConnector() {
         setSafety(safetyResult.value)
         nextErrors.safety = feedMessage(safetyResult.value, 'Safety score feed is degraded.')
       } else {
-        setSafety(null)
         nextErrors.safety = errorMessage(safetyResult.reason)
       }
 
@@ -148,23 +178,51 @@ export default function DataConnector() {
         setFaults(faultResult.value)
         nextErrors.faults = feedMessage(faultResult.value, 'Fault trend feed is degraded.')
       } else {
-        setFaults(null)
         nextErrors.faults = errorMessage(faultResult.reason)
       }
 
       setEndpointErrors(nextErrors)
+      setLastCheckedAt(new Date().toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+      }))
 
       if (nextErrors.vehicles && nextErrors.safety && nextErrors.faults) {
         setError('All Data Connector feeds are temporarily unavailable.')
+      } else {
+        setError(null)
+      }
+
+      const hasEndpointError = Boolean(nextErrors.vehicles || nextErrors.safety || nextErrors.faults)
+      if (hasEndpointError || !hasSuccessfulPanel) {
+        retryTimer = window.setTimeout(
+          () => setRefreshNonce(current => current + 1),
+          hasSuccessfulPanel ? 30000 : 15000,
+        )
       }
     }
 
     loadConnectorData()
       .catch(e => {
-        setError(e.message || 'Failed to load Data Connector')
+        if (!cancelled) {
+          setError(e.message || 'Failed to load Data Connector')
+        }
       })
-      .finally(() => setLoading(false))
-  }, [days])
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+          setRefreshing(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer)
+      }
+    }
+  }, [days, refreshNonce])
 
   const numeric = (value: unknown): number => {
     const parsed = Number(value ?? 0)
@@ -190,6 +248,7 @@ export default function DataConnector() {
 
   const summary = kpis?.summary
   const vehicles = kpis?.vehicles || []
+  const reviewWindowDays = kpis?.period_days ?? days
   const topDistanceVehicle = vehicles[0]
   const highestIdleVehicle = vehicles.reduce<VehicleKpi | null>(
     (current, vehicle) => (current === null || numeric(vehicle.idle_hours) > numeric(current.idle_hours) ? vehicle : current),
@@ -213,17 +272,32 @@ export default function DataConnector() {
             <p className="text-sm text-gray-400">Pre-aggregated fleet metrics via Geotab OData</p>
           </div>
         </div>
-        <select
-          value={days}
-          onChange={e => setDays(Number(e.target.value))}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-        >
-          <option value={1}>Last 24h</option>
-          <option value={7}>Last 7 days</option>
-          <option value={14}>Last 14 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {lastCheckedAt && (
+            <span className="text-xs text-gray-500">Checked {lastCheckedAt}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setRefreshNonce(current => current + 1)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white transition hover:border-cyan-500/60 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Refresh Data Connector panels"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <select
+            value={days}
+            onChange={e => setDays(Number(e.target.value))}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+          >
+            <option value={1}>Last 24h</option>
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        </div>
       </div>
 
       {(error || activeEndpointErrors.length > 0) && (
@@ -349,7 +423,7 @@ export default function DataConnector() {
                   </div>
                   <div className="rounded-lg bg-gray-700/30 p-3">
                     <p className="text-gray-400">Review Window</p>
-                    <p className="mt-1 text-xl font-semibold text-white">{days} day{days === 1 ? '' : 's'}</p>
+                    <p className="mt-1 text-xl font-semibold text-white">{reviewWindowDays} day{reviewWindowDays === 1 ? '' : 's'}</p>
                   </div>
                 </div>
               </motion.div>
@@ -366,7 +440,7 @@ export default function DataConnector() {
             >
               <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
                 <Truck className="w-5 h-5 text-blue-400" />
-                Vehicle Utilization ({days}-day)
+                Vehicle Utilization ({reviewWindowDays}-day)
               </h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -434,12 +508,19 @@ export default function DataConnector() {
                 Safety Scores (Data Connector)
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {safety.vehicle_scores.slice(0, 8).map((s: any, i: number) => (
-                  <div key={i} className="bg-gray-700/30 rounded-lg p-3">
-                    <p className="text-sm text-gray-400">{s.VehicleName || s.DriverName || `Vehicle ${i + 1}`}</p>
-                    <p className="text-xl font-bold text-white">{s.SafetyScore ?? s.Score ?? '—'}</p>
-                  </div>
-                ))}
+                {safety.vehicle_scores.slice(0, 8).map((s: any, i: number) => {
+                  const rawScore = s.SafetyScore ?? s.Score ?? s.Safety_Rank
+                  const score = Number(rawScore)
+                  const displayScore = Number.isFinite(score)
+                    ? score <= 1 ? `${(score * 100).toFixed(0)}%` : score.toFixed(0)
+                    : '—'
+                  return (
+                    <div key={i} className="bg-gray-700/30 rounded-lg p-3">
+                      <p className="text-sm text-gray-400">{s.VehicleName || s.DriverName || s.DeviceId || s.DeviceID || s.Vin || `Vehicle ${i + 1}`}</p>
+                      <p className="text-xl font-bold text-white">{displayScore}</p>
+                    </div>
+                  )
+                })}
               </div>
             </motion.div>
           )}
@@ -467,14 +548,20 @@ export default function DataConnector() {
                     </tr>
                   </thead>
                   <tbody>
-                    {faults.faults.slice(0, 15).map((f: any, i: number) => (
-                      <tr key={i} className="border-b border-gray-700/30">
-                        <td className="py-2 px-2 text-white">{f.VehicleName || '—'}</td>
-                        <td className="py-2 px-2">{f.FaultCode || f.DiagnosticName || '—'}</td>
-                        <td className="text-right py-2 px-2 text-red-400">{f.Count || f.FaultCount || 1}</td>
-                        <td className="py-2 px-2 text-gray-400">{f.Date || f.Day || '—'}</td>
-                      </tr>
-                    ))}
+                    {faults.faults.slice(0, 15).map((f: any, i: number) => {
+                      const dateValue = f.Date || f.Day || f.Local_Date || f.AnyStatesDateTimeFirstSeen
+                      const displayDate = typeof dateValue === 'string'
+                        ? dateValue.slice(0, 10)
+                        : '—'
+                      return (
+                        <tr key={i} className="border-b border-gray-700/30">
+                          <td className="py-2 px-2 text-white">{f.VehicleName || f.DeviceId || f.DeviceID || f.Vin || '—'}</td>
+                          <td className="py-2 px-2">{f.FaultCode || f.DiagnosticName || f.FaultCodeDescription || '—'}</td>
+                          <td className="text-right py-2 px-2 text-red-400">{f.Count || f.FaultCount || f.Count_Daily || 1}</td>
+                          <td className="py-2 px-2 text-gray-400">{displayDate}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

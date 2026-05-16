@@ -15,7 +15,10 @@ import {
   useOperatingSystemConfiguration,
   useOperatingSystemTaskKpiMatrix,
 } from '../hooks/useGeotab'
+import K1OperatingCostKpi from './K1OperatingCostKpi'
+import ValidationBadge from './ValidationBadge'
 import type {
+  DashboardValidationResponse,
   OperatingSystemConfigurationItem,
   OperatingSystemSeatContract,
   OperatingSystemSourceBoundary,
@@ -189,7 +192,11 @@ function ConfigCard({ item }: { item: OperatingSystemConfigurationItem }) {
   )
 }
 
-export default function OperatingSystem() {
+interface Props {
+  validation?: DashboardValidationResponse | null
+}
+
+export default function OperatingSystem({ validation }: Props) {
   const [active, setActive] = useState<ViewKey>('chart')
   const [selectedSeatId, setSelectedSeatId] = useState('executive_command')
   const org = useOperatingSystemOrgChart()
@@ -205,6 +212,7 @@ export default function OperatingSystem() {
   const selectedSeat = seatMap.get(selectedSeatId) || matrix.data?.seats[0] || null
   const managerSeats = matrix.data?.seats.filter(seat => seat.seat_type === 'accountability') || []
   const functionalSeats = matrix.data?.seats.filter(seat => seat.seat_type === 'functional') || []
+  const operatingValidation = validation?.sections?.operating_system
 
   return (
     <div className="space-y-6">
@@ -216,12 +224,16 @@ export default function OperatingSystem() {
             <p className="text-sm text-gray-400 light:text-gray-600">Fixed-seat org contract, task matrix, and source-boundary controls</p>
           </div>
         </div>
-        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200 light:text-emerald-700">
-          Projection mode: read-only
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200 light:text-emerald-700">
+            Projection mode: read-only
+          </span>
+          <ValidationBadge item={operatingValidation} />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <K1OperatingCostKpi compact validation={validation?.sections?.k1l_final_cpm} />
         <Panel>
           <p className="text-xs uppercase text-gray-500 light:text-gray-600">Annual Target</p>
           <p className="mt-1 text-2xl font-bold text-white light:text-gray-900">{money(org.data?.targets.annual_target)}</p>

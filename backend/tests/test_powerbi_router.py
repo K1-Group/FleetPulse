@@ -202,6 +202,88 @@ def _client(monkeypatch) -> TestClient:
         fake_operating_cost_snapshot,
     )
 
+    async def fake_entity_margin_snapshot(days=90, start=None, end=None):
+        return {
+            "period_start": start or "2026-05-03",
+            "period_end": end or "2026-05-09",
+            "generated_at": "2026-05-10T12:00:00+00:00",
+            "k1l_margin_target_pct": 0.72,
+            "k1g_margin_target_pct": 0.2,
+            "complete_k1l_cpm_available": True,
+            "complete_k1l_true_cpm_available": True,
+            "unresolved_sources": [],
+            "true_cpm_unresolved_sources": [],
+            "xcelerator_source_type": "powerbi_semantic_model",
+            "summary": {
+                "miles": 1000.0,
+                "drive_hours": 50.0,
+                "fuel_cost": 625.0,
+                "insurance_cost": 100.0,
+                "other_expense_cost": 200.0,
+                "k1l_orders": 10,
+                "k1l_grand_total": 3000.0,
+                "k1l_driver_pay": 1000.0,
+                "k1l_target_gross_margin": 2160.0,
+                "k1l_actual_gross_margin_before_fuel": 2000.0,
+                "k1l_actual_gross_margin_pct_before_fuel": 0.6667,
+                "k1l_actual_gross_margin_after_fuel": 1375.0,
+                "k1l_actual_gross_margin_pct_after_fuel": 0.4583,
+                "k1l_revenue_per_mile": 3.0,
+                "k1l_driver_pay_cpm": 1.0,
+                "k1l_fuel_cpm": 0.625,
+                "k1l_fuel_plus_driver_cpm": 1.625,
+                "k1l_true_operating_cpm": 1.925,
+                "k1l_true_operating_cost": 1925.0,
+                "k1g_orders": 4,
+                "k1g_grand_total": 1000.0,
+                "k1g_driver_pay": 800.0,
+                "k1g_target_gross_margin": 200.0,
+                "k1g_actual_gross_margin_before_overhead": 200.0,
+                "k1g_actual_gross_margin_pct_before_overhead": 0.2,
+                "qbo_expenses_available": True,
+            },
+            "weekly": [
+                {
+                    "week_start": "2026-05-04",
+                    "week_end": "2026-05-09",
+                    "period_start": "2026-05-04",
+                    "period_end": "2026-05-09",
+                    "miles": 1000.0,
+                    "drive_hours": 50.0,
+                    "fuel_cost": 625.0,
+                    "insurance_cost": 100.0,
+                    "other_expense_cost": 200.0,
+                    "k1l_orders": 10,
+                    "k1l_grand_total": 3000.0,
+                    "k1l_driver_pay": 1000.0,
+                    "k1l_target_gross_margin": 2160.0,
+                    "k1l_actual_gross_margin_before_fuel": 2000.0,
+                    "k1l_actual_gross_margin_pct_before_fuel": 0.6667,
+                    "k1l_actual_gross_margin_after_fuel": 1375.0,
+                    "k1l_actual_gross_margin_pct_after_fuel": 0.4583,
+                    "k1l_revenue_per_mile": 3.0,
+                    "k1l_driver_pay_cpm": 1.0,
+                    "k1l_fuel_cpm": 0.625,
+                    "k1l_fuel_plus_driver_cpm": 1.625,
+                    "k1l_true_operating_cpm": 1.925,
+                    "k1l_true_operating_cost": 1925.0,
+                    "k1g_orders": 4,
+                    "k1g_grand_total": 1000.0,
+                    "k1g_driver_pay": 800.0,
+                    "k1g_target_gross_margin": 200.0,
+                    "k1g_actual_gross_margin_before_overhead": 200.0,
+                    "k1g_actual_gross_margin_pct_before_overhead": 0.2,
+                    "qbo_expenses_available": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        powerbi,
+        "get_entity_margin_snapshot",
+        fake_entity_margin_snapshot,
+    )
+
     app = FastAPI()
     app.include_router(powerbi.router, prefix="/api/powerbi")
     return TestClient(app)
@@ -325,3 +407,19 @@ def test_powerbi_operating_cost_tables(monkeypatch):
     assert summary.json()[0]["projection_mode"] == "read_only"
     assert weekly.json()[0]["connection_name"] == "operating_cost_weekly"
     assert weekly.json()[0]["true_cost_per_mile"] == 1.925
+
+
+def test_powerbi_entity_margin_tables(monkeypatch):
+    client = _client(monkeypatch)
+    summary = client.get("/api/powerbi/entity-margin/summary?start=2026-05-03&end=2026-05-09")
+    weekly = client.get("/api/powerbi/entity-margin/weekly?start=2026-05-03&end=2026-05-09")
+
+    assert summary.status_code == 200
+    assert weekly.status_code == 200
+    assert summary.json()[0]["connection_name"] == "entity_margin_summary"
+    assert summary.json()[0]["source_system"] == "FleetPulse Entity Margin"
+    assert summary.json()[0]["k1l_margin_target_pct"] == 0.72
+    assert summary.json()[0]["k1g_margin_target_pct"] == 0.2
+    assert summary.json()[0]["k1l_fuel_plus_driver_cpm"] == 1.625
+    assert weekly.json()[0]["connection_name"] == "entity_margin_weekly"
+    assert weekly.json()[0]["xcelerator_source_type"] == "powerbi_semantic_model"

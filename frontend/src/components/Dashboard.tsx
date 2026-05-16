@@ -1,11 +1,14 @@
 import { motion } from 'framer-motion'
 import CountUp from 'react-countup'
 import { LineChart, Line, ResponsiveContainer } from 'recharts'
-import type { FleetOverview } from '../types/fleet'
+import type { DashboardValidationResponse, FleetOverview } from '../types/fleet'
+import K1OperatingCostKpi from './K1OperatingCostKpi'
+import ValidationBadge from './ValidationBadge'
 
 interface Props {
   overview: FleetOverview | null
   loading: boolean
+  validation?: DashboardValidationResponse | null
 }
 
 const cards = [
@@ -134,7 +137,21 @@ const cardVariants = {
   }
 }
 
-export default function Dashboard({ overview, loading }: Props) {
+const metricValidationKeys: Record<string, string> = {
+  active: 'active',
+  avg_trip_distance_miles: 'avg_trip_distance_miles',
+  avg_trip_duration_hours: 'avg_trip_duration_hours',
+  idle: 'idle',
+  parked: 'parked',
+  total_distance_miles: 'total_distance_miles',
+  total_stops_today: 'total_stops_today',
+  total_trips_today: 'total_trips_today',
+  total_vehicles: 'total_vehicles',
+  trips_meeting_target: 'trips_meeting_target',
+  trips_under_target: 'trips_under_target',
+}
+
+export default function Dashboard({ overview, loading, validation }: Props) {
   const sparklineData = (data: readonly number[] | number[]) => [...data].map((value, index) => ({ x: index, y: value }))
 
   const getTrendIcon = (trend: string) => {
@@ -160,8 +177,16 @@ export default function Dashboard({ overview, loading }: Props) {
       initial="hidden"
       animate="visible"
     >
-      {cards.map((c, index) => (
-        <motion.div
+      <K1OperatingCostKpi
+        compact
+        className="col-span-2 sm:col-span-2 lg:col-span-2 xl:col-span-2"
+        validation={validation?.sections?.k1l_final_cpm}
+      />
+
+      {cards.map((c, index) => {
+        const metricValidation = validation?.metrics?.[metricValidationKeys[c.key] || c.key] || validation?.sections?.fleet_overview
+        return (
+          <motion.div
           key={c.key}
           variants={cardVariants}
           whileHover={{ 
@@ -196,7 +221,10 @@ export default function Dashboard({ overview, loading }: Props) {
               )}
             </div>
             
-            <div className="text-xs text-white/70 mb-2">{c.label}</div>
+            <div className="mb-2 flex items-center justify-between gap-2 text-xs text-white/70">
+              <span className="min-w-0 truncate">{c.label}</span>
+              <ValidationBadge compact item={metricValidation} />
+            </div>
             
             {/* Sparkline */}
             <div className="h-6 w-full mt-2">
@@ -216,8 +244,9 @@ export default function Dashboard({ overview, loading }: Props) {
               )}
             </div>
           </div>
-        </motion.div>
-      ))}
+          </motion.div>
+        )
+      })}
     </motion.div>
   )
 }

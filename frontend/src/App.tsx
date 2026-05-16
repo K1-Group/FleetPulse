@@ -25,7 +25,8 @@ import DataConnector from './components/DataConnector'
 import ControlTower from './components/ControlTower'
 import OperatingSystem from './components/OperatingSystem'
 import HrRecruitingWorklist from './components/HrRecruitingWorklist'
-import { useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
+import DashboardValidationSummary from './components/DashboardValidationSummary'
+import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -54,7 +55,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab)
   
   const dashboardActive = activeTab === 'dashboard'
+  const validationActive = dashboardActive || activeTab === 'operating-system'
   const overview = useFleetOverview(dashboardActive)
+  const dashboardValidation = useDashboardValidation(validationActive)
   const vehicles = useVehicles(dashboardActive)
   const safety = useSafetyScores(dashboardActive)
   const leaderboard = useLeaderboard(dashboardActive)
@@ -273,7 +276,11 @@ export default function App() {
           <div className="space-y-6">
         {/* KPI Cards */}
         <section>
-          <Dashboard overview={overview.data} loading={overview.loading} />
+          <Dashboard overview={overview.data} loading={overview.loading} validation={dashboardValidation.data} />
+        </section>
+
+        <section>
+          <DashboardValidationSummary validation={dashboardValidation.data} loading={dashboardValidation.loading} />
         </section>
 
         {/* Fleet Analytics */}
@@ -385,7 +392,7 @@ export default function App() {
         )}
 
         {activeTab === 'operating-system' && (
-          <OperatingSystem />
+          <OperatingSystem validation={dashboardValidation.data} />
         )}
 
         {activeTab === 'hr-recruiting' && (

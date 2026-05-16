@@ -47,6 +47,42 @@ export interface LocationStats {
   safety_score: number
 }
 
+export type DashboardValidationStatus = 'verified' | 'pending' | 'pending_no_data' | 'pending_no_audit' | 'stale' | 'failed'
+
+export interface DashboardValidationItem {
+  blocked_by: string | null
+  checked_at: string
+  contract: Record<string, unknown>
+  key: string
+  label: string
+  message: string
+  metrics: string[]
+  next_check: string | null
+  projection_mode: 'read_only'
+  required_config: string[]
+  row_count: number | null
+  source_authority: string
+  status: DashboardValidationStatus
+  verified: boolean
+}
+
+export interface DashboardValidationResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  sections: Record<string, DashboardValidationItem>
+  metrics: Record<string, DashboardValidationItem>
+  pending_ledger?: Array<{
+    blocked_by: string
+    key: string
+    message: string
+    next_check: string
+    panel_name: string
+    status: DashboardValidationStatus
+    contract?: Record<string, unknown>
+  }>
+  summary: Record<DashboardValidationStatus, number>
+}
+
 export interface SafetyBreakdown {
   speeding: number
   harsh_braking: number
