@@ -186,6 +186,10 @@ def _week_key(day: date) -> str:
     return (day - timedelta(days=day.weekday())).isoformat()
 
 
+def _month_key(day: date) -> str:
+    return date(day.year, day.month, 1).isoformat()
+
+
 def _money(value: float) -> float:
     return round(float(value or 0), 2)
 
@@ -291,6 +295,7 @@ def _missing_summary_cache_payload(
         "summary": _finish_bucket(_empty_bucket("K1 total")),
         "entities": [],
         "weekly": [],
+        "monthly": [],
         "row_count": 0,
         "excluded_row_count": 0,
         "source_method": "summary_cache_missing",
@@ -318,6 +323,8 @@ def _load_summary_cache(
     if tuple(payload.get("signature") or ()) != signature:
         return None
     snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict) and "monthly" not in snapshot:
+        return None
     return snapshot if isinstance(snapshot, dict) else None
 
 
@@ -454,6 +461,7 @@ def get_xcelerator_gross_margin_snapshot(
             "summary": _finish_bucket(_empty_bucket("K1 total")),
             "entities": [],
             "weekly": [],
+            "monthly": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unconfigured",
@@ -484,6 +492,7 @@ def get_xcelerator_gross_margin_snapshot(
             "summary": _finish_bucket(_empty_bucket("K1 total")),
             "entities": [],
             "weekly": [],
+            "monthly": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unavailable",
@@ -494,6 +503,7 @@ def get_xcelerator_gross_margin_snapshot(
         K1G_ENTITY: _empty_bucket(K1G_ENTITY),
     }
     weekly: dict[str, dict[str, Any]] = {}
+    monthly: dict[str, dict[str, Any]] = {}
     total = _empty_bucket("K1 total")
     source_methods: set[str] = set()
     excluded_row_count = 0
@@ -539,6 +549,23 @@ def get_xcelerator_gross_margin_snapshot(
             week["revenue"] += revenue
             week["driver_pay"] += driver_pay
             week["gross_margin"] += gross_margin
+
+            month = monthly.setdefault(
+                _month_key(row_day),
+                {
+                    "entity": "K1 total",
+                    "month_start": _month_key(row_day),
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "driver_pay": 0.0,
+                    "gross_margin": 0.0,
+                    "gross_margin_pct": None,
+                },
+            )
+            month["orders"] += orders
+            month["revenue"] += revenue
+            month["driver_pay"] += driver_pay
+            month["gross_margin"] += gross_margin
     except Exception as exc:
         return {
             "status": "unavailable",
@@ -552,6 +579,7 @@ def get_xcelerator_gross_margin_snapshot(
             "summary": _finish_bucket(_empty_bucket("K1 total")),
             "entities": [],
             "weekly": [],
+            "monthly": [],
             "row_count": 0,
             "excluded_row_count": 0,
             "source_method": "unavailable",
@@ -565,6 +593,10 @@ def get_xcelerator_gross_margin_snapshot(
     finished_weekly = [
         _finish_bucket({"entity": "K1 total", **row})
         for _, row in sorted(weekly.items())
+    ]
+    finished_monthly = [
+        _finish_bucket(row)
+        for _, row in sorted(monthly.items())
     ]
     finished_summary = _finish_bucket(total)
     status = "healthy" if included_row_count and float(total["revenue"]) > 0 else "awaiting_feed"
@@ -593,6 +625,7 @@ def get_xcelerator_gross_margin_snapshot(
         "summary": finished_summary,
         "entities": finished_entities,
         "weekly": finished_weekly,
+        "monthly": finished_monthly,
         "row_count": included_row_count,
         "excluded_row_count": excluded_row_count,
         "source_method": method,
@@ -647,6 +680,7 @@ def start_gross_margin_summary_rebuild(
                             "row_count": snapshot.get("row_count"),
                             "source_method": snapshot.get("source_method"),
                             "summary": snapshot.get("summary"),
+                            "monthly": snapshot.get("monthly"),
                         },
                     }
                 )

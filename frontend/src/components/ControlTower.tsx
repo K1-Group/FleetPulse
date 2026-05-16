@@ -2,6 +2,17 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import {
   AlertTriangle,
   Bot,
   CheckCircle2,
@@ -74,9 +85,29 @@ function percent(value: number | null | undefined) {
   return `${(value * 100).toFixed(1)}%`
 }
 
+function percentAxis(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—'
+  return `${Number(value).toFixed(0)}%`
+}
+
 function number(value: number | null | undefined) {
   if (value === null || value === undefined) return '0'
   return value.toLocaleString()
+}
+
+function compactMoney(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—'
+  const absolute = Math.abs(Number(value))
+  if (absolute >= 1_000_000) return `$${(Number(value) / 1_000_000).toFixed(1)}M`
+  if (absolute >= 1_000) return `$${(Number(value) / 1_000).toFixed(0)}k`
+  return money(Number(value))
+}
+
+function monthLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  const parsed = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 7)
+  return parsed.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' })
 }
 
 function StatusPill({ status }: { status: ControlTowerStatus }) {
@@ -166,6 +197,13 @@ export default function ControlTower() {
     return map
   }, [overview.data])
   const grossMarginReady = financial.data?.gross_margin?.status === 'healthy' || financial.data?.gross_margin?.status === 'partial'
+  const monthlyGrossMarginTrend = useMemo(() => {
+    return (financial.data?.gross_margin?.monthly || []).map(row => ({
+      ...row,
+      month_label: monthLabel(row.month_start),
+      gross_margin_pct_axis: row.gross_margin_pct === null ? null : row.gross_margin_pct * 100,
+    }))
+  }, [financial.data?.gross_margin?.monthly])
 
   return (
     <div className="space-y-6">
@@ -364,6 +402,43 @@ export default function ControlTower() {
                       </div>
                     ))}
                   </div>}
+
+                  {grossMarginReady && monthlyGrossMarginTrend.length > 0 && (
+                    <div className="mt-4 rounded-lg border border-gray-700/40 bg-gray-950/30 p-3 light:bg-white light:border-gray-200">
+                      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <h5 className="text-sm font-semibold text-white light:text-gray-900">Monthly Gross Margin Trend</h5>
+                          <p className="text-xs text-gray-500 light:text-gray-600">Xcelerator ReviewOrders</p>
+                        </div>
+                        <p className="text-xs text-gray-400 light:text-gray-600">
+                          {monthlyGrossMarginTrend.length} months
+                        </p>
+                      </div>
+                      <div className="h-72 min-w-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={monthlyGrossMarginTrend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis dataKey="month_label" stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                            <YAxis yAxisId="money" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={compactMoney} width={58} />
+                            <YAxis yAxisId="percent" orientation="right" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={percentAxis} width={42} />
+                            <Tooltip
+                              contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                              labelStyle={{ color: '#d1d5db' }}
+                              formatter={(value: number, name: string) => {
+                                if (name === 'GM %') return [percent(Number(value) / 100), name]
+                                if (name === 'Orders') return [number(Number(value)), name]
+                                return [money(Number(value)), name]
+                              }}
+                            />
+                            <Legend wrapperStyle={{ color: '#d1d5db', fontSize: 12 }} />
+                            <Bar yAxisId="money" dataKey="revenue" name="Revenue" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                            <Bar yAxisId="money" dataKey="gross_margin" name="GM $" fill="#10b981" radius={[4, 4, 0, 0]} />
+                            <Line yAxisId="percent" type="monotone" dataKey="gross_margin_pct_axis" name="GM %" stroke="#fbbf24" strokeWidth={3} dot={{ r: 4 }} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
 
                   {grossMarginReady && financial.data.gross_margin.weekly.length > 0 && (
                     <div className="mt-4 overflow-hidden rounded-lg border border-gray-700/40 light:border-gray-200">

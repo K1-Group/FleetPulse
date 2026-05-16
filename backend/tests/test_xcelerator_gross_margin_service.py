@@ -42,6 +42,9 @@ def test_gross_margin_snapshot_uses_xcelerator_gross_margin_field(tmp_path):
     assert snapshot["source_method"] == "xcelerator_gross_margin_field"
     assert {row["entity"] for row in snapshot["entities"]} == {"K1 Logistics Inc", "K1 Group LLC"}
     assert snapshot["weekly"][0]["week_start"] == "2026-05-04"
+    assert snapshot["monthly"][0]["month_start"] == "2026-05-01"
+    assert snapshot["monthly"][0]["revenue"] == 1500.0
+    assert snapshot["monthly"][0]["gross_margin"] == 810.0
 
 
 def test_gross_margin_snapshot_falls_back_to_revenue_minus_driver_pay(tmp_path):

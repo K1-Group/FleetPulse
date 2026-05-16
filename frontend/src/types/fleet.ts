@@ -345,6 +345,7 @@ export interface ControlTowerFinancialSummary {
 export interface ControlTowerGrossMarginBucket {
   entity: string
   week_start: string | null
+  month_start: string | null
   orders: number
   revenue: number
   driver_pay: number
@@ -364,6 +365,7 @@ export interface ControlTowerGrossMarginSnapshot {
   summary: ControlTowerGrossMarginBucket
   entities: ControlTowerGrossMarginBucket[]
   weekly: ControlTowerGrossMarginBucket[]
+  monthly: ControlTowerGrossMarginBucket[]
   row_count: number
   excluded_row_count: number
   source_method: string

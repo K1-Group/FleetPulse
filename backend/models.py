@@ -464,6 +464,7 @@ class ControlTowerFinancialSummary(BaseModel):
 class ControlTowerGrossMarginBucket(BaseModel):
     entity: str
     week_start: Optional[str] = None
+    month_start: Optional[str] = None
     orders: int = 0
     revenue: float = 0
     driver_pay: float = 0
@@ -483,6 +484,7 @@ class ControlTowerGrossMarginSnapshot(BaseModel):
     summary: ControlTowerGrossMarginBucket
     entities: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
     weekly: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
+    monthly: list[ControlTowerGrossMarginBucket] = Field(default_factory=list)
     row_count: int = 0
     excluded_row_count: int = 0
     source_method: str = "unconfigured"
