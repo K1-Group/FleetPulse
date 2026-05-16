@@ -69,6 +69,40 @@ def test_attention_projects_live_alerts_without_fake_counts(monkeypatch):
     assert any(feed["name"] == "Xcelerator route SLA feed" for feed in payload["feeds"])
 
 
+def test_attention_projects_xcelerator_feed_rows(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")
+    monkeypatch.setattr(control_tower_service, "get_recent_alerts", lambda hours=24: [])
+    monkeypatch.setattr(control_tower_service, "get_monitor_alerts", lambda limit=50: [])
+    monkeypatch.setattr(control_tower_service, "get_monitor_status", lambda: {"running": False})
+    monkeypatch.setattr(
+        control_tower_service,
+        "_fetch_xcelerator_event_rows",
+        lambda: (
+            [
+                {
+                    "event_type": "route_eta_exception_evaluated",
+                    "message": "Route ROUTE-901 missed ETA threshold",
+                    "route_id": "ROUTE-901",
+                    "status": "exception",
+                    "timestamp": "2026-05-16T12:30:00Z",
+                }
+            ],
+            datetime(2026, 5, 16, 12, 30, tzinfo=timezone.utc),
+        ),
+    )
+
+    response = _client().get("/api/control-tower/attention")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"][0]["source_authority"] == "K1 Group LLC / Xcelerator"
+    assert payload["items"][0]["category"] == "Linehaul"
+    assert payload["items"][0]["message"] == "Route ROUTE-901 missed ETA threshold"
+    xcelerator_feed = next(feed for feed in payload["feeds"] if feed["name"] == "Xcelerator route SLA feed")
+    assert xcelerator_feed["status"] == "healthy"
+    assert "Read 1 Xcelerator event row" in xcelerator_feed["message"]
+
+
 def test_financial_surface_is_k1_group_read_only_and_awaits_feed(monkeypatch):
     monkeypatch.delenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", raising=False)
     monkeypatch.delenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", raising=False)
@@ -83,19 +117,60 @@ def test_financial_surface_is_k1_group_read_only_and_awaits_feed(monkeypatch):
     assert payload["feeds"][0]["status"] == "awaiting_feed"
 
 
-def test_configured_feed_urls_report_adapter_pending_without_fake_values(monkeypatch):
+def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monkeypatch):
     monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")
     monkeypatch.setenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", "https://example.invalid/qbo")
+    monkeypatch.setattr(
+        control_tower_service,
+        "_fetch_xcelerator_event_rows",
+        lambda: (
+            [
+                {
+                    "driver_pay_amount": 850,
+                    "event_type": "shipment_financial_update",
+                    "revenue_amount": 2400,
+                    "shipment_id": "SH-1001",
+                    "timestamp": "2026-05-16T12:35:00Z",
+                }
+            ],
+            datetime(2026, 5, 16, 12, 35, tzinfo=timezone.utc),
+        ),
+    )
 
     response = _client().get("/api/control-tower/financial")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["accounts_payable"]["pending_amount"] is None
-    assert all(feed["status"] == "warning" for feed in payload["feeds"])
-    assert "adapter is not live yet" in response.text
+    assert payload["feeds"][0]["status"] == "healthy"
+    assert payload["feeds"][1]["status"] == "warning"
+    assert "Read 1 Xcelerator row" in payload["feeds"][0]["message"]
+    assert "adapter is not live yet" not in payload["feeds"][0]["message"]
     assert "12345" not in response.text
+
+
+def test_financial_uses_review_orders_evidence_when_event_url_is_not_row_feed(monkeypatch, tmp_path):
+    evidence_path = tmp_path / "review-orders.json"
+    evidence_path.write_text('{"rows":[{"Order ID":"1.020126","Driver Pay":280}]}', encoding="utf-8")
+    monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", str(evidence_path))
+    monkeypatch.setattr(
+        control_tower_service,
+        "_fetch_xcelerator_event_rows",
+        lambda: (_ for _ in ()).throw(RuntimeError("not_a_row_feed")),
+    )
+
+    response = _client().get("/api/control-tower/financial")
+
+    assert response.status_code == 200
+    payload = response.json()
+    xcelerator_feed = payload["feeds"][0]
+    assert xcelerator_feed["status"] == "healthy"
+    assert "ReviewOrders evidence file is available" in xcelerator_feed["message"]
+    assert "using persisted Xcelerator evidence" in xcelerator_feed["message"]
+    assert "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH" in xcelerator_feed["required_config"]
 
 
 def test_trailer_mailbox_config_reports_adapter_pending(monkeypatch):
