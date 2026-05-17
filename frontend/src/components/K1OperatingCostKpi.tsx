@@ -21,6 +21,12 @@ interface K1OperatingCostSnapshot {
   entity: string
   error?: string
   projection_mode: 'read_only'
+  revenue_source?: string
+  revenue_source_status?: {
+    message?: string
+    row_count?: number | null
+    status?: string
+  }
   source?: string
   status: 'configured' | 'configuration_error' | 'not_configured'
   summary: K1OperatingCostSummary | null
@@ -87,6 +93,17 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
   const configured = snapshot?.status === 'configured' && Boolean(snapshot.summary)
   const summary = snapshot?.summary
   const sourceLabel = snapshot?.source || 'QBO + Xcelerator + AtoB + Geotab'
+  const revenueSourceStatus = snapshot?.revenue_source_status?.status || 'not_configured'
+  const revenueSourceLabel = snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
+    ? 'Xcelerator CEO Power BI'
+    : 'Monthly JSON fallback'
+  const rpmVerified = (
+    snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
+    && revenueSourceStatus === 'healthy'
+    && Number.isFinite(Number(summary?.revenue_per_mile))
+    && Number.isFinite(Number(summary?.profit_per_mile))
+  )
+  const fallbackVerified = Boolean(configured && rpmVerified && Number.isFinite(Number(summary?.cost_per_mile)))
 
   return (
     <motion.div
@@ -101,16 +118,16 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
             <Gauge className="h-4 w-4 text-emerald-300" />
             K1L Final CPM / RPM
           </p>
-          <div className="mt-2 grid grid-cols-2 gap-3">
+          <div className={`mt-2 grid gap-3 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
             <div>
               <div className="text-[10px] uppercase text-gray-500">CPM</div>
-              <p className="text-2xl font-bold text-white light:text-gray-900">
+              <p className={`${compact ? 'text-xl' : 'text-2xl'} break-words font-bold text-white light:text-gray-900`}>
                 {loading ? '...' : formatCpm(summary?.cost_per_mile)}
               </p>
             </div>
             <div>
               <div className="text-[10px] uppercase text-gray-500">RPM</div>
-              <p className="text-2xl font-bold text-emerald-300 light:text-emerald-700">
+              <p className={`${compact ? 'text-xl' : 'text-2xl'} break-words font-bold text-emerald-300 light:text-emerald-700`}>
                 {loading ? '...' : formatCpm(summary?.revenue_per_mile)}
               </p>
             </div>
@@ -119,8 +136,13 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         <ValidationBadge
           compact
           item={validation}
-          status={configured ? 'verified' : 'pending'}
+          status={fallbackVerified ? 'verified' : 'pending'}
         />
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500 light:text-gray-600">
+        <span>CPM: Geotab/QBO/AtoB/Xcelerator</span>
+        <span>RPM: {revenueSourceLabel} ({revenueSourceStatus.replace('_', ' ')})</span>
       </div>
 
       <div className={`mt-3 grid gap-2 text-xs text-gray-400 light:text-gray-600 ${compact ? 'grid-cols-1' : 'sm:grid-cols-3'}`}>

@@ -306,6 +306,12 @@ interface K1OperatingCostKpiSnapshot {
   method?: string
   monthly?: K1OperatingCostMonth[]
   projection_mode: 'read_only'
+  revenue_source?: string
+  revenue_source_status?: {
+    message?: string
+    row_count?: number | null
+    status?: string
+  }
   source?: string
   status: 'configured' | 'configuration_error' | 'not_configured'
   summary: {
@@ -557,6 +563,15 @@ export default function FuelAnalytics() {
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
     ? 'RPM - Final CPM'
     : 'RPM - CPM'
+  const k1OperatingRevenueSourceStatus = k1OperatingKpi?.revenue_source_status?.status || 'not_configured'
+  const k1OperatingRevenueSourceLabel = k1OperatingKpi?.revenue_source === 'xcelerator_ceo_powerbi'
+    ? 'Xcelerator CEO Power BI'
+    : 'Monthly JSON fallback'
+  const k1OperatingRevenueSourceClass = k1OperatingRevenueSourceStatus === 'healthy'
+    ? 'text-emerald-400'
+    : k1OperatingRevenueSourceStatus === 'awaiting_feed'
+      ? 'text-amber-400'
+      : 'text-red-300'
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -732,6 +747,10 @@ export default function FuelAnalytics() {
             </h3>
             <div className="mt-1 text-sm text-gray-400">
               {k1OperatingKpi?.as_of_date ? `Finalized through ${k1OperatingKpi.as_of_date}` : 'Finalized monthly snapshot'} · {k1OperatingKpi?.source || 'QBO + Xcelerator + AtoB + Geotab'}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack · RPM: {k1OperatingRevenueSourceLabel}{' '}
+              <span className={k1OperatingRevenueSourceClass}>({k1OperatingRevenueSourceStatus.replace('_', ' ')})</span>
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
