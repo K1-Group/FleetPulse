@@ -15,7 +15,11 @@ from typing import Any
 from configs.operating_system import OperatingSystemRuntimeConfig
 from services.alert_service import get_recent_alerts
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
-from services.k1l_operating_kpi_service import POWERBI_REVENUE_SOURCE, get_k1l_operating_kpi_snapshot
+from services.k1l_operating_kpi_service import (
+    POWERBI_REVENUE_SOURCE,
+    WAREHOUSE_SQL_REVENUE_SOURCE,
+    get_k1l_operating_kpi_snapshot,
+)
 from services.safety_service import get_safety_scores
 from services.monitor_service import get_monitor_status
 from services.validation_audit_service import audit_contract_ok, last_seen_row_at, record_probe
@@ -206,7 +210,7 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
     revenue_source = str(snapshot.get("revenue_source") or "")
     rpm_ready = (
         cost_ready
-        and revenue_source == POWERBI_REVENUE_SOURCE
+        and revenue_source in {POWERBI_REVENUE_SOURCE, WAREHOUSE_SQL_REVENUE_SOURCE}
         and str(revenue_status.get("status") or "") == "healthy"
         and _has_positive_number(summary.get("revenue"))
         and summary.get("revenue_per_mile") is not None
@@ -215,11 +219,14 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
 
     source_authority = (
         "CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack; "
-        "RPM: Xcelerator CEO Power BI semantic model"
+        "RPM: Xcelerator CEO Power BI semantic model or Fabric Warehouse SQL"
     )
     revenue_required_config = [
         "K1L_OPERATING_COST_MONTHLY_JSON",
-        "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN or client credentials",
+        (
+            "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_* or "
+            "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN/client credentials"
+        ),
     ]
 
     if cost_ready and rpm_ready:
@@ -228,7 +235,7 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
             "K1L RPM / CPM / Profit",
             "verified",
             source_authority=source_authority,
-            message="Validated CPM from monthly cost rows and RPM/profit from Xcelerator CEO Power BI revenue.",
+            message="Validated CPM from monthly cost rows and RPM/profit from Xcelerator revenue projection.",
             row_count=len(monthly),
             metrics=[
                 "cost_per_mile",
@@ -255,7 +262,7 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
             source_authority=source_authority,
             message=(
                 "CPM is configured, but RPM/profit are not verified until "
-                "Xcelerator CEO Power BI revenue is healthy."
+                "Xcelerator revenue projection is healthy."
             ),
             row_count=len(monthly),
             required_config=revenue_required_config,
@@ -273,7 +280,7 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
             ],
             contract={
                 "cost_stack": "monthly rows with positive total_cost, miles, and cost_per_mile",
-                "rpm_stack": "Xcelerator CEO Power BI monthly K1 Logistics Inc revenue with rowcount > 0",
+                "rpm_stack": "Xcelerator monthly K1 Logistics Inc revenue projection with rowcount > 0",
                 "revenue_source_status": revenue_status_name,
             },
         )

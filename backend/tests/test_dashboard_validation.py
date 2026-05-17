@@ -175,7 +175,7 @@ def test_dashboard_validation_does_not_verify_rpm_without_powerbi_revenue(monkey
     k1l = payload["sections"]["k1l_final_cpm"]
     assert k1l["status"] == "pending"
     assert k1l["blocked_by"] == "revenue_unverified"
-    assert "Xcelerator CEO Power BI revenue is healthy" in k1l["message"]
+    assert "Xcelerator revenue projection is healthy" in k1l["message"]
     assert payload["metrics"]["k1l_final_cpm"]["status"] == "verified"
     assert payload["metrics"]["k1l_revenue_per_mile"]["status"] == "pending"
     assert payload["metrics"]["k1l_profit_per_mile"]["status"] == "pending"

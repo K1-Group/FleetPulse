@@ -13,6 +13,10 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from integrations.fabric_warehouse.sql_client import (
+    FabricWarehouseSqlConfig,
+    execute_sql_query,
+)
 from integrations.powerbi.execute_queries import (
     PowerBIExecuteQueriesConfig,
     execute_dax_query,
@@ -27,7 +31,12 @@ DEFAULT_METHOD = (
 )
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 POWERBI_REVENUE_SOURCE = "xcelerator_ceo_powerbi"
+WAREHOUSE_SQL_REVENUE_SOURCE = "xcelerator_fabric_warehouse_sql"
 JSON_REVENUE_SOURCE = "monthly_json"
+WAREHOUSE_SQL_SOURCE_LABEL = (
+    "QBO K1 Logistics P&L + Xcelerator Fabric Warehouse SQL revenue/driver pay "
+    "+ AtoB fuel + Geotab miles"
+)
 
 
 def _now_iso() -> str:
@@ -136,6 +145,16 @@ def _parse_monthly_json(raw_value: str) -> dict[str, Any]:
     }
 
 
+def _resolve_source_label(
+    revenue_source: str,
+    parsed_source: Any,
+    configured_source: Any,
+) -> str:
+    if revenue_source == WAREHOUSE_SQL_REVENUE_SOURCE:
+        return WAREHOUSE_SQL_SOURCE_LABEL
+    return _read_string(parsed_source or configured_source, DEFAULT_SOURCE)
+
+
 def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     env = env or os.environ
     parsed_json = _parse_monthly_json(_read_string(env.get("K1L_OPERATING_COST_MONTHLY_JSON")))
@@ -155,10 +174,12 @@ def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         ),
         "monthly_rows": parsed_json.get("monthly_rows") or [],
         "powerbi": PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI"),
+        "warehouse_sql": FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL"),
         "revenue_source": revenue_source,
-        "source": _read_string(
-            parsed_json.get("source") or env.get("K1L_OPERATING_COST_SOURCE"),
-            DEFAULT_SOURCE,
+        "source": _resolve_source_label(
+            revenue_source,
+            parsed_json.get("source"),
+            env.get("K1L_OPERATING_COST_SOURCE"),
         ),
     }
 
@@ -188,6 +209,63 @@ GROUPBY(
     "Orders", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[order_tracking_id])
 )
 ORDER BY [MonthStart], 'xcelerator_review_orders'[delivery_center]
+""".strip()
+
+
+def _quote_sql_identifier(value: Any) -> str:
+    return f"[{str(value or '').replace(']', ']]')}]"
+
+
+def _build_warehouse_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+JOIN sys.columns AS columns
+    ON columns.object_id = objects.object_id
+WHERE objects.type IN ('U', 'V', 'ET')
+GROUP BY schemas.name, objects.name, objects.type_desc
+HAVING
+    SUM(CASE WHEN LOWER(columns.name) = 'delivery_center' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'pickup_target_from' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'grand_total_amount' THEN 1 ELSE 0 END) > 0
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'xcelerator_review_orders' THEN 0 ELSE 1 END,
+    CASE WHEN LOWER(objects.name) LIKE '%xcelerator%review%orders%' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
+def _build_warehouse_monthly_revenue_sql(start_month: str, end_month: str, table_schema: str, table_name: str) -> str:
+    start = _month_start(start_month)
+    end = _next_month(_month_start(end_month)) - timedelta(days=1)
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    return f"""
+WITH normalized AS (
+    SELECT
+        delivery_center,
+        TRY_CONVERT(date, pickup_target_from) AS pickup_date,
+        TRY_CONVERT(decimal(18, 2), grand_total_amount) AS grand_total_amount,
+        order_tracking_id
+    FROM {table_ref}
+    WHERE TRY_CONVERT(date, pickup_target_from) >= '{start.isoformat()}'
+        AND TRY_CONVERT(date, pickup_target_from) <= '{end.isoformat()}'
+        AND delivery_center IS NOT NULL
+)
+SELECT
+    delivery_center,
+    DATEFROMPARTS(YEAR(pickup_date), MONTH(pickup_date), 1) AS month_start,
+    SUM(grand_total_amount) AS revenue,
+    COUNT(order_tracking_id) AS orders
+FROM normalized
+WHERE pickup_date IS NOT NULL
+GROUP BY delivery_center, DATEFROMPARTS(YEAR(pickup_date), MONTH(pickup_date), 1)
+ORDER BY month_start, delivery_center
 """.strip()
 
 
@@ -243,6 +321,95 @@ def _load_powerbi_k1l_monthly_revenue(
     }
 
 
+def _load_warehouse_k1l_monthly_revenue(
+    rows: list[dict[str, Any]],
+    *,
+    config: FabricWarehouseSqlConfig,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    months = sorted({_month_from_raw_row(row) for row in rows if MONTH_PATTERN.match(_month_from_raw_row(row))})
+    if not months:
+        return {}, {"status": "not_configured", "message": "No monthly rows available for revenue lookup."}
+    if not config.configured:
+        return {}, {
+            "status": "not_configured",
+            "message": "Fabric Warehouse SQL auth is not configured; using monthly JSON revenue when present.",
+        }
+
+    table_rows = execute_sql_query(config, _build_warehouse_table_discovery_sql())
+    if not table_rows:
+        return {}, {
+            "status": "awaiting_feed",
+            "message": (
+                "Fabric Warehouse connected, but no visible table/view had the "
+                "required Xcelerator revenue columns."
+            ),
+            "row_count": 0,
+        }
+    table_schema = _read_string(_find_value(table_rows[0], ("table_schema", "TABLE_SCHEMA")), "dbo")
+    table_name = _read_string(_find_value(table_rows[0], ("table_name", "TABLE_NAME")), "xcelerator_review_orders")
+
+    query = _build_warehouse_monthly_revenue_sql(months[0], months[-1], table_schema, table_name)
+    result_rows = execute_sql_query(config, query)
+    revenue_by_month: dict[str, float] = {}
+    included_rows = 0
+    for row in result_rows:
+        delivery_center = _find_value(row, ("delivery_center", "Delivery Center", "DeliveryCenter"))
+        if not _is_k1_logistics_center(delivery_center):
+            continue
+        month = _coerce_month_key(_find_value(row, ("month_start", "MonthStart", "PickupDate")))
+        if month not in months:
+            continue
+        revenue_by_month[month] = revenue_by_month.get(month, 0.0) + _number(
+            _find_value(row, ("revenue", "GrandTotal", "grand_total", "grand_total_amount")),
+            f"{month}.warehouse_revenue",
+        )
+        included_rows += int(_number(_find_value(row, ("orders", "Orders", "OrderCount", "order_count")), f"{month}.orders"))
+
+    return {
+        month: _round(revenue)
+        for month, revenue in revenue_by_month.items()
+    }, {
+        "status": "healthy" if revenue_by_month else "awaiting_feed",
+        "message": "" if revenue_by_month else "Fabric Warehouse returned rows, but none matched K1 Logistics Inc monthly revenue.",
+        "row_count": included_rows,
+        "table": f"{table_schema}.{table_name}",
+    }
+
+
+def _merge_revenue_values(
+    rows: list[dict[str, Any]],
+    revenue_by_month: dict[str, float],
+    revenue_source: str,
+    status: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+    if not revenue_by_month:
+        return rows, JSON_REVENUE_SOURCE, status
+
+    merged: list[dict[str, Any]] = []
+    for row in rows:
+        month = _month_from_raw_row(row)
+        if month in revenue_by_month:
+            merged.append({**row, "revenue": revenue_by_month[month]})
+        else:
+            merged.append(row)
+    return merged, revenue_source, status
+
+
+def _merge_warehouse_revenue(
+    rows: list[dict[str, Any]],
+    *,
+    config: FabricWarehouseSqlConfig,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+    try:
+        revenue_by_month, status = _load_warehouse_k1l_monthly_revenue(rows, config=config)
+    except Exception as exc:
+        return rows, JSON_REVENUE_SOURCE, {
+            "status": "unavailable",
+            "message": f"{type(exc).__name__}: {exc}; using monthly JSON revenue when present.",
+        }
+    return _merge_revenue_values(rows, revenue_by_month, WAREHOUSE_SQL_REVENUE_SOURCE, status)
+
+
 def _merge_powerbi_revenue(
     rows: list[dict[str, Any]],
     *,
@@ -261,17 +428,7 @@ def _merge_powerbi_revenue(
             "status": "unavailable",
             "message": f"{type(exc).__name__}: {exc}; using monthly JSON revenue when present.",
         }
-    if not revenue_by_month:
-        return rows, JSON_REVENUE_SOURCE, status
-
-    merged: list[dict[str, Any]] = []
-    for row in rows:
-        month = _month_from_raw_row(row)
-        if month in revenue_by_month:
-            merged.append({**row, "revenue": revenue_by_month[month]})
-        else:
-            merged.append(row)
-    return merged, POWERBI_REVENUE_SOURCE, status
+    return _merge_revenue_values(rows, revenue_by_month, POWERBI_REVENUE_SOURCE, status)
 
 
 def normalize_k1l_operating_month(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -392,11 +549,17 @@ def get_k1l_operating_kpi_snapshot(
 ) -> dict[str, Any]:
     try:
         config = _config_from_env(env)
-        raw_rows, revenue_source, revenue_status = _merge_powerbi_revenue(
-            config["monthly_rows"],
-            config=config["powerbi"],
-            enabled=config["revenue_source"] == POWERBI_REVENUE_SOURCE,
-        )
+        if config["revenue_source"] == WAREHOUSE_SQL_REVENUE_SOURCE:
+            raw_rows, revenue_source, revenue_status = _merge_warehouse_revenue(
+                config["monthly_rows"],
+                config=config["warehouse_sql"],
+            )
+        else:
+            raw_rows, revenue_source, revenue_status = _merge_powerbi_revenue(
+                config["monthly_rows"],
+                config=config["powerbi"],
+                enabled=config["revenue_source"] == POWERBI_REVENUE_SOURCE,
+            )
         monthly = sorted(
             (
                 row
