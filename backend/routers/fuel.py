@@ -1,5 +1,6 @@
 """Fuel analytics endpoints."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -218,7 +219,7 @@ async def k1l_operating_kpi(
     date: str | None = Query(default=None, description="Optional YYYY-MM-DD cutoff date."),
 ):
     """Return the lightweight K1 Logistics final CPM card snapshot."""
-    return get_k1l_operating_kpi_snapshot(date_value=date)
+    return await asyncio.to_thread(get_k1l_operating_kpi_snapshot, date_value=date)
 
 
 @router.get("/summary")

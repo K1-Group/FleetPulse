@@ -29,15 +29,15 @@ class PowerBIExecuteQueriesConfig:
     tenant_id: str = ""
     client_id: str = ""
     client_secret: str = ""
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 10.0
 
     @classmethod
     def from_env(cls, prefix: str = "FLEETPULSE_XCELERATOR_CEO_POWERBI") -> "PowerBIExecuteQueriesConfig":
-        timeout_raw = os.getenv(f"{prefix}_TIMEOUT_SECONDS", "30")
+        timeout_raw = os.getenv(f"{prefix}_TIMEOUT_SECONDS", "10")
         try:
             timeout_seconds = float(timeout_raw)
         except ValueError:
-            timeout_seconds = 30.0
+            timeout_seconds = 10.0
 
         return cls(
             workspace_id=(
@@ -133,4 +133,3 @@ def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[d
         return []
     rows = (tables[0] or {}).get("rows") or []
     return [row for row in rows if isinstance(row, dict)]
-
