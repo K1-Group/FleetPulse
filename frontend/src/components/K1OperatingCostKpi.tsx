@@ -41,6 +41,7 @@ interface Props {
 const endpoint = '/api/fuel/k1l-operating-kpi'
 
 function formatCurrency(value: number | null | undefined, compact = true) {
+  if (value === null || value === undefined) return 'Pending'
   if (!Number.isFinite(Number(value))) return 'Pending'
   return new Intl.NumberFormat('en-US', {
     currency: 'USD',
@@ -51,11 +52,13 @@ function formatCurrency(value: number | null | undefined, compact = true) {
 }
 
 function formatMiles(value: number | null | undefined) {
+  if (value === null || value === undefined) return 'Pending'
   if (!Number.isFinite(Number(value))) return 'Pending'
   return Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
 function formatCpm(value: number | null | undefined) {
+  if (value === null || value === undefined) return 'Pending'
   if (!Number.isFinite(Number(value))) return 'Pending'
   return `$${Number(value).toFixed(3)}/mi`
 }
