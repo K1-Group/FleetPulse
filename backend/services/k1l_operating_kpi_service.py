@@ -10,8 +10,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Mapping
+
+from integrations.powerbi.execute_queries import (
+    PowerBIExecuteQueriesConfig,
+    execute_dax_query,
+)
 
 
 DEFAULT_ENTITY = "K1 Logistics Inc"
@@ -21,6 +26,8 @@ DEFAULT_METHOD = (
     "qbo_p_and_l_operating_expenses_excluding_repairs_maintenance"
 )
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
+POWERBI_REVENUE_SOURCE = "xcelerator_ceo_powerbi"
+JSON_REVENUE_SOURCE = "monthly_json"
 
 
 def _now_iso() -> str:
@@ -57,6 +64,56 @@ def _ratio(numerator: float | None, denominator: float) -> float | None:
     return _round(numerator / denominator, 3)
 
 
+def _normalize(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
+def _key_matches(key: Any, alias: str) -> bool:
+    normalized_key = _normalize(key)
+    normalized_alias = _normalize(alias)
+    return normalized_key == normalized_alias or normalized_key.endswith(normalized_alias)
+
+
+def _find_value(row: Mapping[str, Any], aliases: tuple[str, ...]) -> Any:
+    for key, value in row.items():
+        if any(_key_matches(key, alias) for alias in aliases):
+            return value
+    return None
+
+
+def _month_start(month: str) -> date:
+    if not MONTH_PATTERN.match(month):
+        raise ValueError(f'Invalid month "{month or "<blank>"}"')
+    year, month_num = (int(part) for part in month.split("-", 1))
+    return date(year, month_num, 1)
+
+
+def _next_month(day: date) -> date:
+    if day.month == 12:
+        return date(day.year + 1, 1, 1)
+    return date(day.year, day.month + 1, 1)
+
+
+def _coerce_month_key(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m")
+    if isinstance(value, (int, float)) and value > 20000:
+        return (date(1899, 12, 30) + timedelta(days=int(value))).strftime("%Y-%m")
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if MONTH_PATTERN.match(text[:7]):
+        return text[:7]
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%m-%d-%y"):
+        try:
+            return datetime.strptime(text.split()[0], fmt).strftime("%Y-%m")
+        except ValueError:
+            continue
+    return ""
+
+
 def _resolve_rows(parsed_value: Any) -> list[dict[str, Any]]:
     if isinstance(parsed_value, list):
         return parsed_value
@@ -82,6 +139,10 @@ def _parse_monthly_json(raw_value: str) -> dict[str, Any]:
 def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     env = env or os.environ
     parsed_json = _parse_monthly_json(_read_string(env.get("K1L_OPERATING_COST_MONTHLY_JSON")))
+    revenue_source = _read_string(
+        env.get("K1L_OPERATING_COST_REVENUE_SOURCE"),
+        POWERBI_REVENUE_SOURCE,
+    )
     return {
         "as_of_date": _read_string(
             parsed_json.get("as_of_date") or env.get("K1L_OPERATING_COST_CUTOFF_DATE")
@@ -93,11 +154,124 @@ def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
             DEFAULT_METHOD,
         ),
         "monthly_rows": parsed_json.get("monthly_rows") or [],
+        "powerbi": PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI"),
+        "revenue_source": revenue_source,
         "source": _read_string(
             parsed_json.get("source") or env.get("K1L_OPERATING_COST_SOURCE"),
             DEFAULT_SOURCE,
         ),
     }
+
+
+def _build_powerbi_monthly_revenue_dax(start_month: str, end_month: str) -> str:
+    start = _month_start(start_month)
+    end = _next_month(_month_start(end_month)) - timedelta(days=1)
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        ADDCOLUMNS(
+            'xcelerator_review_orders',
+            "PickupDate", DATEVALUE('xcelerator_review_orders'[pickup_target_from]),
+            "MonthStart", DATE(YEAR(DATEVALUE('xcelerator_review_orders'[pickup_target_from])), MONTH(DATEVALUE('xcelerator_review_orders'[pickup_target_from])), 1)
+        ),
+        NOT ISBLANK('xcelerator_review_orders'[pickup_target_from])
+            && [PickupDate] >= DATE({start.year}, {start.month}, {start.day})
+            && [PickupDate] <= DATE({end.year}, {end.month}, {end.day})
+    )
+RETURN
+GROUPBY(
+    BaseRows,
+    [MonthStart],
+    'xcelerator_review_orders'[delivery_center],
+    "GrandTotal", SUMX(CURRENTGROUP(), 'xcelerator_review_orders'[grand_total_amount]),
+    "Orders", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[order_tracking_id])
+)
+ORDER BY [MonthStart], 'xcelerator_review_orders'[delivery_center]
+""".strip()
+
+
+def _month_from_raw_row(row: Mapping[str, Any]) -> str:
+    return _read_string(row.get("month") or row.get("period") or row.get("month_key"))
+
+
+def _is_k1_logistics_center(value: Any) -> bool:
+    return "k1logistics" in _normalize(value)
+
+
+def _load_powerbi_k1l_monthly_revenue(
+    rows: list[dict[str, Any]],
+    *,
+    config: PowerBIExecuteQueriesConfig,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    months = sorted({_month_from_raw_row(row) for row in rows if MONTH_PATTERN.match(_month_from_raw_row(row))})
+    if not months:
+        return {}, {"status": "not_configured", "message": "No monthly rows available for revenue lookup."}
+    if not config.configured:
+        return {}, {
+            "status": "not_configured",
+            "message": "Power BI auth is not configured; using monthly JSON revenue when present.",
+        }
+
+    query = _build_powerbi_monthly_revenue_dax(months[0], months[-1])
+    result_rows = execute_dax_query(config, query)
+    revenue_by_month: dict[str, float] = {}
+    included_rows = 0
+    for row in result_rows:
+        delivery_center = _find_value(
+            row,
+            ("delivery_center", "Delivery Center", "DeliveryCenter", "Delivery Center Name"),
+        )
+        if not _is_k1_logistics_center(delivery_center):
+            continue
+        month = _coerce_month_key(_find_value(row, ("MonthStart", "month_start", "PickupDate")))
+        if month not in months:
+            continue
+        revenue_by_month[month] = revenue_by_month.get(month, 0.0) + _number(
+            _find_value(row, ("GrandTotal", "Grand Total", "grand_total", "grand_total_amount", "Revenue")),
+            f"{month}.xcelerator_revenue",
+        )
+        included_rows += int(_number(_find_value(row, ("Orders", "orders", "OrderCount", "order_count")), f"{month}.orders"))
+
+    return {
+        month: _round(revenue)
+        for month, revenue in revenue_by_month.items()
+    }, {
+        "status": "healthy" if revenue_by_month else "awaiting_feed",
+        "message": "" if revenue_by_month else "Power BI returned rows, but none matched K1 Logistics Inc monthly revenue.",
+        "row_count": included_rows,
+    }
+
+
+def _merge_powerbi_revenue(
+    rows: list[dict[str, Any]],
+    *,
+    config: PowerBIExecuteQueriesConfig,
+    enabled: bool,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+    if not enabled:
+        return rows, JSON_REVENUE_SOURCE, {
+            "status": "disabled",
+            "message": "K1L_OPERATING_COST_REVENUE_SOURCE is not xcelerator_ceo_powerbi.",
+        }
+    try:
+        revenue_by_month, status = _load_powerbi_k1l_monthly_revenue(rows, config=config)
+    except Exception as exc:
+        return rows, JSON_REVENUE_SOURCE, {
+            "status": "unavailable",
+            "message": f"{type(exc).__name__}: {exc}; using monthly JSON revenue when present.",
+        }
+    if not revenue_by_month:
+        return rows, JSON_REVENUE_SOURCE, status
+
+    merged: list[dict[str, Any]] = []
+    for row in rows:
+        month = _month_from_raw_row(row)
+        if month in revenue_by_month:
+            merged.append({**row, "revenue": revenue_by_month[month]})
+        else:
+            merged.append(row)
+    return merged, POWERBI_REVENUE_SOURCE, status
 
 
 def normalize_k1l_operating_month(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -218,12 +392,17 @@ def get_k1l_operating_kpi_snapshot(
 ) -> dict[str, Any]:
     try:
         config = _config_from_env(env)
+        raw_rows, revenue_source, revenue_status = _merge_powerbi_revenue(
+            config["monthly_rows"],
+            config=config["powerbi"],
+            enabled=config["revenue_source"] == POWERBI_REVENUE_SOURCE,
+        )
         monthly = sorted(
             (
                 row
                 for row in (
                     normalize_k1l_operating_month(raw_row)
-                    for raw_row in config["monthly_rows"]
+                    for raw_row in raw_rows
                 )
                 if _row_in_scope(row, date_value)
             ),
@@ -235,6 +414,8 @@ def get_k1l_operating_kpi_snapshot(
                 "entity": config["entity"],
                 "generated_at": _now_iso(),
                 "projection_mode": "read_only",
+                "revenue_source": revenue_source,
+                "revenue_source_status": revenue_status,
                 "status": "not_configured",
                 "summary": None,
             }
@@ -247,6 +428,8 @@ def get_k1l_operating_kpi_snapshot(
             "method": config["method"],
             "monthly": monthly,
             "projection_mode": "read_only",
+            "revenue_source": revenue_source,
+            "revenue_source_status": revenue_status,
             "source": config["source"],
             "status": "configured",
             "summary": _summarize(monthly),

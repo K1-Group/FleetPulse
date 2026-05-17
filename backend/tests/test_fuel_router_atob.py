@@ -31,6 +31,7 @@ if "mygeotab" not in sys.modules:
 
 from _cache import clear_cached_prefix  # noqa: E402
 from routers import fuel  # noqa: E402
+from services import k1l_operating_kpi_service as k1l_service  # noqa: E402
 
 
 def _client() -> TestClient:
@@ -276,6 +277,61 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
     assert payload["summary"]["profit_per_mile"] == 1.45
     assert payload["monthly"][0]["gross_profit"] == 456141.43
     assert payload["monthly"][0]["added_p_and_l_ops"] == 190491.03
+    assert payload["revenue_source"] == "monthly_json"
+
+
+def test_k1l_operating_kpi_prefers_xcelerator_ceo_powerbi_revenue(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57
+            }
+          ]
+        }
+        """,
+    )
+
+    def fake_execute_dax_query(config, query):
+        assert "xcelerator_review_orders" in query
+        assert "MonthStart" in query
+        return [
+            {
+                "[MonthStart]": "2026-01-01T00:00:00",
+                "xcelerator_review_orders[delivery_center]": "K1 Logistics Inc",
+                "[GrandTotal]": 1200000,
+                "[Orders]": 7,
+            },
+            {
+                "[MonthStart]": "2026-01-01T00:00:00",
+                "xcelerator_review_orders[delivery_center]": "K1 Group LLC",
+                "[GrandTotal]": 999999,
+                "[Orders]": 3,
+            },
+        ]
+
+    monkeypatch.setattr(k1l_service, "execute_dax_query", fake_execute_dax_query)
+
+    response = _client().get("/api/fuel/k1l-operating-kpi?date=2026-05-14")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revenue_source"] == "xcelerator_ceo_powerbi"
+    assert payload["revenue_source_status"]["status"] == "healthy"
+    assert payload["revenue_source_status"]["row_count"] == 7
+    assert payload["summary"]["revenue"] == 1200000.0
+    assert payload["summary"]["revenue_per_mile"] == 3.815
+    assert payload["summary"]["profit_per_mile"] == 1.45
 
 
 def test_xcelerator_review_orders_import_endpoint_summarizes_driver_pay(monkeypatch, tmp_path):
