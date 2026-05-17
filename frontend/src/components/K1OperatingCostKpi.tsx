@@ -8,7 +8,11 @@ interface K1OperatingCostSummary {
   added_p_and_l_ops: number
   cost_per_mile: number | null
   fleet_maintenance: number
+  gross_profit?: number | null
   miles: number
+  profit_per_mile?: number | null
+  revenue?: number | null
+  revenue_per_mile?: number | null
   total_cost: number
 }
 
@@ -95,11 +99,22 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-400 light:text-gray-600">
             <Gauge className="h-4 w-4 text-emerald-300" />
-            K1L Final CPM
+            K1L Final CPM / RPM
           </p>
-          <p className="mt-2 text-2xl font-bold text-white light:text-gray-900">
-            {loading ? '...' : formatCpm(summary?.cost_per_mile)}
-          </p>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] uppercase text-gray-500">CPM</div>
+              <p className="text-2xl font-bold text-white light:text-gray-900">
+                {loading ? '...' : formatCpm(summary?.cost_per_mile)}
+              </p>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase text-gray-500">RPM</div>
+              <p className="text-2xl font-bold text-emerald-300 light:text-emerald-700">
+                {loading ? '...' : formatCpm(summary?.revenue_per_mile)}
+              </p>
+            </div>
+          </div>
         </div>
         <ValidationBadge
           compact
@@ -108,7 +123,11 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         />
       </div>
 
-      <div className={`mt-3 grid gap-2 text-xs text-gray-400 light:text-gray-600 ${compact ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
+      <div className={`mt-3 grid gap-2 text-xs text-gray-400 light:text-gray-600 ${compact ? 'grid-cols-1' : 'sm:grid-cols-3'}`}>
+        <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2 light:bg-gray-50 light:border-gray-200">
+          <div className="text-[10px] uppercase text-gray-500">Profit / mile</div>
+          <div className="mt-1 font-semibold text-emerald-300 light:text-emerald-700">{formatCpm(summary?.profit_per_mile)}</div>
+        </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2 light:bg-gray-50 light:border-gray-200">
           <div className="flex items-center gap-1 text-[10px] uppercase text-gray-500">
             <DollarSign className="h-3.5 w-3.5" />
@@ -125,6 +144,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
       {!compact && (
         <div className="mt-3 text-xs text-gray-500 light:text-gray-600">
           <div className="truncate" title={sourceLabel}>{sourceLabel}</div>
+          <div>Revenue {formatCurrency(summary?.revenue)} · Profit {formatCurrency(summary?.gross_profit)}</div>
           <div>Ops added {formatCurrency(summary?.added_p_and_l_ops)} · Fleet maintenance {formatCurrency(summary?.fleet_maintenance)}</div>
         </div>
       )}

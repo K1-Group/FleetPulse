@@ -286,11 +286,15 @@ interface K1OperatingCostMonth {
   driver_pay: number
   fleet_maintenance: number
   fuel: number
+  gross_profit: number | null
   miles: number
   month: string
   other_ops: number
   payroll: number
+  profit_per_mile: number | null
   prior_cost: number
+  revenue: number | null
+  revenue_per_mile: number | null
   total_cost: number
 }
 
@@ -305,8 +309,13 @@ interface K1OperatingCostKpiSnapshot {
   source?: string
   status: 'configured' | 'configuration_error' | 'not_configured'
   summary: {
+    added_p_and_l_ops?: number
     cost_per_mile: number | null
+    gross_profit?: number | null
     miles: number
+    profit_per_mile?: number | null
+    revenue?: number | null
+    revenue_per_mile?: number | null
     total_cost: number
   } | null
 }
@@ -333,6 +342,12 @@ const formatRate = (value?: number | null, suffix = '/mi') => (
 
 const formatPercent = (value?: number | null) => (
   value === null || value === undefined ? 'Pending' : `${(value * 100).toFixed(1)}%`
+)
+
+const rateDelta = (left?: number | null, right?: number | null) => (
+  left === null || left === undefined || right === null || right === undefined
+    ? null
+    : Number((left - right).toFixed(3))
 )
 
 async function fetchJson<T>(url: string, fallback: T, timeoutMs = 20000): Promise<T> {
@@ -535,6 +550,13 @@ export default function FuelAnalytics() {
   const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available)
   const unresolvedEntitySources = entityMargin?.unresolved_sources.join(', ') || ''
   const monthlyK1CpmRows = (k1OperatingKpi?.monthly ?? []).filter((row) => row.cost_per_mile !== null)
+  const k1OperatingSummary = k1OperatingKpi?.summary
+  const k1lFinalCpm = k1OperatingSummary?.cost_per_mile ?? null
+  const k1lRevenuePerMile = k1OperatingSummary?.revenue_per_mile ?? entitySummary?.k1l_revenue_per_mile ?? null
+  const k1lProfitPerMile = k1OperatingSummary?.profit_per_mile ?? rateDelta(k1lRevenuePerMile, k1lFinalCpm)
+  const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
+    ? 'RPM - Final CPM'
+    : 'RPM - CPM'
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -625,13 +647,20 @@ export default function FuelAnalytics() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="text-xs uppercase text-gray-500">K1L Fuel + Driver CPM</div>
             <div className="mt-1 text-2xl font-bold text-emerald-400">
               {formatRate(entitySummary?.k1l_fuel_plus_driver_cpm)}
             </div>
             <div className="mt-1 text-xs text-gray-500">{formatCurrency(entitySummary?.k1l_grand_total)} revenue</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">K1L RPM</div>
+            <div className="mt-1 text-2xl font-bold text-teal-300">
+              {formatRate(entitySummary?.k1l_revenue_per_mile)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">Xcelerator revenue / Geotab miles</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="text-xs uppercase text-gray-500">K1L True CPM</div>
@@ -705,24 +734,32 @@ export default function FuelAnalytics() {
               {k1OperatingKpi?.as_of_date ? `Finalized through ${k1OperatingKpi.as_of_date}` : 'Finalized monthly snapshot'} · {k1OperatingKpi?.source || 'QBO + Xcelerator + AtoB + Geotab'}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Final CPM</div>
-              <div className="text-emerald-400">{formatRate(k1OperatingKpi?.summary?.cost_per_mile)}</div>
+              <div className="text-emerald-400">{formatRate(k1lFinalCpm)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">RPM</div>
+              <div className="text-teal-300">{formatRate(k1lRevenuePerMile)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Profit / Mi</div>
+              <div className="text-amber-300">{formatRate(k1lProfitPerMile)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Total Cost</div>
-              <div className="text-white">{formatCurrency(k1OperatingKpi?.summary?.total_cost)}</div>
+              <div className="text-white">{formatCurrency(k1OperatingSummary?.total_cost)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Miles</div>
-              <div className="text-purple-300">{formatNumber(k1OperatingKpi?.summary?.miles)}</div>
+              <div className="text-purple-300">{formatNumber(k1OperatingSummary?.miles)}</div>
             </div>
           </div>
         </div>
 
         {monthlyK1CpmRows.length > 0 ? (
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_440px]">
             <ResponsiveContainer width="100%" height={320}>
               <ComposedChart data={monthlyK1CpmRows}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -734,6 +771,8 @@ export default function FuelAnalytics() {
                   labelStyle={{ color: '#9ca3af' }}
                   formatter={(value: number, name: string) => {
                     if (name === 'Final CPM') return [formatRate(value), name]
+                    if (name === 'RPM') return [formatRate(value), name]
+                    if (name === 'Profit/Mi') return [formatRate(value), name]
                     if (name === 'Miles') return [formatNumber(value), name]
                     return [formatCurrency(value), name]
                   }}
@@ -741,22 +780,28 @@ export default function FuelAnalytics() {
                 <Legend />
                 <Bar yAxisId="cost" dataKey="total_cost" name="Total Cost" fill="#10b981" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="rate" type="monotone" dataKey="cost_per_mile" name="Final CPM" stroke="#f8fafc" strokeWidth={3} dot={{ r: 4 }} />
+                <Line yAxisId="rate" type="monotone" dataKey="revenue_per_mile" name="RPM" stroke="#34d399" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="profit_per_mile" name="Profit/Mi" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="miles" name="Miles" stroke="#a78bfa" strokeWidth={2} dot={false} hide />
               </ComposedChart>
             </ResponsiveContainer>
 
             <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-950/30">
-              <div className="grid grid-cols-4 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+              <div className="grid grid-cols-6 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
                 <span>Month</span>
                 <span className="text-right">CPM</span>
+                <span className="text-right">RPM</span>
+                <span className="text-right">Profit/Mi</span>
                 <span className="text-right">Cost</span>
                 <span className="text-right">Miles</span>
               </div>
               <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
                 {monthlyK1CpmRows.map((row) => (
-                  <div key={row.month} className="grid grid-cols-4 gap-2 px-3 py-2">
+                  <div key={row.month} className="grid grid-cols-6 gap-2 px-3 py-2">
                     <span className="font-medium text-white">{row.month}</span>
                     <span className="text-right font-semibold text-emerald-400">{formatRate(row.cost_per_mile)}</span>
+                    <span className="text-right font-semibold text-teal-300">{formatRate(row.revenue_per_mile)}</span>
+                    <span className="text-right font-semibold text-amber-300">{formatRate(row.profit_per_mile)}</span>
                     <span className="text-right text-gray-300">{formatCurrency(row.total_cost)}</span>
                     <span className="text-right text-gray-400">{formatNumber(row.miles)}</span>
                   </div>
@@ -785,7 +830,7 @@ export default function FuelAnalytics() {
               Operating Cost Per Mile / Hour
             </h3>
             <div className="mt-1 text-sm text-gray-400">
-              {operatingCost?.period_start ?? 'YTD'} to {operatingCost?.period_end ?? 'today'} · {completeOperatingCost ? 'Complete source stack' : `Known stack only${unresolvedCostSources ? ` · pending ${unresolvedCostSources}` : ''}`}
+              {operatingCost?.period_start ?? 'YTD'} to {operatingCost?.period_end ?? 'today'} · {completeOperatingCost ? 'Complete source stack' : `Known stack only${unresolvedCostSources ? ` · pending ${unresolvedCostSources}` : ''}`} · profit/mi uses {k1lProfitPerMileLabel}
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">

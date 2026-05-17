@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 
 DEFAULT_ENTITY = "K1 Logistics Inc"
-DEFAULT_SOURCE = "QBO K1 Logistics P&L + Xcelerator driver pay + AtoB fuel + Geotab miles"
+DEFAULT_SOURCE = "QBO K1 Logistics P&L + Xcelerator revenue/driver pay + AtoB fuel + Geotab miles"
 DEFAULT_METHOD = (
     "driver_pay + fuel + amex_fleet_maintenance + "
     "qbo_p_and_l_operating_expenses_excluding_repairs_maintenance"
@@ -43,6 +43,18 @@ def _number(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid K1L operating cost value for {field_name}") from exc
+
+
+def _optional_number(value: Any, field_name: str) -> float | None:
+    if value in (None, ""):
+        return None
+    return _number(value, field_name)
+
+
+def _ratio(numerator: float | None, denominator: float) -> float | None:
+    if numerator is None or denominator <= 0:
+        return None
+    return _round(numerator / denominator, 3)
 
 
 def _resolve_rows(parsed_value: Any) -> list[dict[str, Any]]:
@@ -117,18 +129,39 @@ def normalize_k1l_operating_month(row: Mapping[str, Any]) -> dict[str, Any]:
     )
     prior_cost = driver_pay + fuel + fleet_maintenance
     total_cost = prior_cost + added_p_and_l_ops
+    revenue = _optional_number(
+        row.get("revenue")
+        or row.get("grossRevenue")
+        or row.get("grandTotal")
+        or row.get("grand_total")
+        or row.get("k1lRevenue")
+        or row.get("k1l_grand_total"),
+        f"{month}.revenue",
+    )
+    gross_profit = _round(revenue - total_cost) if revenue is not None else None
+    revenue_per_mile = _ratio(revenue, miles)
+    cost_per_mile = _ratio(total_cost, miles)
+    profit_per_mile = (
+        _round(revenue_per_mile - cost_per_mile, 3)
+        if revenue_per_mile is not None and cost_per_mile is not None
+        else None
+    )
 
     return {
         "added_p_and_l_ops": _round(added_p_and_l_ops),
-        "cost_per_mile": _round(total_cost / miles, 3) if miles > 0 else None,
+        "cost_per_mile": cost_per_mile,
         "driver_pay": _round(driver_pay),
         "fleet_maintenance": _round(fleet_maintenance),
         "fuel": _round(fuel),
+        "gross_profit": gross_profit,
         "miles": _round(miles, 1),
         "month": month,
         "other_ops": _round(other_ops),
         "payroll": _round(payroll),
+        "profit_per_mile": profit_per_mile,
         "prior_cost": _round(prior_cost),
+        "revenue": _round(revenue) if revenue is not None else None,
+        "revenue_per_mile": revenue_per_mile,
         "total_cost": _round(total_cost),
     }
 
@@ -150,17 +183,31 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "other_ops": 0.0,
         "payroll": 0.0,
         "prior_cost": 0.0,
+        "revenue": 0.0,
         "total_cost": 0.0,
     }
+    has_revenue = False
     for row in rows:
         for key in totals:
+            if key == "revenue" and row.get(key) is None:
+                continue
             totals[key] += float(row.get(key) or 0)
+        has_revenue = has_revenue or row.get("revenue") is not None
 
     summary = {
         key: _round(value, 1 if key == "miles" else 2)
         for key, value in totals.items()
     }
-    summary["cost_per_mile"] = _round(totals["total_cost"] / totals["miles"], 3) if totals["miles"] > 0 else None
+    if not has_revenue:
+        summary["revenue"] = None
+    summary["gross_profit"] = _round(totals["revenue"] - totals["total_cost"]) if has_revenue else None
+    summary["cost_per_mile"] = _ratio(totals["total_cost"], totals["miles"])
+    summary["revenue_per_mile"] = _ratio(totals["revenue"], totals["miles"]) if has_revenue else None
+    summary["profit_per_mile"] = (
+        _round(summary["revenue_per_mile"] - summary["cost_per_mile"], 3)
+        if summary["revenue_per_mile"] is not None and summary["cost_per_mile"] is not None
+        else None
+    )
     return summary
 
 

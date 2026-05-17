@@ -254,7 +254,8 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
               "fuel": 151524.27,
               "fleetMaintenance": 55734.77,
               "payroll": 89232.46,
-              "otherOps": 101258.57
+              "otherOps": 101258.57,
+              "revenue": 1200000
             }
           ]
         }
@@ -270,6 +271,10 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
     assert payload["entity"] == "K1 Logistics Inc"
     assert payload["summary"]["total_cost"] == 743858.57
     assert payload["summary"]["cost_per_mile"] == 2.365
+    assert payload["summary"]["revenue"] == 1200000.0
+    assert payload["summary"]["revenue_per_mile"] == 3.815
+    assert payload["summary"]["profit_per_mile"] == 1.45
+    assert payload["monthly"][0]["gross_profit"] == 456141.43
     assert payload["monthly"][0]["added_p_and_l_ops"] == 190491.03
 
 
