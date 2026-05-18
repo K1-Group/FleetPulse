@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from integrations.fabric_warehouse.sql_client import (
+    FabricWarehouseSqlConfig,
+    execute_sql_query,
+)
 from integrations.powerbi.execute_queries import (
     PowerBIExecuteQueriesConfig,
     execute_dax_query,
@@ -35,6 +39,9 @@ XCELERATOR_ENTITY_AUTHORITY = "K1 Group LLC / Xcelerator delivery-center revenue
 ENTITY_MARGIN_AUTHORITY = (
     "Geotab miles/hours + AtoB fuel + QBO expenses + Xcelerator delivery-center revenue/pay"
 )
+WAREHOUSE_SQL_ENTITY_SOURCE_TYPE = "fabric_warehouse_sql"
+POWERBI_ENTITY_SOURCE_TYPE = "powerbi_semantic_model"
+AGGREGATED_WEEKLY_SOURCE_TYPES = {POWERBI_ENTITY_SOURCE_TYPE, WAREHOUSE_SQL_ENTITY_SOURCE_TYPE}
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,7 @@ class EntityMarginConfig:
 
     powerbi: PowerBIExecuteQueriesConfig
     review_orders_feed: ReviewOrdersFeedConfig
+    warehouse_sql: FabricWarehouseSqlConfig
 
     @classmethod
     def from_env(cls) -> "EntityMarginConfig":
@@ -52,6 +60,7 @@ class EntityMarginConfig:
         return cls(
             powerbi=PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI"),
             review_orders_feed=entity_feed,
+            warehouse_sql=FabricWarehouseSqlConfig.from_env(),
         )
 
 
@@ -301,14 +310,122 @@ def _fallback_feed_message(powerbi_error: str) -> str:
     return f"Power BI semantic model unavailable; used ReviewOrders feed fallback. {powerbi_error}"
 
 
+def _quote_sql_identifier(value: str) -> str:
+    return f"[{value.replace(']', ']]')}]"
+
+
+def _build_warehouse_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+JOIN sys.columns AS columns
+    ON columns.object_id = objects.object_id
+WHERE objects.type IN ('U', 'V', 'ET')
+GROUP BY schemas.name, objects.name, objects.type_desc
+HAVING
+    SUM(CASE WHEN LOWER(columns.name) = 'delivery_center' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'pickup_target_from' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'grand_total_amount' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'driver_pay_amount' THEN 1 ELSE 0 END) > 0
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'xcelerator_review_orders' THEN 0 ELSE 1 END,
+    CASE WHEN LOWER(objects.name) LIKE '%xcelerator%review%orders%' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
+def _build_warehouse_entity_weekly_sql(start: date, end: date, table_schema: str, table_name: str) -> str:
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    return f"""
+WITH normalized AS (
+    SELECT
+        delivery_center,
+        TRY_CONVERT(date, pickup_target_from) AS pickup_date,
+        TRY_CONVERT(decimal(18, 2), grand_total_amount) AS grand_total_amount,
+        TRY_CONVERT(decimal(18, 2), driver_pay_amount) AS driver_pay_amount
+    FROM {table_ref}
+    WHERE TRY_CONVERT(date, pickup_target_from) >= '{start.isoformat()}'
+        AND TRY_CONVERT(date, pickup_target_from) <= '{end.isoformat()}'
+        AND delivery_center IS NOT NULL
+)
+SELECT
+    CAST(DATEADD(day, -(DATEDIFF(day, 0, pickup_date) % 7), pickup_date) AS date) AS WeekStart,
+    delivery_center,
+    SUM(grand_total_amount) AS GrandTotal,
+    SUM(driver_pay_amount) AS DriverPay,
+    COUNT(*) AS Orders
+FROM normalized
+WHERE pickup_date IS NOT NULL
+GROUP BY CAST(DATEADD(day, -(DATEDIFF(day, 0, pickup_date) % 7), pickup_date) AS date), delivery_center
+ORDER BY WeekStart, delivery_center
+""".strip()
+
+
+def _load_warehouse_entity_rows(
+    start: date,
+    end: date,
+    *,
+    config: FabricWarehouseSqlConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if not config.configured:
+        return [], _source(
+            "not_configured",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message="Fabric Warehouse SQL auth is not configured for Xcelerator entity margin.",
+        ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+    table_rows = execute_sql_query(config, _build_warehouse_table_discovery_sql())
+    if not table_rows:
+        return [], _source(
+            "awaiting_feed",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message=(
+                "Fabric Warehouse connected, but no visible table/view had the "
+                "required Xcelerator entity-margin columns."
+            ),
+        ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+    table_schema = str(_find_value(table_rows[0], ("table_schema", "TABLE_SCHEMA")) or "dbo")
+    table_name = str(_find_value(table_rows[0], ("table_name", "TABLE_NAME")) or "xcelerator_review_orders")
+    rows = execute_sql_query(config, _build_warehouse_entity_weekly_sql(start, end, table_schema, table_name))
+    source = _source(
+        "healthy" if rows else "awaiting_feed",
+        XCELERATOR_ENTITY_AUTHORITY,
+        message="" if rows else "Fabric Warehouse returned no Xcelerator entity-margin rows.",
+        row_count=len(rows),
+    )
+    source["table"] = f"{table_schema}.{table_name}"
+    return rows, source, WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+
 def _load_xcelerator_entity_rows(
     start: date,
     end: date,
     *,
     config: EntityMarginConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    warehouse_error = ""
+    if config.warehouse_sql.configured:
+        try:
+            rows, source, source_type = _load_warehouse_entity_rows(start, end, config=config.warehouse_sql)
+            return rows, source, source_type
+        except Exception as exc:
+            warehouse_error = f"Fabric Warehouse SQL unavailable: {type(exc).__name__}: {exc}"
+            if not config.review_orders_feed.configured:
+                return [], _source(
+                    "unavailable",
+                    XCELERATOR_ENTITY_AUTHORITY,
+                    message=warehouse_error,
+                ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
     powerbi_error = ""
-    if config.powerbi.configured:
+    if not config.warehouse_sql.configured and config.powerbi.configured:
         try:
             rows = _load_powerbi_entity_rows(start, end, config=config.powerbi)
             return rows, _source(
@@ -316,7 +433,7 @@ def _load_xcelerator_entity_rows(
                 XCELERATOR_ENTITY_AUTHORITY,
                 message="" if rows else "Xcelerator CEO Dashboard semantic model returned no rows.",
                 row_count=len(rows),
-            ), "powerbi_semantic_model"
+            ), POWERBI_ENTITY_SOURCE_TYPE
         except Exception as exc:
             powerbi_error = f"{type(exc).__name__}: {exc}"
 
@@ -324,7 +441,7 @@ def _load_xcelerator_entity_rows(
         return [], _source(
             "awaiting_feed",
             XCELERATOR_ENTITY_AUTHORITY,
-            message=powerbi_error or "Xcelerator entity margin feed is not configured.",
+            message=warehouse_error or powerbi_error or "Xcelerator entity margin feed is not configured.",
         ), "unconfigured"
 
     try:
@@ -365,7 +482,7 @@ def _xcelerator_entity_weekly(
         row_day = _row_day(row)
         if row_day is None:
             continue
-        if source_type == "powerbi_semantic_model":
+        if source_type in AGGREGATED_WEEKLY_SOURCE_TYPES:
             week_start = _week_start(row_day)
             if week_start > end or week_start + timedelta(days=6) < start:
                 continue
@@ -405,7 +522,7 @@ def _xcelerator_entity_weekly(
     elif (
         source["status"] == "healthy"
         and included_dates
-        and source_type != "powerbi_semantic_model"
+        and source_type not in AGGREGATED_WEEKLY_SOURCE_TYPES
     ):
         source_status = "healthy"
         source_message = source.get("message") or ""

@@ -10,6 +10,7 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
+from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig  # noqa: E402
 from integrations.powerbi.execute_queries import PowerBIExecuteQueriesConfig  # noqa: E402
 from integrations.xcelerator.review_orders_feed import ReviewOrdersFeedConfig  # noqa: E402
 from services import entity_margin_service as service  # noqa: E402
@@ -58,6 +59,7 @@ def test_entity_margin_snapshot_keeps_k1l_cpm_and_k1g_margin_separate(monkeypatc
     config = service.EntityMarginConfig(
         powerbi=PowerBIExecuteQueriesConfig(),
         review_orders_feed=ReviewOrdersFeedConfig(path=str(review_orders)),
+        warehouse_sql=FabricWarehouseSqlConfig(),
     )
 
     snapshot = asyncio.run(
@@ -116,6 +118,7 @@ def test_entity_margin_snapshot_uses_powerbi_semantic_model_when_configured(monk
             access_token="token",
         ),
         review_orders_feed=ReviewOrdersFeedConfig(),
+        warehouse_sql=FabricWarehouseSqlConfig(),
     )
 
     snapshot = asyncio.run(
@@ -151,6 +154,7 @@ def test_powerbi_week_start_before_requested_start_is_included(monkeypatch):
             access_token="token",
         ),
         review_orders_feed=ReviewOrdersFeedConfig(),
+        warehouse_sql=FabricWarehouseSqlConfig(),
     )
 
     weekly, source, excluded, source_type = service._xcelerator_entity_weekly(
@@ -165,3 +169,52 @@ def test_powerbi_week_start_before_requested_start_is_included(monkeypatch):
     assert weekly["2025-12-29"]["period_start"] == "2026-01-01"
     assert weekly["2025-12-29"]["k1l_orders"] == 2
     assert weekly["2025-12-29"]["k1l_grand_total"] == 1200.0
+
+
+def test_entity_margin_snapshot_prefers_fabric_warehouse_sql(monkeypatch):
+    monkeypatch.setattr(service, "get_operating_cost_snapshot", _fake_operating_cost_snapshot)
+
+    def fake_execute_sql_query(config, query):
+        if "sys.objects" in query:
+            return [{"table_schema": "dbo", "table_name": "xcelerator_review_orders"}]
+        assert "[dbo].[xcelerator_review_orders]" in query
+        assert "driver_pay_amount" in query
+        return [
+            {
+                "WeekStart": date(2026, 5, 4),
+                "delivery_center": "K1 Logistics Inc",
+                "GrandTotal": 1000,
+                "DriverPay": 250,
+                "Orders": 1,
+            }
+        ]
+
+    monkeypatch.setattr(service, "execute_sql_query", fake_execute_sql_query)
+    config = service.EntityMarginConfig(
+        powerbi=PowerBIExecuteQueriesConfig(
+            workspace_id="workspace",
+            dataset_id="dataset",
+            access_token="token",
+        ),
+        review_orders_feed=ReviewOrdersFeedConfig(),
+        warehouse_sql=FabricWarehouseSqlConfig(
+            server="server",
+            database="database",
+            tenant_id="tenant",
+            client_id="client",
+            client_secret="secret",
+        ),
+    )
+
+    snapshot = asyncio.run(
+        service.get_entity_margin_snapshot(
+            start="2026-05-04",
+            end="2026-05-06",
+            config=config,
+        )
+    )
+
+    assert snapshot["xcelerator_source_type"] == "fabric_warehouse_sql"
+    assert snapshot["sources"]["xcelerator_entity"]["table"] == "dbo.xcelerator_review_orders"
+    assert snapshot["summary"]["k1l_grand_total"] == 1000.0
+    assert snapshot["summary"]["k1l_revenue_per_engine_hour"] == 166.6667

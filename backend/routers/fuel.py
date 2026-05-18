@@ -39,6 +39,12 @@ from services.xcelerator_review_orders_import_service import (
 
 router = APIRouter()
 
+
+async def _run_analytics_snapshot(coro_factory):
+    """Run mixed async/blocking analytics rollups away from the request event loop."""
+
+    return await asyncio.to_thread(lambda: asyncio.run(coro_factory()))
+
 # Average fuel costs
 AVG_FUEL_PRICE_PER_GALLON = 3.45
 AVG_MPG_FLEET = 24.5
@@ -196,7 +202,9 @@ async def operating_cost(
 ):
     """Return weekly true-cost rollups from Geotab, AtoB, Xcelerator, and QBO."""
     try:
-        return await get_operating_cost_snapshot(days=days, start=start, end=end)
+        return await _run_analytics_snapshot(
+            lambda: get_operating_cost_snapshot(days=days, start=start, end=end)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -209,7 +217,9 @@ async def entity_margin(
 ):
     """Return K1L CPM and K1G/K1L gross-margin rollups by delivery center."""
     try:
-        return await get_entity_margin_snapshot(days=days, start=start, end=end)
+        return await _run_analytics_snapshot(
+            lambda: get_entity_margin_snapshot(days=days, start=start, end=end)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
