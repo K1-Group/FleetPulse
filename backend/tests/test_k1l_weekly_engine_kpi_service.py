@@ -45,7 +45,7 @@ def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
             "fabric_warehouse_sql",
         )
 
-    def fake_geotab_weekly(weeks, *, config):
+    def fake_geotab_weekly(period_start, period_end):
         return (
             {
                 "2026-05-04": {
@@ -68,7 +68,7 @@ def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
 
     monkeypatch.setattr(service, "get_k1l_operating_kpi_snapshot", fake_operating_kpi)
     monkeypatch.setattr(service, "_xcelerator_entity_weekly", fake_xcelerator_weekly)
-    monkeypatch.setattr(service, "_warehouse_geotab_weekly_metrics", fake_geotab_weekly)
+    monkeypatch.setattr(service, "_recent_odata_geotab_weekly_metrics", fake_geotab_weekly)
 
     snapshot = service.get_k1l_weekly_engine_kpi_snapshot(start="2026-05-04", end="2026-05-17")
 

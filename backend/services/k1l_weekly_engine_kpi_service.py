@@ -25,11 +25,9 @@ from services.operating_cost_service import (
     GEOTAB_AUTHORITY,
     _accumulate_vehicle_kpi_row,
     _empty_week,
-    _geotab_warehouse_config_from_env,
     _resolve_window,
     _source,
     _vehicle_kpi_day,
-    _warehouse_geotab_weekly_metrics,
     _week_key,
     _week_windows,
 )
@@ -124,21 +122,12 @@ def _fast_geotab_weekly_metrics(
     period_end: date,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     try:
-        telemetry_weekly, telemetry_source = _warehouse_geotab_weekly_metrics(
-            weeks,
-            config=_geotab_warehouse_config_from_env(),
-        )
-        if telemetry_weekly:
-            return telemetry_weekly, telemetry_source
-    except Exception:
-        telemetry_weekly = {}
-    try:
         return _recent_odata_geotab_weekly_metrics(period_start, period_end)
-    except Exception as exc:
+    except Exception as odata_exc:
         return {}, _empty_source(
             "unavailable",
             GEOTAB_AUTHORITY,
-            f"{type(exc).__name__}: {exc}",
+            f"{type(odata_exc).__name__}: {odata_exc}",
         )
 
 
