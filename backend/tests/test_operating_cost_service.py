@@ -61,6 +61,62 @@ def test_geotab_weekly_metrics_uses_bulk_dated_rows(monkeypatch):
     assert metrics["2026-05-11"]["operating_hours"] == 2.5
 
 
+def test_geotab_weekly_metrics_prefers_fabric_warehouse_projection(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_OPERATING_COST_GEOTAB_BULK", "true")
+    calls = []
+
+    async def fail_vehicle_kpis(start, end, *, top=5000):
+        raise AssertionError("OData fallback should not be used when warehouse rows exist")
+
+    def fake_execute_sql_query(config, query):
+        calls.append(query)
+        if "sys.columns" in query:
+            return [
+                {"column_name": "LocalDate"},
+                {"column_name": "Distance_Miles"},
+                {"column_name": "TotalDriveTime_Hours"},
+                {"column_name": "TotalIdleTime_Hours"},
+                {"column_name": "Trip_Count"},
+            ]
+        if "sys.objects" in query:
+            return [{"table_schema": "dbo", "table_name": "ntta_geotab_daily_report"}]
+        assert "[dbo].[ntta_geotab_daily_report]" in query
+        return [
+            {
+                "week_start": date(2026, 5, 4),
+                "miles": 100,
+                "drive_hours": 5,
+                "idle_hours": 1,
+                "trips": 4,
+                "source_rows": 2,
+            }
+        ]
+
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", fail_vehicle_kpis)
+    monkeypatch.setattr(service, "execute_sql_query", fake_execute_sql_query)
+
+    metrics, source = asyncio.run(
+        service._geotab_weekly_metrics(
+            [(date(2026, 5, 4), date(2026, 5, 10))],
+            warehouse_config=service.FabricWarehouseSqlConfig(
+                server="server",
+                database="database",
+                tenant_id="tenant",
+                client_id="client",
+                client_secret="secret",
+            ),
+        )
+    )
+
+    assert len(calls) == 3
+    assert source["status"] == "healthy"
+    assert source["path"] == "fabric_warehouse_sql"
+    assert source["table"] == "dbo.ntta_geotab_daily_report"
+    assert source["row_count"] == 2
+    assert metrics["2026-05-04"]["miles"] == 100
+    assert metrics["2026-05-04"]["operating_hours"] == 6
+
+
 def test_geotab_weekly_metrics_retries_transient_fetch_errors(monkeypatch):
     calls = {"count": 0}
 

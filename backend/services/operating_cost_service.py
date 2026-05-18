@@ -23,6 +23,10 @@ from typing import Any
 
 import httpx
 
+from integrations.fabric_warehouse.sql_client import (
+    FabricWarehouseSqlConfig,
+    execute_sql_query,
+)
 from services.atob_fuel_expense_service import AtoBFuelExpenseStateStore
 from services.lane_stability_service import (
     LaneStabilityConfig,
@@ -34,6 +38,7 @@ from services.xcelerator_review_orders_import_service import (
 
 
 GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab Data Connector"
+GEOTAB_FABRIC_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 ATOB_AUTHORITY = "AtoB manual fuel expense export"
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator"
 QBO_AUTHORITY = "K1 Group LLC / QuickBooks Online"
@@ -193,6 +198,14 @@ def _source(status: str, authority: str, *, message: str = "", row_count: int = 
     }
 
 
+def _quote_sql_identifier(value: Any) -> str:
+    return f"[{str(value or '').replace(']', ']]')}]"
+
+
+def _quote_sql_literal(value: Any) -> str:
+    return f"'{str(value or '').replace(chr(39), chr(39) + chr(39))}'"
+
+
 def _number(value: Any) -> float:
     if value is None or value == "":
         return 0.0
@@ -257,6 +270,273 @@ def _empty_week(start: date, end: date) -> dict[str, Any]:
     }
 
 
+def _geotab_warehouse_config_from_env() -> FabricWarehouseSqlConfig:
+    config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_GEOTAB_WAREHOUSE_SQL")
+    if config.configured:
+        return config
+    return FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
+
+
+def _build_geotab_warehouse_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+WHERE objects.type IN ('U', 'V', 'ET')
+    AND (
+        LOWER(objects.name) = 'ntta_geotab_daily_report'
+        OR LOWER(objects.name) LIKE '%geotab%daily%'
+        OR LOWER(objects.name) LIKE '%vehicle%kpi%daily%'
+    )
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'ntta_geotab_daily_report' THEN 0 ELSE 1 END,
+    CASE WHEN LOWER(objects.name) LIKE '%geotab%daily%' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
+def _build_table_columns_sql(table_schema: str, table_name: str) -> str:
+    return f"""
+SELECT columns.name AS column_name
+FROM sys.columns AS columns
+JOIN sys.objects AS objects
+    ON objects.object_id = columns.object_id
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+WHERE schemas.name = {_quote_sql_literal(table_schema)}
+    AND objects.name = {_quote_sql_literal(table_name)}
+ORDER BY columns.column_id
+""".strip()
+
+
+def _column_by_alias(columns: list[str], aliases: tuple[str, ...]) -> str | None:
+    normalized_aliases = {_normalize(alias) for alias in aliases}
+    for column in columns:
+        normalized_column = _normalize(column)
+        if normalized_column in normalized_aliases:
+            return column
+    for column in columns:
+        normalized_column = _normalize(column)
+        if any(normalized_column.endswith(alias) for alias in normalized_aliases):
+            return column
+    return None
+
+
+def _decimal_expr(column: str | None, divisor: float = 1.0) -> str:
+    if not column:
+        return "0"
+    expression = f"COALESCE(TRY_CONVERT(float, {_quote_sql_identifier(column)}), 0)"
+    if divisor != 1.0:
+        return f"({expression} / {divisor})"
+    return expression
+
+
+def _build_geotab_warehouse_weekly_sql(
+    start: date,
+    end: date,
+    *,
+    table_schema: str,
+    table_name: str,
+    columns: list[str],
+) -> str | None:
+    date_column = _column_by_alias(
+        columns,
+        (
+            "Date",
+            "ReportDate",
+            "Report Date",
+            "LocalDate",
+            "Local Date",
+            "ActivityDate",
+            "Activity Date",
+            "CalendarDate",
+            "Calendar Date",
+            "Day",
+        ),
+    )
+    if not date_column:
+        return None
+
+    distance_km_column = _column_by_alias(
+        columns,
+        (
+            "Distance_Km",
+            "GPS_Distance_Km",
+            "TotalDistance_Km",
+            "DistanceKm",
+            "Distance KM",
+        ),
+    )
+    distance_miles_column = _column_by_alias(
+        columns,
+        (
+            "Distance_Miles",
+            "DistanceMiles",
+            "TotalDistance_Miles",
+            "Total Miles",
+            "Miles",
+        ),
+    )
+    drive_seconds_column = _column_by_alias(
+        columns,
+        ("DriveDuration_Seconds", "Drive Duration Seconds", "DrivingDurationSeconds"),
+    )
+    drive_hours_column = _column_by_alias(
+        columns,
+        (
+            "TotalDriveTime_Hours",
+            "DriveTime_Hours",
+            "Drive Hours",
+            "Driving Hours",
+            "Total Driving Hours",
+        ),
+    )
+    idle_seconds_column = _column_by_alias(
+        columns,
+        ("IdleDuration_Seconds", "Idle Duration Seconds", "IdlingDurationSeconds"),
+    )
+    idle_hours_column = _column_by_alias(
+        columns,
+        (
+            "TotalIdleTime_Hours",
+            "IdleTime_Hours",
+            "Idle Hours",
+            "Idling Hours",
+            "Total Idling Hours",
+        ),
+    )
+    trips_column = _column_by_alias(columns, ("Trip_Count", "TotalTrips", "Trips", "Trip Count"))
+
+    date_expr = f"TRY_CONVERT(date, {_quote_sql_identifier(date_column)})"
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    miles_expr = " + ".join(
+        part
+        for part in (
+            f"({_decimal_expr(distance_km_column)} * {KM_TO_MILES})" if distance_km_column else "",
+            _decimal_expr(distance_miles_column) if distance_miles_column else "",
+        )
+        if part
+    ) or "0"
+    drive_hours_expr = " + ".join(
+        part
+        for part in (
+            _decimal_expr(drive_seconds_column, 3600) if drive_seconds_column else "",
+            _decimal_expr(drive_hours_column) if drive_hours_column else "",
+        )
+        if part
+    ) or "0"
+    idle_hours_expr = " + ".join(
+        part
+        for part in (
+            _decimal_expr(idle_seconds_column, 3600) if idle_seconds_column else "",
+            _decimal_expr(idle_hours_column) if idle_hours_column else "",
+        )
+        if part
+    ) or "0"
+    trips_expr = _decimal_expr(trips_column) if trips_column else "0"
+
+    return f"""
+WITH normalized AS (
+    SELECT
+        {date_expr} AS activity_date,
+        {miles_expr} AS miles,
+        {drive_hours_expr} AS drive_hours,
+        {idle_hours_expr} AS idle_hours,
+        {trips_expr} AS trips
+    FROM {table_ref}
+    WHERE {date_expr} >= '{start.isoformat()}'
+        AND {date_expr} <= '{end.isoformat()}'
+)
+SELECT
+    CAST(DATEADD(day, -(DATEDIFF(day, 0, activity_date) % 7), activity_date) AS date) AS week_start,
+    SUM(miles) AS miles,
+    SUM(drive_hours) AS drive_hours,
+    SUM(idle_hours) AS idle_hours,
+    SUM(trips) AS trips,
+    COUNT(*) AS source_rows
+FROM normalized
+WHERE activity_date IS NOT NULL
+GROUP BY CAST(DATEADD(day, -(DATEDIFF(day, 0, activity_date) % 7), activity_date) AS date)
+ORDER BY week_start
+""".strip()
+
+
+def _warehouse_geotab_weekly_metrics(
+    weeks: list[tuple[date, date]],
+    *,
+    config: FabricWarehouseSqlConfig,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    if not config.configured:
+        return {}, _source(
+            "not_configured",
+            GEOTAB_FABRIC_AUTHORITY,
+            message="Fabric Warehouse SQL auth is not configured for Geotab telemetry.",
+        )
+
+    period_start = weeks[0][0]
+    period_end = weeks[-1][1]
+    table_rows = execute_sql_query(config, _build_geotab_warehouse_table_discovery_sql())
+    if not table_rows:
+        return {}, _source(
+            "awaiting_feed",
+            GEOTAB_FABRIC_AUTHORITY,
+            message="Fabric Warehouse connected, but no Geotab daily telemetry table was visible.",
+        )
+
+    table_schema = str(_find_value(table_rows[0], ("table_schema", "TABLE_SCHEMA")) or "dbo")
+    table_name = str(_find_value(table_rows[0], ("table_name", "TABLE_NAME")) or "ntta_geotab_daily_report")
+    column_rows = execute_sql_query(config, _build_table_columns_sql(table_schema, table_name))
+    columns = [
+        str(_find_value(row, ("column_name", "COLUMN_NAME")) or "").strip()
+        for row in column_rows
+        if str(_find_value(row, ("column_name", "COLUMN_NAME")) or "").strip()
+    ]
+    weekly_sql = _build_geotab_warehouse_weekly_sql(
+        period_start,
+        period_end,
+        table_schema=table_schema,
+        table_name=table_name,
+        columns=columns,
+    )
+    source = _source("healthy", GEOTAB_FABRIC_AUTHORITY)
+    source["table"] = f"{table_schema}.{table_name}"
+    source["path"] = "fabric_warehouse_sql"
+    if not weekly_sql:
+        return {}, {
+            **source,
+            "status": "awaiting_feed",
+            "message": "Geotab telemetry table is visible, but no supported date column was found.",
+        }
+
+    rows = execute_sql_query(config, weekly_sql)
+    metrics: dict[str, dict[str, Any]] = {}
+    row_count = 0
+    for row in rows:
+        week = _coerce_date(_find_value(row, ("week_start", "WeekStart")))
+        if week is None:
+            continue
+        bucket = _empty_week(week, min(week + timedelta(days=6), period_end))
+        bucket["miles"] = round(_number(_find_value(row, ("miles", "Miles"))), 2)
+        bucket["drive_hours"] = round(_number(_find_value(row, ("drive_hours", "DriveHours"))), 2)
+        bucket["idle_hours"] = round(_number(_find_value(row, ("idle_hours", "IdleHours"))), 2)
+        bucket["operating_hours"] = round(bucket["drive_hours"] + bucket["idle_hours"], 2)
+        bucket["trips"] = int(_number(_find_value(row, ("trips", "Trips"))))
+        metrics[_week_key(week)] = bucket
+        row_count += int(_number(_find_value(row, ("source_rows", "SourceRows")))) or 1
+
+    return metrics, {
+        **source,
+        "status": "healthy" if metrics else "awaiting_feed",
+        "message": "" if metrics else "Fabric Warehouse returned no Geotab telemetry rows for this period.",
+        "row_count": row_count,
+    }
+
+
 async def _fetch_vehicle_kpi_rows(start: date, end: date, *, top: int = 5000) -> list[dict[str, Any]]:
     from routers import data_connector
 
@@ -305,6 +585,8 @@ def _accumulate_vehicle_kpi_row(bucket: dict[str, Any], row: dict[str, Any]) -> 
 
 async def _geotab_weekly_metrics(
     weeks: list[tuple[date, date]],
+    *,
+    warehouse_config: FabricWarehouseSqlConfig | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     metrics: dict[str, dict[str, Any]] = {
         _week_key(start): _empty_week(start, end) for start, end in weeks
@@ -313,6 +595,28 @@ async def _geotab_weekly_metrics(
     failures: list[str] = []
     period_start = weeks[0][0]
     period_end = weeks[-1][1]
+
+    if os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_WAREHOUSE", "true").strip().lower() not in {"0", "false", "no"}:
+        try:
+            warehouse_metrics, warehouse_source = await asyncio.to_thread(
+                _warehouse_geotab_weekly_metrics,
+                weeks,
+                config=warehouse_config or _geotab_warehouse_config_from_env(),
+            )
+            if warehouse_metrics:
+                for key, bucket in warehouse_metrics.items():
+                    metrics.setdefault(key, bucket).update(
+                        {
+                            "miles": bucket["miles"],
+                            "drive_hours": bucket["drive_hours"],
+                            "idle_hours": bucket["idle_hours"],
+                            "operating_hours": bucket["operating_hours"],
+                            "trips": bucket["trips"],
+                        }
+                    )
+                return metrics, warehouse_source
+        except Exception as exc:  # pragma: no cover - OData fallback keeps legacy path alive.
+            failures.append(f"Fabric Warehouse Geotab telemetry: {type(exc).__name__}")
 
     if os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_BULK", "true").strip().lower() not in {"0", "false", "no"}:
         try:
