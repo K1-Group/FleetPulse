@@ -80,7 +80,7 @@ def _recent_odata_geotab_weekly_metrics(
         data_connector._odata_get(  # noqa: SLF001 - bounded read-only fallback.
             "VehicleKpi_Daily",
             search="last_90_day",
-            top=5000,
+            top=1000,
         )
     )
     metrics: dict[str, dict[str, Any]] = {}
