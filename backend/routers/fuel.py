@@ -201,10 +201,16 @@ async def operating_cost(
     end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
 ):
     """Return weekly true-cost rollups from Geotab, AtoB, Xcelerator, and QBO."""
+    cache_key = f"fuel:operating-cost:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
     try:
-        return await _run_analytics_snapshot(
+        snapshot = await _run_analytics_snapshot(
             lambda: get_operating_cost_snapshot(days=days, start=start, end=end)
         )
+        set_cached(cache_key, snapshot)
+        return snapshot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -216,10 +222,16 @@ async def entity_margin(
     end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
 ):
     """Return K1L CPM and K1G/K1L gross-margin rollups by delivery center."""
+    cache_key = f"fuel:entity-margin:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
     try:
-        return await _run_analytics_snapshot(
+        snapshot = await _run_analytics_snapshot(
             lambda: get_entity_margin_snapshot(days=days, start=start, end=end)
         )
+        set_cached(cache_key, snapshot)
+        return snapshot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

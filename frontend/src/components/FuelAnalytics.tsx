@@ -372,6 +372,15 @@ const finiteValue = (value?: number | null) => (
     : Number(value)
 )
 
+const safeRatio = (numerator?: number | null, denominator?: number | null, digits = 4) => {
+  const resolvedNumerator = finiteValue(numerator)
+  const resolvedDenominator = finiteValue(denominator)
+  if (resolvedNumerator === null || resolvedDenominator === null || resolvedDenominator <= 0) {
+    return null
+  }
+  return Number((resolvedNumerator / resolvedDenominator).toFixed(digits))
+}
+
 async function fetchJson<T>(url: string, fallback: T, timeoutMs = 20000): Promise<T> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
@@ -437,12 +446,12 @@ export default function FuelAnalytics() {
         fetchJson<OperatingCostSnapshot | null>(
           `/api/fuel/operating-cost?start=${ytdStart}`,
           null,
-          45000,
+          120000,
         ),
         fetchJson<EntityMarginSnapshot | null>(
           `/api/fuel/entity-margin?start=${ytdStart}`,
           null,
-          45000,
+          120000,
         ),
         fetchJson<K1OperatingCostKpiSnapshot | null>(
           '/api/fuel/k1l-operating-kpi',
@@ -579,14 +588,38 @@ export default function FuelAnalytics() {
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
     ? 'RPM - Final CPM'
     : 'RPM - CPM'
-  const weeklyK1lRows = (entityMargin?.weekly ?? []).filter((row) => (
-    Number(row.k1l_orders) > 0
-    && (
-      finiteValue(row.k1l_revenue_per_engine_hour) !== null
-      || finiteValue(row.k1l_true_operating_cost_per_engine_hour) !== null
-      || finiteValue(row.k1l_profit_per_engine_hour) !== null
-    )
-  ))
+  const k1lEngineHours = finiteValue(entitySummary?.operating_hours)
+  const k1lTotalCost = finiteValue(k1OperatingSummary?.total_cost ?? entitySummary?.k1l_true_operating_cost)
+  const k1lRevenue = finiteValue(k1OperatingSummary?.revenue ?? entitySummary?.k1l_grand_total)
+  const k1lGrossProfit = finiteValue(k1OperatingSummary?.gross_profit) ?? (
+    k1lRevenue !== null && k1lTotalCost !== null ? Number((k1lRevenue - k1lTotalCost).toFixed(2)) : null
+  )
+  const k1lSummaryRevenuePerEngineHour = safeRatio(k1lRevenue, k1lEngineHours) ?? entitySummary?.k1l_revenue_per_engine_hour ?? null
+  const k1lSummaryCostPerEngineHour = safeRatio(k1lTotalCost, k1lEngineHours) ?? entitySummary?.k1l_true_operating_cost_per_engine_hour ?? null
+  const k1lSummaryProfitPerEngineHour = safeRatio(k1lGrossProfit, k1lEngineHours) ?? entitySummary?.k1l_profit_per_engine_hour ?? null
+  const weeklyK1lRows = (entityMargin?.weekly ?? []).map((row) => {
+    const rowEngineHours = finiteValue(row.operating_hours)
+    const rowRevenue = finiteValue(row.k1l_grand_total)
+    const rowRevenuePerEngineHour = safeRatio(rowRevenue, rowEngineHours) ?? row.k1l_revenue_per_engine_hour
+    const rowCostPerEngineHour = k1lSummaryCostPerEngineHour ?? row.k1l_true_operating_cost_per_engine_hour
+    const rowAllocatedCost = rowCostPerEngineHour !== null && rowCostPerEngineHour !== undefined && rowEngineHours !== null
+      ? Number((Number(rowCostPerEngineHour) * rowEngineHours).toFixed(2))
+      : finiteValue(row.k1l_true_operating_cost)
+    const rowProfit = rowRevenue !== null && rowAllocatedCost !== null
+      ? Number((rowRevenue - rowAllocatedCost).toFixed(2))
+      : finiteValue(row.k1l_profit)
+    const rowProfitPerEngineHour = safeRatio(rowProfit, rowEngineHours) ?? row.k1l_profit_per_engine_hour
+
+    return {
+      ...row,
+      k1l_revenue_per_engine_hour: rowRevenuePerEngineHour,
+      k1l_true_operating_cost: rowAllocatedCost,
+      k1l_true_operating_cost_per_engine_hour: rowCostPerEngineHour,
+      k1l_profit: rowProfit,
+      k1l_profit_per_engine_hour: rowProfitPerEngineHour,
+      k1l_profit_per_mile: safeRatio(rowProfit, row.miles) ?? row.k1l_profit_per_mile,
+    }
+  }).filter((row) => Number(row.k1l_orders) > 0 && finiteValue(row.k1l_revenue_per_engine_hour) !== null)
   const rankedK1lWeeks = weeklyK1lRows.filter((row) => finiteValue(row.k1l_profit_per_engine_hour) !== null)
   const bestK1lWeek = rankedK1lWeeks.reduce<WeeklyEntityMargin | null>((best, row) => {
     if (!best) return row
@@ -781,21 +814,21 @@ export default function FuelAnalytics() {
               K1L Weekly Revenue / Cost per Engine Hr
             </h3>
             <div className="mt-1 text-sm text-gray-400">
-              Engine hrs = Geotab drive + idle hours · weekly ranking uses profit / engine hr
+              Engine hrs = Geotab drive + idle hours · cost stack allocated by engine-hour share
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">RPH</div>
-              <div className="text-cyan-300">{formatRate(entitySummary?.k1l_revenue_per_engine_hour, '/hr')}</div>
+              <div className="text-cyan-300">{formatRate(k1lSummaryRevenuePerEngineHour, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Cost / Hr</div>
-              <div className="text-rose-300">{formatRate(entitySummary?.k1l_true_operating_cost_per_engine_hour, '/hr')}</div>
+              <div className="text-rose-300">{formatRate(k1lSummaryCostPerEngineHour, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Profit / Hr</div>
-              <div className="text-amber-300">{formatRate(entitySummary?.k1l_profit_per_engine_hour, '/hr')}</div>
+              <div className="text-amber-300">{formatRate(k1lSummaryProfitPerEngineHour, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Engine Hrs</div>
@@ -842,7 +875,7 @@ export default function FuelAnalytics() {
                 />
                 <Legend />
                 <Bar yAxisId="dollars" dataKey="k1l_grand_total" name="Revenue" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name="Total Cost" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name="Cost (alloc)" fill="#f43f5e" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_engine_hour" name="RPH /Hr" stroke="#67e8f9" strokeWidth={3} dot={{ r: 4 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cost_per_engine_hour" name="Cost /Hr" stroke="#fb7185" strokeWidth={3} dot={{ r: 4 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="k1l_profit_per_engine_hour" name="Profit /Hr" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
