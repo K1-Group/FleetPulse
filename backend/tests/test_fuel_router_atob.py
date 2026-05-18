@@ -370,8 +370,6 @@ def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
         queries.append(query)
         assert config.server == "warehouse.example.com"
         assert config.database == "ReportingLakehouse"
-        if "DB_NAME()" in query:
-            return [{"database_name": "ReportingLakehouse"}]
         if "sys.objects" in query and "sys.columns" in query:
             return [
                 {
@@ -413,7 +411,7 @@ def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
     assert payload["summary"]["revenue"] == 1200000.0
     assert payload["summary"]["revenue_per_mile"] == 3.815
     assert payload["summary"]["profit_per_mile"] == 1.45
-    assert len(queries) == 3
+    assert len(queries) == 2
 
 
 def test_k1l_operating_kpi_falls_back_to_monthly_json_when_warehouse_unavailable(monkeypatch):
