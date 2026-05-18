@@ -18,6 +18,7 @@ from services.entity_margin_service import K1L_ENTITY, _entity_from_delivery_cen
 
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator review orders"
 GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab trips"
+GEOTAB_WAREHOUSE_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 TARGET_REVENUE_PER_DRIVER_WEEK = 5000.0
 TARGET_REVENUE_PER_TRUCK_WEEK = 7000.0
 
@@ -115,6 +116,93 @@ JOIN sys.columns AS columns
 WHERE schemas.name = '{table_schema.replace("'", "''")}'
     AND objects.name = '{table_name.replace("'", "''")}'
 ORDER BY columns.column_id
+""".strip()
+
+
+def _geotab_warehouse_config_from_env() -> FabricWarehouseSqlConfig:
+    config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_GEOTAB_WAREHOUSE_SQL")
+    if config.configured:
+        return config
+    return FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
+
+
+def _geotab_warehouse_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+WHERE objects.type IN ('U', 'V', 'ET')
+    AND (
+        LOWER(objects.name) = 'ntta_geotab_daily_report'
+        OR LOWER(objects.name) LIKE '%geotab%daily%'
+        OR LOWER(objects.name) LIKE '%vehicle%kpi%daily%'
+    )
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'ntta_geotab_daily_report' THEN 0 ELSE 1 END,
+    CASE WHEN LOWER(objects.name) LIKE '%geotab%daily%' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
+def _decimal_sql(column: str) -> str:
+    return f"COALESCE(TRY_CONVERT(float, {_quote_sql_identifier(column)}), 0)"
+
+
+def _warehouse_geotab_active_trucks_sql(
+    *,
+    table_schema: str,
+    table_name: str,
+    date_column: str,
+    vehicle_column: str,
+    distance_km_column: str | None,
+    distance_miles_column: str | None,
+    period_start: date,
+    period_end: date,
+) -> str | None:
+    miles_parts = []
+    if distance_km_column:
+        miles_parts.append(f"({_decimal_sql(distance_km_column)} * 0.621371)")
+    if distance_miles_column:
+        miles_parts.append(_decimal_sql(distance_miles_column))
+    miles_expr = " + ".join(miles_parts)
+    if not miles_expr:
+        return None
+
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    date_expr = f"TRY_CONVERT(date, {_quote_sql_identifier(date_column)})"
+    vehicle_expr = f"NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(255), {_quote_sql_identifier(vehicle_column)}))), '')"
+    return f"""
+WITH normalized AS (
+    SELECT
+        {date_expr} AS activity_date,
+        {vehicle_expr} AS vehicle_key,
+        {miles_expr} AS miles
+    FROM {table_ref}
+    WHERE {date_expr} >= '{period_start.isoformat()}'
+        AND {date_expr} <= '{period_end.isoformat()}'
+),
+vehicle_miles AS (
+    SELECT
+        vehicle_key,
+        SUM(miles) AS miles,
+        COUNT(*) AS source_rows
+    FROM normalized
+    WHERE activity_date IS NOT NULL
+        AND vehicle_key IS NOT NULL
+    GROUP BY vehicle_key
+)
+SELECT
+    vehicle_key,
+    miles,
+    source_rows
+FROM vehicle_miles
+WHERE miles >= 10
+ORDER BY miles DESC
 """.strip()
 
 
@@ -297,7 +385,153 @@ def _trip_driver_key(trip: dict[str, Any]) -> str | None:
     return text.casefold()
 
 
-def _load_geotab_activity(period_start_dt: datetime, period_end_dt: datetime) -> dict[str, Any]:
+def _load_geotab_warehouse_truck_activity(period_start: date, period_end: date) -> dict[str, Any]:
+    config = _geotab_warehouse_config_from_env()
+    if not config.configured:
+        return {
+            "truck_count": None,
+            "source": _source(
+                "not_configured",
+                GEOTAB_WAREHOUSE_AUTHORITY,
+                message="Fabric Warehouse SQL is not configured for Geotab telemetry.",
+            ),
+        }
+
+    try:
+        table_rows = execute_sql_query(config, _geotab_warehouse_table_discovery_sql())
+        if not table_rows:
+            return {
+                "truck_count": None,
+                "source": _source(
+                    "awaiting_feed",
+                    GEOTAB_WAREHOUSE_AUTHORITY,
+                    message="No visible Geotab daily telemetry table was found.",
+                ),
+            }
+
+        table = table_rows[0]
+        table_schema = str(table.get("table_schema") or "dbo")
+        table_name = str(table.get("table_name") or "ntta_geotab_daily_report")
+        column_rows = execute_sql_query(config, _warehouse_columns_sql(table_schema, table_name))
+        columns = [str(row.get("column_name") or "") for row in column_rows if row.get("column_name")]
+
+        date_column = _pick_column(
+            columns,
+            (
+                "Date",
+                "ReportDate",
+                "Report Date",
+                "LocalDate",
+                "Local Date",
+                "ActivityDate",
+                "Activity Date",
+                "CalendarDate",
+                "Calendar Date",
+                "Day",
+            ),
+        )
+        vehicle_column = _pick_column(
+            columns,
+            (
+                "DeviceId",
+                "Device ID",
+                "DeviceID",
+                "VehicleId",
+                "Vehicle ID",
+                "VehicleID",
+                "VehicleName",
+                "Vehicle Name",
+                "DeviceName",
+                "Device Name",
+                "DeviceSerialNumber",
+                "Device Serial Number",
+                "SerialNumber",
+                "Serial Number",
+                "VIN",
+            ),
+        )
+        distance_km_column = _pick_column(
+            columns,
+            (
+                "Distance_Km",
+                "GPS_Distance_Km",
+                "TotalDistance_Km",
+                "DistanceKm",
+                "Distance KM",
+            ),
+        )
+        distance_miles_column = _pick_column(
+            columns,
+            (
+                "Distance_Miles",
+                "DistanceMiles",
+                "TotalDistance_Miles",
+                "Total Miles",
+                "Miles",
+            ),
+        )
+        if not date_column or not vehicle_column:
+            return {
+                "truck_count": None,
+                "source": _source(
+                    "awaiting_feed",
+                    GEOTAB_WAREHOUSE_AUTHORITY,
+                    message="Geotab telemetry table is missing supported date or vehicle columns.",
+                ),
+            }
+
+        sql = _warehouse_geotab_active_trucks_sql(
+            table_schema=table_schema,
+            table_name=table_name,
+            date_column=date_column,
+            vehicle_column=vehicle_column,
+            distance_km_column=distance_km_column,
+            distance_miles_column=distance_miles_column,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if not sql:
+            return {
+                "truck_count": None,
+                "source": _source(
+                    "awaiting_feed",
+                    GEOTAB_WAREHOUSE_AUTHORITY,
+                    message="Geotab telemetry table is missing supported distance columns.",
+                ),
+            }
+
+        rows = execute_sql_query(config, sql)
+    except Exception as exc:
+        return {
+            "truck_count": None,
+            "source": _source(
+                "unavailable",
+                GEOTAB_WAREHOUSE_AUTHORITY,
+                message=f"{type(exc).__name__}: {exc}",
+            ),
+        }
+
+    truck_count = len(rows)
+    source = _source(
+        "healthy" if truck_count else "awaiting_feed",
+        GEOTAB_WAREHOUSE_AUTHORITY,
+        message="" if truck_count else "No Geotab warehouse trucks exceeded 10 miles in the period.",
+        row_count=truck_count,
+    )
+    source["table"] = f"{table_schema}.{table_name}"
+    source["path"] = "fabric_warehouse_sql"
+    return {
+        "truck_count": truck_count,
+        "source": source,
+    }
+
+
+def _load_geotab_trip_activity(
+    period_start_dt: datetime,
+    period_end_dt: datetime,
+    *,
+    include_drivers: bool,
+) -> dict[str, Any]:
     try:
         client = GeotabClient.get()
         trips = client.get_trips(from_date=period_start_dt, to_date=period_end_dt)
@@ -322,9 +556,10 @@ def _load_geotab_activity(period_start_dt: datetime, period_end_dt: datetime) ->
                     device_miles[device_id] = device_miles.get(device_id, 0.0) + float(trip.get("distance") or 0) * 0.621371
                 except (TypeError, ValueError):
                     pass
-        driver_key = _trip_driver_key(trip)
-        if driver_key:
-            driver_keys.add(driver_key)
+        if include_drivers:
+            driver_key = _trip_driver_key(trip)
+            if driver_key:
+                driver_keys.add(driver_key)
 
     active_trucks = {device_id for device_id, miles in device_miles.items() if miles >= 10}
     return {
@@ -347,6 +582,61 @@ def _load_geotab_activity(period_start_dt: datetime, period_end_dt: datetime) ->
     }
 
 
+def _load_geotab_activity(
+    period_start_dt: datetime,
+    period_end_dt: datetime,
+    *,
+    include_driver_fallback: bool,
+) -> dict[str, Any]:
+    period_start = period_start_dt.date()
+    period_end = period_end_dt.date()
+    warehouse = _load_geotab_warehouse_truck_activity(period_start, period_end)
+    driver_source = _source(
+        "not_applicable" if not include_driver_fallback else "awaiting_feed",
+        GEOTAB_AUTHORITY,
+        message=(
+            "Xcelerator dispatch driver count is available."
+            if not include_driver_fallback
+            else "Xcelerator dispatch driver count is unavailable; Geotab trip driver fallback is pending."
+        ),
+    )
+    if warehouse.get("truck_count"):
+        driver_count = None
+        if include_driver_fallback:
+            trip_payload = _load_geotab_trip_activity(
+                period_start_dt,
+                period_end_dt,
+                include_drivers=True,
+            )
+            driver_count = trip_payload.get("driver_count")
+            driver_source = trip_payload["sources"]["geotab_drivers"]
+        return {
+            "truck_count": warehouse["truck_count"],
+            "driver_count": driver_count,
+            "sources": {
+                "trucks": warehouse["source"],
+                "geotab_drivers": driver_source,
+            },
+        }
+
+    trip_payload = _load_geotab_trip_activity(
+        period_start_dt,
+        period_end_dt,
+        include_drivers=include_driver_fallback,
+    )
+    if trip_payload.get("truck_count") is not None:
+        return trip_payload
+
+    return {
+        "truck_count": warehouse.get("truck_count"),
+        "driver_count": None,
+        "sources": {
+            "trucks": warehouse["source"],
+            "geotab_drivers": driver_source,
+        },
+    }
+
+
 def get_revenue_productivity_snapshot(days: int = 7) -> dict[str, Any]:
     period_days = max(min(int(days or 7), 31), 1)
     period_end_dt = datetime.now(timezone.utc)
@@ -354,8 +644,12 @@ def get_revenue_productivity_snapshot(days: int = 7) -> dict[str, Any]:
     period_start = period_start_dt.date()
     period_end = period_end_dt.date()
 
-    geotab = _load_geotab_activity(period_start_dt, period_end_dt)
     xcelerator = _load_xcelerator_productivity(period_start, period_end)
+    geotab = _load_geotab_activity(
+        period_start_dt,
+        period_end_dt,
+        include_driver_fallback=not bool(xcelerator.get("driver_count")),
+    )
 
     revenue = xcelerator.get("revenue")
     truck_count = geotab.get("truck_count")
