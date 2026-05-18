@@ -123,9 +123,15 @@ def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
     assert snapshot["summary"]["k1l_profit_per_engine_hour"] == 40
     assert snapshot["summary"]["k1l_route_lh_orders"] == 3
     assert snapshot["summary"]["k1l_route_lh_revenue_per_hour"] == 120
+    assert snapshot["summary"]["k1l_route_lh_driver_pay_per_hour"] == 46.6667
+    assert snapshot["summary"]["k1l_route_lh_true_operating_cost_per_hour"] == 60
+    assert snapshot["summary"]["k1l_route_lh_loaded_profit_per_hour"] == 60
     assert snapshot["weekly"][0]["k1l_true_operating_cost"] == 600
     assert snapshot["weekly"][1]["k1l_profit_per_engine_hour"] == 45
-    assert snapshot["weekly"][1]["k1l_route_lh_profit_per_hour"] == 73.3333
+    assert snapshot["weekly"][1]["k1l_route_lh_driver_pay_per_hour"] == 50
+    assert snapshot["weekly"][1]["k1l_route_lh_true_operating_cost_per_hour"] == 60
+    assert snapshot["weekly"][1]["k1l_route_lh_profit_per_hour"] == 83.3333
+    assert snapshot["weekly"][1]["k1l_route_lh_loaded_profit_per_hour"] == 73.3333
     assert snapshot["best_week"]["week_start"] == "2026-05-11"
 
 

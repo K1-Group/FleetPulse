@@ -256,8 +256,14 @@ interface EntityMarginSummary {
   k1l_route_lh_hours?: number
   k1l_route_lh_revenue_per_hour?: number | null
   k1l_route_lh_driver_pay_per_hour?: number | null
+  k1l_route_lh_direct_cost?: number | null
+  k1l_route_lh_direct_cost_per_hour?: number | null
+  k1l_route_lh_direct_profit?: number | null
+  k1l_route_lh_direct_profit_per_hour?: number | null
   k1l_route_lh_true_operating_cost?: number | null
   k1l_route_lh_true_operating_cost_per_hour?: number | null
+  k1l_route_lh_loaded_profit?: number | null
+  k1l_route_lh_loaded_profit_per_hour?: number | null
   k1l_route_lh_profit?: number | null
   k1l_route_lh_profit_per_hour?: number | null
   k1l_route_lh_excluded_non_route_lh_orders?: number
@@ -319,7 +325,9 @@ interface K1WeeklyEngineKpiSnapshot {
     min_revenue: number
     min_lifecycle_hours: number
     hour_window: string
-    cost_allocation: string
+    cost_allocation?: string
+    primary_cost_basis?: string
+    loaded_cost_diagnostic?: string
   }
   complete_k1l_engine_kpi_available: boolean
   unresolved_sources: string[]
@@ -702,8 +710,15 @@ export default function FuelAnalytics() {
   const useRouteLhEfficiency = k1WeeklyEngineKpi?.efficiency_basis === 'route_lh_qualified'
   const routeLhSummaryHours = finiteValue(weeklyEngineSummary?.k1l_route_lh_hours)
   const routeLhSummaryRph = finiteValue(weeklyEngineSummary?.k1l_route_lh_revenue_per_hour)
-  const routeLhSummaryCostHr = finiteValue(weeklyEngineSummary?.k1l_route_lh_true_operating_cost_per_hour)
-  const routeLhSummaryProfitHr = finiteValue(weeklyEngineSummary?.k1l_route_lh_profit_per_hour)
+  const routeLhSummaryCostHr = finiteValue(
+    weeklyEngineSummary?.k1l_route_lh_direct_cost_per_hour
+      ?? weeklyEngineSummary?.k1l_route_lh_driver_pay_per_hour,
+  )
+  const routeLhSummaryProfitHr = finiteValue(
+    weeklyEngineSummary?.k1l_route_lh_direct_profit_per_hour
+      ?? weeklyEngineSummary?.k1l_route_lh_profit_per_hour,
+  )
+  const routeLhLoadedCostHr = finiteValue(weeklyEngineSummary?.k1l_route_lh_true_operating_cost_per_hour)
   const displayedSummaryHours = useRouteLhEfficiency ? routeLhSummaryHours : k1lEngineHours
   const displayedSummaryRph = useRouteLhEfficiency ? routeLhSummaryRph : k1lSummaryRevenuePerEngineHour
   const displayedSummaryCostHr = useRouteLhEfficiency ? routeLhSummaryCostHr : k1lSummaryCostPerEngineHour
@@ -722,10 +737,10 @@ export default function FuelAnalytics() {
     const routeHours = finiteValue(row.k1l_route_lh_hours)
     const routeOrders = Number(row.k1l_route_lh_orders ?? 0)
     const routeRevenue = finiteValue(row.k1l_route_lh_revenue)
-    const routeCost = finiteValue(row.k1l_route_lh_true_operating_cost)
-    const routeCostHr = finiteValue(row.k1l_route_lh_true_operating_cost_per_hour)
-    const routeProfit = finiteValue(row.k1l_route_lh_profit)
-    const routeProfitHr = finiteValue(row.k1l_route_lh_profit_per_hour)
+    const routeCost = finiteValue(row.k1l_route_lh_direct_cost ?? row.k1l_route_lh_driver_pay)
+    const routeCostHr = finiteValue(row.k1l_route_lh_direct_cost_per_hour ?? row.k1l_route_lh_driver_pay_per_hour)
+    const routeProfit = finiteValue(row.k1l_route_lh_direct_profit ?? row.k1l_route_lh_profit)
+    const routeProfitHr = finiteValue(row.k1l_route_lh_direct_profit_per_hour ?? row.k1l_route_lh_profit_per_hour)
     const routeRph = finiteValue(row.k1l_route_lh_revenue_per_hour)
     const useRouteRow = useRouteLhEfficiency && routeOrders > 0 && routeHours !== null && routeHours > 0
     const rowEngineHours = useRouteRow ? routeHours : finiteValue(row.operating_hours)
@@ -971,7 +986,7 @@ export default function FuelAnalytics() {
             </h3>
             <div className="mt-1 text-sm text-gray-400">
               {useRouteLhEfficiency
-                ? 'Qualified rows only: revenue >= $1,000 and start-to-finish >= 12 hrs · cost stack allocated by qualified lifecycle-hour share'
+                ? 'Qualified rows only: revenue >= $1,000 and start-to-finish >= 12 hrs · cost/hr uses Xcelerator driver pay per lifecycle hour'
                 : 'Engine hrs = Geotab drive + idle hours · cost stack allocated by engine-hour share'}
             </div>
             {useRouteLhEfficiency && (
@@ -982,6 +997,9 @@ export default function FuelAnalytics() {
                 <span className="rounded border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-amber-200">
                   {formatNumber(routeLhExcludedOrders, 0)} excluded by rule
                 </span>
+                <span className="rounded border border-gray-700 bg-gray-950/40 px-2 py-1 text-gray-300">
+                  Loaded stack diagnostic: {formatRate(routeLhLoadedCostHr, '/hr')}
+                </span>
               </div>
             )}
           </div>
@@ -991,11 +1009,11 @@ export default function FuelAnalytics() {
               <div className="text-cyan-300">{formatRate(displayedSummaryRph, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-gray-500">Cost / Hr</div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">{useRouteLhEfficiency ? 'Driver Pay / Hr' : 'Cost / Hr'}</div>
               <div className="text-rose-300">{formatRate(displayedSummaryCostHr, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-gray-500">Profit / Hr</div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">{useRouteLhEfficiency ? 'Gross Profit / Hr' : 'Profit / Hr'}</div>
               <div className="text-amber-300">{formatRate(displayedSummaryProfitHr, '/hr')}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
@@ -1011,7 +1029,7 @@ export default function FuelAnalytics() {
             <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="text-xl font-semibold text-white">{bestK1lWeek?.week_start ?? 'Pending'}</span>
               <span className="text-sm text-emerald-300">{formatRate(bestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
-              <span className="text-sm text-gray-400">{formatCurrency(bestK1lWeek?.k1l_profit)} profit</span>
+              <span className="text-sm text-gray-400">{formatCurrency(bestK1lWeek?.k1l_profit)} {useRouteLhEfficiency ? 'gross profit' : 'profit'}</span>
             </div>
           </div>
           <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-4 py-3">
@@ -1019,7 +1037,7 @@ export default function FuelAnalytics() {
             <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="text-xl font-semibold text-white">{weakestK1lWeek?.week_start ?? 'Pending'}</span>
               <span className="text-sm text-amber-300">{formatRate(weakestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
-              <span className="text-sm text-gray-400">{formatCurrency(weakestK1lWeek?.k1l_profit)} profit</span>
+              <span className="text-sm text-gray-400">{formatCurrency(weakestK1lWeek?.k1l_profit)} {useRouteLhEfficiency ? 'gross profit' : 'profit'}</span>
             </div>
           </div>
         </div>
@@ -1043,10 +1061,10 @@ export default function FuelAnalytics() {
                 />
                 <Legend />
                 <Bar yAxisId="dollars" dataKey="k1l_grand_total" name={useRouteLhEfficiency ? 'Qualified Revenue' : 'Revenue'} fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name="Cost (alloc)" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name={useRouteLhEfficiency ? 'Driver Pay' : 'Cost (alloc)'} fill="#f43f5e" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_engine_hour" name="RPH /Hr" stroke="#67e8f9" strokeWidth={3} dot={{ r: 4 }} connectNulls />
-                <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cost_per_engine_hour" name="Cost /Hr" stroke="#fb7185" strokeWidth={3} dot={{ r: 4 }} connectNulls />
-                <Line yAxisId="rate" type="monotone" dataKey="k1l_profit_per_engine_hour" name="Profit /Hr" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cost_per_engine_hour" name={useRouteLhEfficiency ? 'Pay /Hr' : 'Cost /Hr'} stroke="#fb7185" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_profit_per_engine_hour" name={useRouteLhEfficiency ? 'Gross Profit /Hr' : 'Profit /Hr'} stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
               </ComposedChart>
             </ResponsiveContainer>
 
@@ -1054,8 +1072,8 @@ export default function FuelAnalytics() {
               <div className="grid min-w-[620px] grid-cols-[64px_repeat(3,minmax(104px,1fr))_minmax(108px,1fr)_80px] gap-3 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
                 <span className="whitespace-nowrap">Week</span>
                 <span className="whitespace-nowrap text-right">RPH</span>
-                <span className="whitespace-nowrap text-right">Cost/Hr</span>
-                <span className="whitespace-nowrap text-right">Profit/Hr</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Pay/Hr' : 'Cost/Hr'}</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Gross/Hr' : 'Profit/Hr'}</span>
                 <span className="whitespace-nowrap text-right">Profit</span>
                 <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Hours' : 'Eng Hrs'}</span>
               </div>

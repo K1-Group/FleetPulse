@@ -587,9 +587,14 @@ def _row_with_engine_kpis(
         if total_cost_per_route_lh_hour is not None and route_lh_hours > 0
         else None
     )
-    route_lh_profit = (
+    route_lh_loaded_profit = (
         round(route_lh_revenue - route_lh_allocated_cost, 2)
         if route_lh_allocated_cost is not None
+        else None
+    )
+    route_lh_direct_profit = (
+        round(route_lh_revenue - route_lh_driver_pay, 2)
+        if route_lh_hours > 0
         else None
     )
 
@@ -622,10 +627,16 @@ def _row_with_engine_kpis(
         "k1l_route_lh_target_hours": ROUTE_LH_MIN_HOURS,
         "k1l_route_lh_revenue_per_hour": _ratio(route_lh_revenue, route_lh_hours),
         "k1l_route_lh_driver_pay_per_hour": _ratio(route_lh_driver_pay, route_lh_hours),
+        "k1l_route_lh_direct_cost": _money(route_lh_driver_pay) if route_lh_hours > 0 else None,
+        "k1l_route_lh_direct_cost_per_hour": _ratio(route_lh_driver_pay, route_lh_hours),
+        "k1l_route_lh_direct_profit": route_lh_direct_profit,
+        "k1l_route_lh_direct_profit_per_hour": _ratio(route_lh_direct_profit, route_lh_hours),
         "k1l_route_lh_true_operating_cost": route_lh_allocated_cost,
         "k1l_route_lh_true_operating_cost_per_hour": _ratio(route_lh_allocated_cost, route_lh_hours),
-        "k1l_route_lh_profit": route_lh_profit,
-        "k1l_route_lh_profit_per_hour": _ratio(route_lh_profit, route_lh_hours),
+        "k1l_route_lh_loaded_profit": route_lh_loaded_profit,
+        "k1l_route_lh_loaded_profit_per_hour": _ratio(route_lh_loaded_profit, route_lh_hours),
+        "k1l_route_lh_profit": route_lh_direct_profit,
+        "k1l_route_lh_profit_per_hour": _ratio(route_lh_direct_profit, route_lh_hours),
         "k1g_target_gross_margin": _money(k1g_revenue * K1G_MARGIN_TARGET_PCT),
         "k1g_actual_gross_margin_before_overhead": _money(k1g_margin),
         "k1g_actual_gross_margin_pct_before_overhead": _ratio(k1g_margin, k1g_revenue),
@@ -689,10 +700,10 @@ def _summarize_weekly(rows: list[dict[str, Any]], operating_summary: dict[str, A
         if route_lh_totals["k1l_route_lh_hours"] > 0
         else None,
         "k1l_route_lh_true_operating_cost_per_hour": _ratio(total_cost, route_lh_totals["k1l_route_lh_hours"]),
-        "k1l_route_lh_profit": _money(route_lh_totals["k1l_route_lh_revenue"] - total_cost)
+        "k1l_route_lh_loaded_profit": _money(route_lh_totals["k1l_route_lh_revenue"] - total_cost)
         if route_lh_totals["k1l_route_lh_hours"] > 0
         else None,
-        "k1l_route_lh_profit_per_hour": _ratio(
+        "k1l_route_lh_loaded_profit_per_hour": _ratio(
             route_lh_totals["k1l_route_lh_revenue"] - total_cost,
             route_lh_totals["k1l_route_lh_hours"],
         ),
@@ -792,7 +803,8 @@ def get_k1l_weekly_engine_kpi_snapshot(
             "min_revenue": ROUTE_LH_MIN_REVENUE,
             "min_lifecycle_hours": ROUTE_LH_MIN_HOURS,
             "hour_window": "Xcelerator pickup start to delivery finish",
-            "cost_allocation": "approved K1L cost stack allocated by qualified route/LH lifecycle-hour share",
+            "primary_cost_basis": "Xcelerator driver pay divided by qualified route/LH lifecycle hours",
+            "loaded_cost_diagnostic": "approved K1L cost stack allocated by qualified route/LH lifecycle-hour share",
         },
         "complete_k1l_engine_kpi_available": not unresolved_sources and total_engine_hours > 0 and total_route_lh_hours > 0,
         "unresolved_sources": unresolved_sources,
