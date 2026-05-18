@@ -469,12 +469,12 @@ export default function FuelAnalytics() {
         fetchJson<K1OperatingCostKpiSnapshot | null>(
           '/api/fuel/k1l-operating-kpi',
           null,
-          20000,
+          90000,
         ),
         fetchJson<K1WeeklyEngineKpiSnapshot | null>(
           `/api/fuel/k1l-weekly-engine-kpi?start=${ytdStart}`,
           null,
-          30000,
+          90000,
         ),
       ])
       setK1OperatingKpi(k1Kpi)
