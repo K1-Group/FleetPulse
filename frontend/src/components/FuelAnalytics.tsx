@@ -290,6 +290,28 @@ interface EntityMarginSnapshot {
   excluded_delivery_centers: Record<string, number>
 }
 
+interface K1WeeklyEngineKpiSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: string
+  grain: string
+  complete_k1l_engine_kpi_available: boolean
+  unresolved_sources: string[]
+  xcelerator_source_type: string
+  sources: {
+    telemetry: OperatingCostSource
+    xcelerator_entity: OperatingCostSource
+    operating_cost_stack: OperatingCostSource
+  }
+  summary: EntityMarginSummary
+  weekly: WeeklyEntityMargin[]
+  best_week: WeeklyEntityMargin | null
+  weakest_week: WeeklyEntityMargin | null
+  excluded_delivery_centers: Record<string, number>
+}
+
 interface K1OperatingCostMonth {
   added_p_and_l_ops: number
   cost_per_mile: number | null
@@ -406,6 +428,7 @@ export default function FuelAnalytics() {
   const [operatingCost, setOperatingCost] = useState<OperatingCostSnapshot | null>(null)
   const [entityMargin, setEntityMargin] = useState<EntityMarginSnapshot | null>(null)
   const [k1OperatingKpi, setK1OperatingKpi] = useState<K1OperatingCostKpiSnapshot | null>(null)
+  const [k1WeeklyEngineKpi, setK1WeeklyEngineKpi] = useState<K1WeeklyEngineKpiSnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
@@ -442,26 +465,36 @@ export default function FuelAnalytics() {
       setQboStatus(qboReady)
       setLoading(false)
 
-      const [oc, em, k1Kpi] = await Promise.all([
-        fetchJson<OperatingCostSnapshot | null>(
-          `/api/fuel/operating-cost?start=${ytdStart}`,
-          null,
-          120000,
-        ),
-        fetchJson<EntityMarginSnapshot | null>(
-          `/api/fuel/entity-margin?start=${ytdStart}`,
-          null,
-          120000,
-        ),
+      const [k1Kpi, weeklyEngineKpi] = await Promise.all([
         fetchJson<K1OperatingCostKpiSnapshot | null>(
           '/api/fuel/k1l-operating-kpi',
           null,
           20000,
         ),
+        fetchJson<K1WeeklyEngineKpiSnapshot | null>(
+          `/api/fuel/k1l-weekly-engine-kpi?start=${ytdStart}`,
+          null,
+          30000,
+        ),
       ])
-      setOperatingCost(oc)
-      setEntityMargin(em)
       setK1OperatingKpi(k1Kpi)
+      setK1WeeklyEngineKpi(weeklyEngineKpi)
+
+      void Promise.all([
+        fetchJson<OperatingCostSnapshot | null>(
+          `/api/fuel/operating-cost?start=${ytdStart}`,
+          null,
+          30000,
+        ),
+        fetchJson<EntityMarginSnapshot | null>(
+          `/api/fuel/entity-margin?start=${ytdStart}`,
+          null,
+          30000,
+        ),
+      ]).then(([oc, em]) => {
+        setOperatingCost(oc)
+        setEntityMargin(em)
+      })
     } finally {
       setLoading(false)
     }
@@ -577,6 +610,7 @@ export default function FuelAnalytics() {
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
   const unresolvedCostSources = operatingCost?.unresolved_sources.join(', ') || ''
   const entitySummary = entityMargin?.summary
+  const weeklyEngineSummary = k1WeeklyEngineKpi?.summary
   const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available)
   const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available)
   const unresolvedEntitySources = entityMargin?.unresolved_sources.join(', ') || ''
@@ -588,7 +622,7 @@ export default function FuelAnalytics() {
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
     ? 'RPM - Final CPM'
     : 'RPM - CPM'
-  const k1lEngineHours = finiteValue(entitySummary?.operating_hours)
+  const k1lEngineHours = finiteValue(weeklyEngineSummary?.operating_hours ?? entitySummary?.operating_hours)
   const k1lTotalCost = finiteValue(k1OperatingSummary?.total_cost ?? entitySummary?.k1l_true_operating_cost)
   const k1lRevenue = finiteValue(k1OperatingSummary?.revenue ?? entitySummary?.k1l_grand_total)
   const k1lGrossProfit = finiteValue(k1OperatingSummary?.gross_profit) ?? (
@@ -597,7 +631,7 @@ export default function FuelAnalytics() {
   const k1lSummaryRevenuePerEngineHour = safeRatio(k1lRevenue, k1lEngineHours) ?? entitySummary?.k1l_revenue_per_engine_hour ?? null
   const k1lSummaryCostPerEngineHour = safeRatio(k1lTotalCost, k1lEngineHours) ?? entitySummary?.k1l_true_operating_cost_per_engine_hour ?? null
   const k1lSummaryProfitPerEngineHour = safeRatio(k1lGrossProfit, k1lEngineHours) ?? entitySummary?.k1l_profit_per_engine_hour ?? null
-  const weeklyK1lRows = (entityMargin?.weekly ?? []).map((row) => {
+  const weeklyK1lRows = (k1WeeklyEngineKpi?.weekly ?? entityMargin?.weekly ?? []).map((row) => {
     const rowEngineHours = finiteValue(row.operating_hours)
     const rowRevenue = finiteValue(row.k1l_grand_total)
     const rowRevenuePerEngineHour = safeRatio(rowRevenue, rowEngineHours) ?? row.k1l_revenue_per_engine_hour
@@ -832,7 +866,7 @@ export default function FuelAnalytics() {
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Engine Hrs</div>
-              <div className="text-white">{formatNumber(entitySummary?.operating_hours, 1)}</div>
+              <div className="text-white">{formatNumber(weeklyEngineSummary?.operating_hours ?? entitySummary?.operating_hours, 1)}</div>
             </div>
           </div>
         </div>

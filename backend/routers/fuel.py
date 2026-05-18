@@ -24,6 +24,7 @@ from services.atob_fuel_expense_service import (
 )
 from services.entity_margin_service import get_entity_margin_snapshot
 from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
+from services.k1l_weekly_engine_kpi_service import get_k1l_weekly_engine_kpi_snapshot
 from services.operating_cost_service import get_operating_cost_snapshot
 from services.qbo_expense_import_service import (
     get_qbo_expense_summary,
@@ -242,6 +243,30 @@ async def k1l_operating_kpi(
 ):
     """Return the lightweight K1 Logistics final CPM card snapshot."""
     return await asyncio.to_thread(get_k1l_operating_kpi_snapshot, date_value=date)
+
+
+@router.get("/k1l-weekly-engine-kpi")
+async def k1l_weekly_engine_kpi(
+    days: int = Query(370, ge=1, le=370),
+    start: str | None = Query(default=None, description="Inclusive YYYY-MM-DD start date."),
+    end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
+):
+    """Return fast weekly K1L revenue/cost/profit per engine-hour trend."""
+    cache_key = f"fuel:k1l-weekly-engine-kpi:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
+    try:
+        snapshot = await asyncio.to_thread(
+            get_k1l_weekly_engine_kpi_snapshot,
+            days=days,
+            start=start,
+            end=end,
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/summary")
