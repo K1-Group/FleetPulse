@@ -16,7 +16,7 @@ DEFAULT_XCELERATOR_WAREHOUSE_SERVER = (
     "fe7syha5hsjelmowgsaa2gmtb4-bx4adoadkmqudk6rcfrwhhxvrm"
     ".datawarehouse.fabric.microsoft.com"
 )
-DEFAULT_XCELERATOR_WAREHOUSE_DATABASE = "K1-BI-WH"
+DEFAULT_XCELERATOR_WAREHOUSE_DATABASE = "ReportingLakehouse"
 DEFAULT_ODBC_DRIVER = "ODBC Driver 18 for SQL Server"
 
 
@@ -107,4 +107,3 @@ def execute_sql_query(config: FabricWarehouseSqlConfig, query: str) -> list[dict
             {columns[index]: value for index, value in enumerate(row)}
             for row in cursor.fetchall()
         ]
-
