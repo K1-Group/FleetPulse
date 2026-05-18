@@ -33,6 +33,7 @@ from services.qbo_expense_import_service import (
     qbo_expense_import_status,
     validate_qbo_expense_import_api_key,
 )
+from services.revenue_productivity_service import get_revenue_productivity_snapshot
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_summary,
     import_xcelerator_review_orders,
@@ -501,6 +502,19 @@ async def fuel_efficiency_by_vehicle():
         
     except Exception as e:
         return []
+
+
+@router.get("/revenue-productivity")
+async def fuel_revenue_productivity(days: int = Query(7, ge=1, le=31)):
+    """Get weekly revenue per active truck and dispatch driver."""
+    cache_key = f"fuel:revenue-productivity:{days}"
+    cached = get_cached(cache_key)
+    if cached:
+        return cached
+
+    snapshot = await asyncio.to_thread(get_revenue_productivity_snapshot, days)
+    set_cached(cache_key, snapshot, ttl=900)
+    return snapshot
 
 
 def _parse_date(date_str: str) -> datetime:

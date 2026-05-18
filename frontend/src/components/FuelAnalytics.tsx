@@ -358,6 +358,35 @@ interface K1OperatingCostKpiSnapshot {
   } | null
 }
 
+interface RevenueProductivitySnapshot {
+  period_start: string
+  period_end: string
+  period_days: number
+  projection_mode: 'read_only'
+  source_authority: string
+  targets: {
+    revenue_per_driver_week: number
+    revenue_per_truck_week: number
+  }
+  summary: {
+    revenue: number | null
+    truck_count: number | null
+    driver_count: number | null
+    driver_source: string | null
+    revenue_per_truck: number | null
+    revenue_per_driver: number | null
+    truck_target_delta: number | null
+    driver_target_delta: number | null
+    truck_target_status: string
+    driver_target_status: string
+  }
+  sources: {
+    revenue: OperatingCostSource
+    trucks: OperatingCostSource
+    drivers: OperatingCostSource
+  }
+}
+
 const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
   value === null || value === undefined
     ? 'Pending'
@@ -381,6 +410,12 @@ const formatRate = (value?: number | null, suffix = '/mi') => (
 const formatPercent = (value?: number | null) => (
   value === null || value === undefined ? 'Pending' : `${(value * 100).toFixed(1)}%`
 )
+
+const formatDeltaCurrency = (value?: number | null) => {
+  if (value === null || value === undefined) return 'Pending'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${formatCurrency(value)}`
+}
 
 const rateDelta = (left?: number | null, right?: number | null) => (
   left === null || left === undefined || right === null || right === undefined
@@ -429,6 +464,7 @@ export default function FuelAnalytics() {
   const [entityMargin, setEntityMargin] = useState<EntityMarginSnapshot | null>(null)
   const [k1OperatingKpi, setK1OperatingKpi] = useState<K1OperatingCostKpiSnapshot | null>(null)
   const [k1WeeklyEngineKpi, setK1WeeklyEngineKpi] = useState<K1WeeklyEngineKpiSnapshot | null>(null)
+  const [revenueProductivity, setRevenueProductivity] = useState<RevenueProductivitySnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
@@ -465,7 +501,7 @@ export default function FuelAnalytics() {
       setQboStatus(qboReady)
       setLoading(false)
 
-      const [k1Kpi, weeklyEngineKpi] = await Promise.all([
+      const [k1Kpi, weeklyEngineKpi, productivity] = await Promise.all([
         fetchJson<K1OperatingCostKpiSnapshot | null>(
           '/api/fuel/k1l-operating-kpi',
           null,
@@ -476,9 +512,15 @@ export default function FuelAnalytics() {
           null,
           90000,
         ),
+        fetchJson<RevenueProductivitySnapshot | null>(
+          '/api/fuel/revenue-productivity?days=7',
+          null,
+          90000,
+        ),
       ])
       setK1OperatingKpi(k1Kpi)
       setK1WeeklyEngineKpi(weeklyEngineKpi)
+      setRevenueProductivity(productivity)
 
       void Promise.all([
         fetchJson<OperatingCostSnapshot | null>(
@@ -679,6 +721,19 @@ export default function FuelAnalytics() {
     : k1OperatingRevenueSourceStatus === 'awaiting_feed'
       ? 'text-amber-400'
       : 'text-red-300'
+  const productivitySummary = revenueProductivity?.summary
+  const truckTarget = revenueProductivity?.targets.revenue_per_truck_week ?? 7000
+  const driverTarget = revenueProductivity?.targets.revenue_per_driver_week ?? 5000
+  const truckProductivityClass = productivitySummary?.truck_target_status === 'above_target'
+    ? 'text-emerald-400'
+    : productivitySummary?.truck_target_status === 'below_target'
+      ? 'text-amber-300'
+      : 'text-gray-400'
+  const driverProductivityClass = productivitySummary?.driver_target_status === 'above_target'
+    ? 'text-emerald-400'
+    : productivitySummary?.driver_target_status === 'below_target'
+      ? 'text-amber-300'
+      : 'text-gray-400'
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -1403,6 +1458,38 @@ export default function FuelAnalytics() {
           <Fuel className="w-5 h-5 text-blue-400" />
           Vehicle Fuel Efficiency (7 Days)
         </h3>
+        <div className="mb-5 grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Revenue / Truck</div>
+            <div className={`mt-1 text-2xl font-bold ${truckProductivityClass}`}>
+              {formatCurrency(productivitySummary?.revenue_per_truck)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Target {formatCurrency(truckTarget)} / wk · {formatDeltaCurrency(productivitySummary?.truck_target_delta)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Revenue / Driver</div>
+            <div className={`mt-1 text-2xl font-bold ${driverProductivityClass}`}>
+              {formatCurrency(productivitySummary?.revenue_per_driver)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Target {formatCurrency(driverTarget)} / wk · {formatDeltaCurrency(productivitySummary?.driver_target_delta)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Active Trucks</div>
+            <div className="mt-1 text-2xl font-bold text-blue-300">{formatNumber(productivitySummary?.truck_count)}</div>
+            <div className="mt-1 text-xs text-gray-500">Geotab trucks with 10+ mi</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Dispatch Drivers</div>
+            <div className="mt-1 text-2xl font-bold text-purple-300">{formatNumber(productivitySummary?.driver_count)}</div>
+            <div className="mt-1 text-xs text-gray-500">
+              {productivitySummary?.driver_source === 'geotab_trip_driver_fallback' ? 'Geotab fallback' : 'Xcelerator drivers'}
+            </div>
+          </div>
+        </div>
         {efficiency.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
