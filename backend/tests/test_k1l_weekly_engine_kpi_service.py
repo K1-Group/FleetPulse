@@ -66,9 +66,33 @@ def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
             {"status": "healthy", "source_authority": "Geotab", "projection_mode": "read_only", "row_count": 2},
         )
 
+    def fake_route_lh_weekly(start, end, *, config):
+        return (
+            {
+                "2026-05-04": {
+                    **service._empty_route_lh_week(date(2026, 5, 4), date(2026, 5, 10)),
+                    "k1l_route_lh_orders": 1,
+                    "k1l_route_lh_candidate_orders": 1,
+                    "k1l_route_lh_revenue": 1200,
+                    "k1l_route_lh_driver_pay": 500,
+                    "k1l_route_lh_hours": 12,
+                },
+                "2026-05-11": {
+                    **service._empty_route_lh_week(date(2026, 5, 11), date(2026, 5, 17)),
+                    "k1l_route_lh_orders": 2,
+                    "k1l_route_lh_candidate_orders": 2,
+                    "k1l_route_lh_revenue": 2400,
+                    "k1l_route_lh_driver_pay": 900,
+                    "k1l_route_lh_hours": 18,
+                },
+            },
+            {"status": "healthy", "source_authority": "Xcelerator route/LH", "projection_mode": "read_only", "row_count": 3},
+        )
+
     monkeypatch.setattr(service, "get_k1l_operating_kpi_snapshot", fake_operating_kpi)
     monkeypatch.setattr(service, "_xcelerator_entity_weekly", fake_xcelerator_weekly)
     monkeypatch.setattr(service, "_recent_odata_geotab_weekly_metrics", fake_geotab_weekly)
+    monkeypatch.setattr(service, "_load_xcelerator_route_lh_weekly", fake_route_lh_weekly)
 
     snapshot = service.get_k1l_weekly_engine_kpi_snapshot(start="2026-05-04", end="2026-05-17")
 
@@ -77,6 +101,62 @@ def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
     assert snapshot["summary"]["k1l_revenue_per_engine_hour"] == 100
     assert snapshot["summary"]["k1l_true_operating_cost_per_engine_hour"] == 60
     assert snapshot["summary"]["k1l_profit_per_engine_hour"] == 40
+    assert snapshot["summary"]["k1l_route_lh_orders"] == 3
+    assert snapshot["summary"]["k1l_route_lh_revenue_per_hour"] == 120
     assert snapshot["weekly"][0]["k1l_true_operating_cost"] == 600
     assert snapshot["weekly"][1]["k1l_profit_per_engine_hour"] == 45
+    assert snapshot["weekly"][1]["k1l_route_lh_profit_per_hour"] == 73.3333
     assert snapshot["best_week"]["week_start"] == "2026-05-11"
+
+
+def test_route_lh_weekly_applies_revenue_and_duration_rules():
+    rows = [
+        {
+            "pickup_date": date(2026, 5, 4),
+            "delivery_center": "K1 Logistics Inc",
+            "revenue": 1200,
+            "driver_pay": 600,
+            "service": "LH",
+            "route": "R1",
+            "route_hours": 12,
+        },
+        {
+            "pickup_date": date(2026, 5, 4),
+            "delivery_center": "K1 Logistics Inc",
+            "revenue": 999,
+            "driver_pay": 300,
+            "service": "LH",
+            "route": "R2",
+            "route_hours": 13,
+        },
+        {
+            "pickup_date": date(2026, 5, 4),
+            "delivery_center": "K1 Logistics Inc",
+            "revenue": 1500,
+            "driver_pay": 700,
+            "service": "LH",
+            "route": "R3",
+            "route_hours": 11.5,
+        },
+        {
+            "pickup_date": date(2026, 5, 4),
+            "delivery_center": "K1 Logistics Inc",
+            "revenue": 2000,
+            "driver_pay": 800,
+            "service": "Local",
+            "route": "",
+            "route_hours": 14,
+        },
+    ]
+
+    weekly, source = service._route_lh_weekly_from_rows(rows, date(2026, 5, 4), date(2026, 5, 10))
+    week = weekly["2026-05-04"]
+
+    assert source["status"] == "healthy"
+    assert source["row_count"] == 1
+    assert week["k1l_route_lh_orders"] == 1
+    assert week["k1l_route_lh_revenue"] == 1200
+    assert week["k1l_route_lh_hours"] == 12
+    assert week["k1l_route_lh_excluded_low_revenue_orders"] == 1
+    assert week["k1l_route_lh_excluded_short_duration_orders"] == 1
+    assert week["k1l_route_lh_excluded_non_route_lh_orders"] == 1
