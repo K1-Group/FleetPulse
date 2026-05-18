@@ -611,14 +611,15 @@ export default function FuelAnalytics() {
   const unresolvedCostSources = operatingCost?.unresolved_sources.join(', ') || ''
   const entitySummary = entityMargin?.summary
   const weeklyEngineSummary = k1WeeklyEngineKpi?.summary
-  const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available)
-  const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available)
+  const marginSummary = entitySummary ?? weeklyEngineSummary
   const unresolvedEntitySources = entityMargin?.unresolved_sources.join(', ') || ''
   const monthlyK1CpmRows = (k1OperatingKpi?.monthly ?? []).filter((row) => row.cost_per_mile !== null)
   const k1OperatingSummary = k1OperatingKpi?.summary
   const k1lFinalCpm = k1OperatingSummary?.cost_per_mile ?? null
   const k1lRevenuePerMile = k1OperatingSummary?.revenue_per_mile ?? entitySummary?.k1l_revenue_per_mile ?? null
   const k1lProfitPerMile = k1OperatingSummary?.profit_per_mile ?? rateDelta(k1lRevenuePerMile, k1lFinalCpm)
+  const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available || k1lFinalCpm !== null)
+  const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available || k1lFinalCpm !== null)
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
     ? 'RPM - Final CPM'
     : 'RPM - CPM'
@@ -631,6 +632,10 @@ export default function FuelAnalytics() {
   const k1lSummaryRevenuePerEngineHour = safeRatio(k1lRevenue, k1lEngineHours) ?? entitySummary?.k1l_revenue_per_engine_hour ?? null
   const k1lSummaryCostPerEngineHour = safeRatio(k1lTotalCost, k1lEngineHours) ?? entitySummary?.k1l_true_operating_cost_per_engine_hour ?? null
   const k1lSummaryProfitPerEngineHour = safeRatio(k1lGrossProfit, k1lEngineHours) ?? entitySummary?.k1l_profit_per_engine_hour ?? null
+  const entitySourceCards = (entityMargin?.sources ?? k1WeeklyEngineKpi?.sources ?? {}) as Record<string, OperatingCostSource>
+  const entityTrendRows = (entityMargin?.weekly.length ?? 0) > 0
+    ? entityMargin?.weekly ?? []
+    : k1WeeklyEngineKpi?.weekly ?? []
   const weeklyK1lRows = (k1WeeklyEngineKpi?.weekly ?? entityMargin?.weekly ?? []).map((row) => {
     const rowEngineHours = finiteValue(row.operating_hours)
     const rowRevenue = finiteValue(row.k1l_grand_total)
@@ -749,11 +754,11 @@ export default function FuelAnalytics() {
               K1 Entity CPM & Margin
             </h3>
             <div className="mt-1 text-sm text-gray-400">
-              {entityMargin?.period_start ?? 'YTD'} to {entityMargin?.period_end ?? 'today'} · {completeEntityCpm ? 'K1L CPM ready' : `K1L CPM pending${unresolvedEntitySources ? ` · ${unresolvedEntitySources}` : ''}`}
+              {entityMargin?.period_start ?? k1WeeklyEngineKpi?.period_start ?? 'YTD'} to {entityMargin?.period_end ?? k1WeeklyEngineKpi?.period_end ?? k1OperatingKpi?.as_of_date ?? 'today'} · {completeEntityCpm ? 'K1L CPM ready' : `K1L CPM pending${unresolvedEntitySources ? ` · ${unresolvedEntitySources}` : ''}`}
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            {Object.entries((entityMargin?.sources ?? {}) as Record<string, OperatingCostSource>).map(([key, source]) => (
+            {Object.entries(entitySourceCards).map(([key, source]) => (
               <div key={key} className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
                 <div className="text-[10px] uppercase tracking-wide text-gray-500">{key.replace('_', ' ')}</div>
                 <div className={source.status === 'healthy' ? 'text-emerald-400' : source.status === 'awaiting_feed' ? 'text-amber-400' : 'text-red-300'}>
@@ -766,45 +771,45 @@ export default function FuelAnalytics() {
 
         <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
-            <div className="text-xs uppercase text-gray-500">K1L Fuel + Driver CPM</div>
+            <div className="text-xs uppercase text-gray-500">K1L Final CPM</div>
             <div className="mt-1 text-2xl font-bold text-emerald-400">
-              {formatRate(entitySummary?.k1l_fuel_plus_driver_cpm)}
+              {formatRate(k1lFinalCpm ?? marginSummary?.k1l_true_operating_cpm)}
             </div>
-            <div className="mt-1 text-xs text-gray-500">{formatCurrency(entitySummary?.k1l_grand_total)} revenue</div>
+            <div className="mt-1 text-xs text-gray-500">{formatCurrency(k1lTotalCost ?? marginSummary?.k1l_true_operating_cost)} total cost</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="text-xs uppercase text-gray-500">K1L RPM</div>
             <div className="mt-1 text-2xl font-bold text-teal-300">
-              {formatRate(entitySummary?.k1l_revenue_per_mile)}
+              {formatRate(k1lRevenuePerMile)}
             </div>
             <div className="mt-1 text-xs text-gray-500">Xcelerator revenue / Geotab miles</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
-            <div className="text-xs uppercase text-gray-500">K1L True CPM</div>
+            <div className="text-xs uppercase text-gray-500">K1L Profit / Mi</div>
             <div className="mt-1 text-2xl font-bold text-blue-400">
-              {formatRate(completeEntityTrueCpm ? entitySummary?.k1l_true_operating_cpm : null)}
+              {formatRate(completeEntityTrueCpm ? k1lProfitPerMile : null)}
             </div>
-            <div className="mt-1 text-xs text-gray-500">Incl. QBO overhead</div>
+            <div className="mt-1 text-xs text-gray-500">{k1lProfitPerMileLabel}</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
               <Target className="h-3.5 w-3.5" /> K1L GM Target
             </div>
-            <div className="mt-1 text-2xl font-bold text-white">{formatCurrency(entitySummary?.k1l_target_gross_margin)}</div>
-            <div className="mt-1 text-xs text-gray-500">72% · actual {formatPercent(entitySummary?.k1l_actual_gross_margin_pct_before_fuel)}</div>
+            <div className="mt-1 text-2xl font-bold text-white">{formatCurrency(marginSummary?.k1l_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">72% · actual {formatPercent(marginSummary?.k1l_actual_gross_margin_pct_before_fuel)}</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
               <Target className="h-3.5 w-3.5" /> K1G GM Target
             </div>
-            <div className="mt-1 text-2xl font-bold text-purple-400">{formatCurrency(entitySummary?.k1g_target_gross_margin)}</div>
-            <div className="mt-1 text-xs text-gray-500">20% · actual {formatPercent(entitySummary?.k1g_actual_gross_margin_pct_before_overhead)}</div>
+            <div className="mt-1 text-2xl font-bold text-purple-400">{formatCurrency(marginSummary?.k1g_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">20% · actual {formatPercent(marginSummary?.k1g_actual_gross_margin_pct_before_overhead)}</div>
           </div>
         </div>
 
-        {(entityMargin?.weekly.length ?? 0) > 0 ? (
+        {entityTrendRows.length > 0 ? (
           <ResponsiveContainer width="100%" height={320}>
-            <ComposedChart data={entityMargin?.weekly ?? []}>
+            <ComposedChart data={entityTrendRows}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="week_start" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
               <YAxis yAxisId="margin" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
