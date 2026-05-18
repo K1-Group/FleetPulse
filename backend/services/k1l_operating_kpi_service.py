@@ -344,7 +344,6 @@ def _load_warehouse_k1l_monthly_revenue(
                 "required Xcelerator revenue columns."
             ),
             "row_count": 0,
-            "database": config.database,
         }
     table_schema = _read_string(_find_value(table_rows[0], ("table_schema", "TABLE_SCHEMA")), "dbo")
     table_name = _read_string(_find_value(table_rows[0], ("table_name", "TABLE_NAME")), "xcelerator_review_orders")
@@ -374,7 +373,6 @@ def _load_warehouse_k1l_monthly_revenue(
         "message": "" if revenue_by_month else "Fabric Warehouse returned rows, but none matched K1 Logistics Inc monthly revenue.",
         "row_count": included_rows,
         "table": f"{table_schema}.{table_name}",
-        "database": config.database,
     }
 
 

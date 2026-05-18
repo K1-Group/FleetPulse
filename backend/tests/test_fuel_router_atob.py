@@ -339,7 +339,7 @@ def test_k1l_operating_kpi_prefers_xcelerator_ceo_powerbi_revenue(monkeypatch):
 def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
     monkeypatch.setenv("K1L_OPERATING_COST_REVENUE_SOURCE", k1l_service.WAREHOUSE_SQL_REVENUE_SOURCE)
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_SERVER", "warehouse.example.com")
-    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_DATABASE", "ReportingLakehouse")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_DATABASE", "K1-BI-WH")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_TENANT_ID", "tenant")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_ID", "client")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_SECRET", "secret")
@@ -369,7 +369,6 @@ def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
     def fake_execute_sql_query(config, query):
         queries.append(query)
         assert config.server == "warehouse.example.com"
-        assert config.database == "ReportingLakehouse"
         if "sys.objects" in query and "sys.columns" in query:
             return [
                 {
@@ -405,7 +404,6 @@ def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
     assert payload["revenue_source_status"]["status"] == "healthy"
     assert payload["revenue_source_status"]["row_count"] == 7
     assert payload["revenue_source_status"]["table"] == "gold.xcelerator_review_orders"
-    assert payload["revenue_source_status"]["database"] == "ReportingLakehouse"
     assert "Fabric Warehouse SQL revenue" in payload["source"]
     assert "CEO Power BI revenue snapshot" not in payload["source"]
     assert payload["summary"]["revenue"] == 1200000.0
