@@ -100,11 +100,13 @@ def execute_sql_query(config: FabricWarehouseSqlConfig, query: str) -> list[dict
         raise RuntimeError("pyodbc_not_installed") from exc
 
     with pyodbc.connect(config.connection_string(), timeout=config.timeout_seconds) as connection:
+        connection.timeout = config.timeout_seconds
         cursor = connection.cursor()
+        if hasattr(cursor, "timeout"):
+            cursor.timeout = config.timeout_seconds
         cursor.execute(query)
         columns = [column[0] for column in (cursor.description or [])]
         return [
             {columns[index]: value for index, value in enumerate(row)}
             for row in cursor.fetchall()
         ]
-
