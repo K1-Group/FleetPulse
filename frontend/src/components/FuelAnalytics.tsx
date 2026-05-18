@@ -1050,24 +1050,24 @@ export default function FuelAnalytics() {
               </ComposedChart>
             </ResponsiveContainer>
 
-            <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-950/30">
-              <div className="grid grid-cols-6 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
-                <span>Week</span>
-                <span className="text-right">RPH</span>
-                <span className="text-right">Cost/Hr</span>
-                <span className="text-right">Profit/Hr</span>
-                <span className="text-right">Profit</span>
-                <span className="text-right">{useRouteLhEfficiency ? 'Hours' : 'Eng Hrs'}</span>
+            <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid min-w-[620px] grid-cols-[64px_repeat(3,minmax(104px,1fr))_minmax(108px,1fr)_80px] gap-3 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span className="whitespace-nowrap">Week</span>
+                <span className="whitespace-nowrap text-right">RPH</span>
+                <span className="whitespace-nowrap text-right">Cost/Hr</span>
+                <span className="whitespace-nowrap text-right">Profit/Hr</span>
+                <span className="whitespace-nowrap text-right">Profit</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Hours' : 'Eng Hrs'}</span>
               </div>
               <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
                 {weeklyK1lRows.map((row) => (
-                  <div key={row.week_start} className="grid grid-cols-6 gap-2 px-3 py-2">
-                    <span className="font-medium text-white">{row.week_start.slice(5)}</span>
-                    <span className="text-right font-semibold text-cyan-300">{formatRate(row.k1l_revenue_per_engine_hour, '/hr')}</span>
-                    <span className="text-right font-semibold text-rose-300">{formatRate(row.k1l_true_operating_cost_per_engine_hour, '/hr')}</span>
-                    <span className="text-right font-semibold text-amber-300">{formatRate(row.k1l_profit_per_engine_hour, '/hr')}</span>
-                    <span className="text-right text-gray-300">{formatCurrency(row.k1l_profit)}</span>
-                    <span className="text-right text-gray-400">{formatNumber(row.operating_hours, 1)}</span>
+                  <div key={row.week_start} className="grid min-w-[620px] grid-cols-[64px_repeat(3,minmax(104px,1fr))_minmax(108px,1fr)_80px] gap-3 px-3 py-2">
+                    <span className="whitespace-nowrap font-medium text-white">{row.week_start.slice(5)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-cyan-300">{formatRate(row.k1l_revenue_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-rose-300">{formatRate(row.k1l_true_operating_cost_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-amber-300">{formatRate(row.k1l_profit_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right text-gray-300">{formatCurrency(row.k1l_profit)}</span>
+                    <span className="whitespace-nowrap text-right text-gray-400">{formatNumber(row.operating_hours, 1)}</span>
                   </div>
                 ))}
               </div>
