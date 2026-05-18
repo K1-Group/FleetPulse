@@ -20,6 +20,47 @@ from services.qbo_expense_import_service import QboExpenseStateStore, import_qbo
 from integrations.xcelerator.review_orders_feed import ReviewOrdersFeedConfig  # noqa: E402
 
 
+def test_geotab_weekly_metrics_uses_bulk_dated_rows(monkeypatch):
+    calls = []
+
+    async def bulk_vehicle_kpis(start, end, *, top=5000):
+        calls.append((start, end, top))
+        return [
+            {
+                "LocalDate": "2026-05-04",
+                "Distance_Km": 160.934,
+                "TotalDriveTime_Hours": 5,
+                "TotalIdleTime_Hours": 1,
+                "TotalTrips": 2,
+            },
+            {
+                "LocalDate": "2026-05-11",
+                "Distance_Km": 80.467,
+                "TotalDriveTime_Hours": 2,
+                "TotalIdleTime_Hours": 0.5,
+                "TotalTrips": 1,
+            },
+        ]
+
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", bulk_vehicle_kpis)
+
+    metrics, source = asyncio.run(
+        service._geotab_weekly_metrics(
+            [
+                (date(2026, 5, 4), date(2026, 5, 10)),
+                (date(2026, 5, 11), date(2026, 5, 17)),
+            ]
+        )
+    )
+
+    assert len(calls) == 1
+    assert calls[0][2] == 50000
+    assert source["status"] == "healthy"
+    assert source["row_count"] == 2
+    assert metrics["2026-05-04"]["miles"] == 100.0
+    assert metrics["2026-05-11"]["operating_hours"] == 2.5
+
+
 def test_geotab_weekly_metrics_retries_transient_fetch_errors(monkeypatch):
     calls = {"count": 0}
 

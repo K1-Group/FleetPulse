@@ -257,14 +257,50 @@ def _empty_week(start: date, end: date) -> dict[str, Any]:
     }
 
 
-async def _fetch_vehicle_kpi_rows(start: date, end: date) -> list[dict[str, Any]]:
+async def _fetch_vehicle_kpi_rows(start: date, end: date, *, top: int = 5000) -> list[dict[str, Any]]:
     from routers import data_connector
 
     return await data_connector._odata_get(  # noqa: SLF001 - shared internal OData helper.
         "VehicleKpi_Daily",
         search=f"from_{start.isoformat()}_to_{end.isoformat()}",
-        top=5000,
+        top=top,
     )
+
+
+def _vehicle_kpi_day(row: dict[str, Any]) -> date | None:
+    return _coerce_date(
+        _find_value(
+            row,
+            (
+                "Date",
+                "date",
+                "Day",
+                "day",
+                "ReportDate",
+                "Report Date",
+                "LocalDate",
+                "Local Date",
+                "ActivityDate",
+                "Activity Date",
+                "CalendarDate",
+                "Calendar Date",
+            ),
+        )
+    )
+
+
+def _accumulate_vehicle_kpi_row(bucket: dict[str, Any], row: dict[str, Any]) -> None:
+    distance_km = _number(
+        _find_value(row, ("Distance_Km", "GPS_Distance_Km", "TotalDistance_Km"))
+    )
+    drive_hours = _number(_find_value(row, ("DriveDuration_Seconds",))) / 3600
+    drive_hours += _number(_find_value(row, ("TotalDriveTime_Hours",)))
+    idle_hours = _number(_find_value(row, ("IdleDuration_Seconds",))) / 3600
+    idle_hours += _number(_find_value(row, ("TotalIdleTime_Hours",)))
+    bucket["miles"] += distance_km * KM_TO_MILES
+    bucket["drive_hours"] += drive_hours
+    bucket["idle_hours"] += idle_hours
+    bucket["trips"] += int(_number(_find_value(row, ("Trip_Count", "TotalTrips"))))
 
 
 async def _geotab_weekly_metrics(
@@ -275,6 +311,33 @@ async def _geotab_weekly_metrics(
     }
     row_count = 0
     failures: list[str] = []
+    period_start = weeks[0][0]
+    period_end = weeks[-1][1]
+
+    if os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_BULK", "true").strip().lower() not in {"0", "false", "no"}:
+        try:
+            bulk_top = max(int(os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_BULK_TOP", "50000")), 1000)
+        except ValueError:
+            bulk_top = 50000
+        try:
+            rows = await _fetch_vehicle_kpi_rows(period_start, period_end, top=bulk_top)
+            dated_rows = 0
+            for row in rows:
+                row_day = _vehicle_kpi_day(row)
+                if row_day is None or not (period_start <= row_day <= period_end):
+                    continue
+                dated_rows += 1
+                bucket = metrics.setdefault(_week_key(row_day), _empty_week(row_day, row_day))
+                _accumulate_vehicle_kpi_row(bucket, row)
+            if dated_rows:
+                for bucket in metrics.values():
+                    bucket["miles"] = round(bucket["miles"], 2)
+                    bucket["drive_hours"] = round(bucket["drive_hours"], 2)
+                    bucket["idle_hours"] = round(bucket["idle_hours"], 2)
+                    bucket["operating_hours"] = round(bucket["drive_hours"] + bucket["idle_hours"], 2)
+                return metrics, _source("healthy", GEOTAB_AUTHORITY, row_count=dated_rows)
+        except Exception:  # pragma: no cover - fallback keeps legacy path available.
+            pass
 
     try:
         concurrency = max(int(os.getenv("FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY", "4")), 1)
@@ -312,17 +375,7 @@ async def _geotab_weekly_metrics(
 
         row_count += len(rows)
         for row in rows:
-            distance_km = _number(
-                _find_value(row, ("Distance_Km", "GPS_Distance_Km", "TotalDistance_Km"))
-            )
-            drive_hours = _number(_find_value(row, ("DriveDuration_Seconds",))) / 3600
-            drive_hours += _number(_find_value(row, ("TotalDriveTime_Hours",)))
-            idle_hours = _number(_find_value(row, ("IdleDuration_Seconds",))) / 3600
-            idle_hours += _number(_find_value(row, ("TotalIdleTime_Hours",)))
-            bucket["miles"] += distance_km * KM_TO_MILES
-            bucket["drive_hours"] += drive_hours
-            bucket["idle_hours"] += idle_hours
-            bucket["trips"] += int(_number(_find_value(row, ("Trip_Count", "TotalTrips"))))
+            _accumulate_vehicle_kpi_row(bucket, row)
 
     for bucket in metrics.values():
         bucket["miles"] = round(bucket["miles"], 2)
