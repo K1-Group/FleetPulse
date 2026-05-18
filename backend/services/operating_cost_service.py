@@ -577,6 +577,9 @@ def _accumulate_vehicle_kpi_row(bucket: dict[str, Any], row: dict[str, Any]) -> 
     drive_hours += _number(_find_value(row, ("TotalDriveTime_Hours",)))
     idle_hours = _number(_find_value(row, ("IdleDuration_Seconds",))) / 3600
     idle_hours += _number(_find_value(row, ("TotalIdleTime_Hours",)))
+    engine_hours = _number(_find_value(row, ("TotalEngine_Hours", "Engine_Hours", "Engine Hours")))
+    if drive_hours + idle_hours <= 0 and engine_hours > 0:
+        drive_hours = engine_hours
     bucket["miles"] += distance_km * KM_TO_MILES
     bucket["drive_hours"] += drive_hours
     bucket["idle_hours"] += idle_hours

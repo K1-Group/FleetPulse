@@ -9,6 +9,7 @@ This projection keeps source ownership read-only:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -21,9 +22,13 @@ from services.entity_margin_service import (
 )
 from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
 from services.operating_cost_service import (
-    GEOTAB_FABRIC_AUTHORITY,
+    GEOTAB_AUTHORITY,
+    _accumulate_vehicle_kpi_row,
+    _empty_week,
     _geotab_warehouse_config_from_env,
     _resolve_window,
+    _source,
+    _vehicle_kpi_day,
     _warehouse_geotab_weekly_metrics,
     _week_key,
     _week_windows,
@@ -63,6 +68,78 @@ def _empty_source(status: str, authority: str, message: str = "") -> dict[str, A
         "message": message,
         "row_count": 0,
     }
+
+
+def _recent_odata_geotab_weekly_metrics(
+    period_start: date,
+    period_end: date,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    from routers import data_connector
+
+    rows = asyncio.run(
+        data_connector._odata_get(  # noqa: SLF001 - bounded read-only fallback.
+            "VehicleKpi_Daily",
+            search="last_90_day",
+            top=5000,
+        )
+    )
+    metrics: dict[str, dict[str, Any]] = {}
+    included_dates: list[date] = []
+    for row in rows:
+        row_day = _vehicle_kpi_day(row)
+        if row_day is None or not (period_start <= row_day <= period_end):
+            continue
+        included_dates.append(row_day)
+        bucket = metrics.setdefault(_week_key(row_day), _empty_week(row_day, row_day))
+        _accumulate_vehicle_kpi_row(bucket, row)
+
+    for bucket in metrics.values():
+        bucket["miles"] = round(bucket["miles"], 2)
+        bucket["drive_hours"] = round(bucket["drive_hours"], 2)
+        bucket["idle_hours"] = round(bucket["idle_hours"], 2)
+        bucket["operating_hours"] = round(bucket["drive_hours"] + bucket["idle_hours"], 2)
+
+    if not metrics:
+        return {}, _source(
+            "awaiting_feed",
+            GEOTAB_AUTHORITY,
+            message="Geotab Data Connector returned no recent VehicleKpi_Daily rows.",
+        )
+
+    status = "healthy"
+    message = ""
+    if min(included_dates) > period_start:
+        status = "partial"
+        message = (
+            f"Geotab Data Connector fallback covers {min(included_dates).isoformat()}.."
+            f"{max(included_dates).isoformat()}; earlier YTD weeks remain pending."
+        )
+    return metrics, _source(status, GEOTAB_AUTHORITY, message=message, row_count=len(included_dates))
+
+
+def _fast_geotab_weekly_metrics(
+    weeks: list[tuple[date, date]],
+    *,
+    period_start: date,
+    period_end: date,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    try:
+        telemetry_weekly, telemetry_source = _warehouse_geotab_weekly_metrics(
+            weeks,
+            config=_geotab_warehouse_config_from_env(),
+        )
+        if telemetry_weekly:
+            return telemetry_weekly, telemetry_source
+    except Exception:
+        telemetry_weekly = {}
+    try:
+        return _recent_odata_geotab_weekly_metrics(period_start, period_end)
+    except Exception as exc:
+        return {}, _empty_source(
+            "unavailable",
+            GEOTAB_AUTHORITY,
+            f"{type(exc).__name__}: {exc}",
+        )
 
 
 def _row_with_engine_kpis(
@@ -179,18 +256,11 @@ def get_k1l_weekly_engine_kpi_snapshot(
         period_end,
         config=config,
     )
-    try:
-        telemetry_weekly, telemetry_source = _warehouse_geotab_weekly_metrics(
-            weeks,
-            config=_geotab_warehouse_config_from_env(),
-        )
-    except Exception as exc:
-        telemetry_weekly = {}
-        telemetry_source = _empty_source(
-            "unavailable",
-            GEOTAB_FABRIC_AUTHORITY,
-            f"{type(exc).__name__}: {exc}",
-        )
+    telemetry_weekly, telemetry_source = _fast_geotab_weekly_metrics(
+        weeks,
+        period_start=period_start,
+        period_end=period_end,
+    )
 
     total_engine_hours = sum(_number(row.get("operating_hours")) for row in telemetry_weekly.values())
     total_cost_per_engine_hour = _ratio(total_cost, total_engine_hours)
