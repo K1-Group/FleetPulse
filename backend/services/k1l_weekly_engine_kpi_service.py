@@ -185,7 +185,12 @@ def _warehouse_route_lh_sql(
     table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
     pickup_date_expr = f"TRY_CONVERT(date, {_quote_sql_identifier(pickup_date_column)})"
     start_expr = _datetime_sql(start_column)
-    finish_expr = "COALESCE(" + ", ".join(_datetime_sql(column) for column in finish_columns) + ")"
+    finish_datetime_exprs = [_datetime_sql(column) for column in finish_columns]
+    finish_expr = (
+        finish_datetime_exprs[0]
+        if len(finish_datetime_exprs) == 1
+        else "COALESCE(" + ", ".join(finish_datetime_exprs) + ")"
+    )
     driver_pay_expr = (
         f"TRY_CONVERT(decimal(18, 2), {_quote_sql_identifier(driver_pay_column)})"
         if driver_pay_column

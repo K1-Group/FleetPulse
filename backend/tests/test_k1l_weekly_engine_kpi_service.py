@@ -12,6 +12,26 @@ sys.path.insert(0, str(BACKEND_DIR))
 from services import k1l_weekly_engine_kpi_service as service  # noqa: E402
 
 
+def test_route_lh_sql_uses_single_finish_column_without_coalesce():
+    sql = service._warehouse_route_lh_sql(
+        start=date(2026, 1, 1),
+        end=date(2026, 1, 31),
+        table_schema="dbo",
+        table_name="xcelerator_review_orders",
+        pickup_date_column="pickup_target_from",
+        delivery_center_column="delivery_center",
+        revenue_column="grand_total_amount",
+        driver_pay_column="driver_pay_amount",
+        service_column="service",
+        route_column="route_no",
+        start_column="pickup_target_from",
+        finish_columns=["pod_datetime"],
+    )
+
+    assert "COALESCE(TRY_CONVERT(datetime2, [pod_datetime]))" not in sql
+    assert "TRY_CONVERT(datetime2, [pod_datetime]) AS finish_at" in sql
+
+
 def test_weekly_engine_kpi_allocates_cost_by_engine_hour(monkeypatch):
     def fake_operating_kpi():
         return {
