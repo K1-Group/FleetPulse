@@ -31,6 +31,8 @@ async def _fake_operating_cost_snapshot(days=90, start=None, end=None):
                 "week_end": "2026-05-06",
                 "miles": 100.0,
                 "drive_hours": 5.0,
+                "idle_hours": 1.0,
+                "operating_hours": 6.0,
                 "fuel_cost": 100.0,
                 "insurance_cost": 50.0,
                 "other_expense_cost": 75.0,
@@ -76,9 +78,12 @@ def test_entity_margin_snapshot_keeps_k1l_cpm_and_k1g_margin_separate(monkeypatc
     assert summary["k1l_grand_total"] == 1000.0
     assert summary["k1l_driver_pay"] == 250.0
     assert summary["k1l_revenue_per_mile"] == 10.0
+    assert summary["k1l_revenue_per_engine_hour"] == 166.6667
     assert summary["k1l_driver_pay_cpm"] == 2.5
     assert summary["k1l_fuel_plus_driver_cpm"] == 3.5
     assert summary["k1l_true_operating_cpm"] == 4.75
+    assert summary["k1l_true_operating_cost_per_engine_hour"] == 79.1667
+    assert summary["k1l_profit_per_engine_hour"] == 87.5
     assert summary["k1l_target_gross_margin"] == 720.0
     assert summary["k1l_actual_gross_margin_pct_before_fuel"] == 0.75
     assert summary["k1g_orders"] == 1

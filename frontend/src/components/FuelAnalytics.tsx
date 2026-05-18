@@ -222,6 +222,8 @@ interface OperatingCostSnapshot {
 interface EntityMarginSummary {
   miles: number
   drive_hours: number
+  idle_hours: number
+  operating_hours: number
   fuel_cost: number
   insurance_cost: number
   other_expense_cost: number
@@ -234,11 +236,19 @@ interface EntityMarginSummary {
   k1l_actual_gross_margin_after_fuel: number
   k1l_actual_gross_margin_pct_after_fuel: number | null
   k1l_revenue_per_mile: number | null
+  k1l_revenue_per_drive_hour: number | null
+  k1l_revenue_per_engine_hour: number | null
   k1l_driver_pay_cpm: number | null
   k1l_fuel_cpm: number | null
   k1l_fuel_plus_driver_cpm: number | null
   k1l_true_operating_cpm: number | null
   k1l_true_operating_cost: number | null
+  k1l_true_operating_cost_per_drive_hour: number | null
+  k1l_true_operating_cost_per_engine_hour: number | null
+  k1l_profit: number | null
+  k1l_profit_per_mile: number | null
+  k1l_profit_per_drive_hour: number | null
+  k1l_profit_per_engine_hour: number | null
   k1g_orders: number
   k1g_grand_total: number
   k1g_driver_pay: number
@@ -354,6 +364,12 @@ const rateDelta = (left?: number | null, right?: number | null) => (
   left === null || left === undefined || right === null || right === undefined
     ? null
     : Number((left - right).toFixed(3))
+)
+
+const finiteValue = (value?: number | null) => (
+  value === null || value === undefined || !Number.isFinite(Number(value))
+    ? null
+    : Number(value)
 )
 
 async function fetchJson<T>(url: string, fallback: T, timeoutMs = 20000): Promise<T> {
@@ -563,10 +579,29 @@ export default function FuelAnalytics() {
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
     ? 'RPM - Final CPM'
     : 'RPM - CPM'
+  const weeklyK1lRows = (entityMargin?.weekly ?? []).filter((row) => (
+    Number(row.k1l_orders) > 0
+    && (
+      finiteValue(row.k1l_revenue_per_engine_hour) !== null
+      || finiteValue(row.k1l_true_operating_cost_per_engine_hour) !== null
+      || finiteValue(row.k1l_profit_per_engine_hour) !== null
+    )
+  ))
+  const rankedK1lWeeks = weeklyK1lRows.filter((row) => finiteValue(row.k1l_profit_per_engine_hour) !== null)
+  const bestK1lWeek = rankedK1lWeeks.reduce<WeeklyEntityMargin | null>((best, row) => {
+    if (!best) return row
+    return Number(row.k1l_profit_per_engine_hour) > Number(best.k1l_profit_per_engine_hour) ? row : best
+  }, null)
+  const weakestK1lWeek = rankedK1lWeeks.reduce<WeeklyEntityMargin | null>((weakest, row) => {
+    if (!weakest) return row
+    return Number(row.k1l_profit_per_engine_hour) < Number(weakest.k1l_profit_per_engine_hour) ? row : weakest
+  }, null)
   const k1OperatingRevenueSourceStatus = k1OperatingKpi?.revenue_source_status?.status || 'not_configured'
-  const k1OperatingRevenueSourceLabel = k1OperatingKpi?.revenue_source === 'xcelerator_ceo_powerbi'
-    ? 'Xcelerator CEO Power BI'
-    : 'Monthly JSON fallback'
+  const k1OperatingRevenueSourceLabel = k1OperatingKpi?.revenue_source === 'xcelerator_fabric_warehouse_sql'
+    ? 'Xcelerator Fabric Warehouse SQL'
+    : k1OperatingKpi?.revenue_source === 'xcelerator_ceo_powerbi'
+      ? 'Xcelerator CEO Power BI'
+      : 'Monthly JSON fallback'
   const k1OperatingRevenueSourceClass = k1OperatingRevenueSourceStatus === 'healthy'
     ? 'text-emerald-400'
     : k1OperatingRevenueSourceStatus === 'awaiting_feed'
@@ -728,6 +763,118 @@ export default function FuelAnalytics() {
         ) : (
           <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
             Entity margin trend appears after Xcelerator delivery-center rows are available.
+          </div>
+        )}
+      </motion.div>
+
+      {/* K1L Weekly Engine-Hour Profitability */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.405 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Gauge className="w-5 h-5 text-cyan-300" />
+              K1L Weekly Revenue / Cost per Engine Hr
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              Engine hrs = Geotab drive + idle hours · weekly ranking uses profit / engine hr
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">RPH</div>
+              <div className="text-cyan-300">{formatRate(entitySummary?.k1l_revenue_per_engine_hour, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Cost / Hr</div>
+              <div className="text-rose-300">{formatRate(entitySummary?.k1l_true_operating_cost_per_engine_hour, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Profit / Hr</div>
+              <div className="text-amber-300">{formatRate(entitySummary?.k1l_profit_per_engine_hour, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Engine Hrs</div>
+              <div className="text-white">{formatNumber(entitySummary?.operating_hours, 1)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2 mb-5">
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wide text-emerald-300">Best week</div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-xl font-semibold text-white">{bestK1lWeek?.week_start ?? 'Pending'}</span>
+              <span className="text-sm text-emerald-300">{formatRate(bestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
+              <span className="text-sm text-gray-400">{formatCurrency(bestK1lWeek?.k1l_profit)} profit</span>
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wide text-amber-300">Weakest week</div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-xl font-semibold text-white">{weakestK1lWeek?.week_start ?? 'Pending'}</span>
+              <span className="text-sm text-amber-300">{formatRate(weakestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
+              <span className="text-sm text-gray-400">{formatCurrency(weakestK1lWeek?.k1l_profit)} profit</span>
+            </div>
+          </div>
+        </div>
+
+        {weeklyK1lRows.length > 0 ? (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_460px]">
+            <ResponsiveContainer width="100%" height={320}>
+              <ComposedChart data={weeklyK1lRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="week_start" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
+                <YAxis yAxisId="dollars" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
+                <YAxis yAxisId="rate" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v).toFixed(0)}`} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => {
+                    if (name.includes('/Hr')) return [formatRate(value, '/hr'), name]
+                    if (name === 'Engine Hrs') return [formatNumber(value, 1), name]
+                    return [formatCurrency(value), name]
+                  }}
+                />
+                <Legend />
+                <Bar yAxisId="dollars" dataKey="k1l_grand_total" name="Revenue" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name="Total Cost" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_engine_hour" name="RPH /Hr" stroke="#67e8f9" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cost_per_engine_hour" name="Cost /Hr" stroke="#fb7185" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_profit_per_engine_hour" name="Profit /Hr" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid grid-cols-6 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span>Week</span>
+                <span className="text-right">RPH</span>
+                <span className="text-right">Cost/Hr</span>
+                <span className="text-right">Profit/Hr</span>
+                <span className="text-right">Profit</span>
+                <span className="text-right">Eng Hrs</span>
+              </div>
+              <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
+                {weeklyK1lRows.map((row) => (
+                  <div key={row.week_start} className="grid grid-cols-6 gap-2 px-3 py-2">
+                    <span className="font-medium text-white">{row.week_start.slice(5)}</span>
+                    <span className="text-right font-semibold text-cyan-300">{formatRate(row.k1l_revenue_per_engine_hour, '/hr')}</span>
+                    <span className="text-right font-semibold text-rose-300">{formatRate(row.k1l_true_operating_cost_per_engine_hour, '/hr')}</span>
+                    <span className="text-right font-semibold text-amber-300">{formatRate(row.k1l_profit_per_engine_hour, '/hr')}</span>
+                    <span className="text-right text-gray-300">{formatCurrency(row.k1l_profit)}</span>
+                    <span className="text-right text-gray-400">{formatNumber(row.operating_hours, 1)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
+            Weekly engine-hour profitability appears after Geotab hours, Xcelerator revenue, and operating costs are available.
           </div>
         )}
       </motion.div>

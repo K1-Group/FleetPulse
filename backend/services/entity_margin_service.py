@@ -252,6 +252,8 @@ def _empty_entity_week(start: date, end: date) -> dict[str, Any]:
         "k1g_orders": 0,
         "k1g_grand_total": 0.0,
         "k1g_driver_pay": 0.0,
+        "idle_hours": 0.0,
+        "operating_hours": 0.0,
     }
 
 
@@ -424,35 +426,53 @@ def _xcelerator_entity_weekly(
 
 
 def _finish_entity_week(row: dict[str, Any]) -> dict[str, Any]:
+    k1l_revenue = float(row["k1l_grand_total"])
+    miles = float(row["miles"])
+    drive_hours = float(row["drive_hours"])
+    operating_hours = float(row.get("operating_hours") or drive_hours)
     k1l_fuel_driver_cost = float(row["fuel_cost"]) + float(row["k1l_driver_pay"])
     k1l_true_cost = k1l_fuel_driver_cost + float(row["insurance_cost"]) + float(row["other_expense_cost"])
-    k1l_actual_margin_before_fuel = float(row["k1l_grand_total"]) - float(row["k1l_driver_pay"])
+    qbo_expenses_available = bool(row["qbo_expenses_available"])
+    k1l_profit = k1l_revenue - k1l_true_cost if qbo_expenses_available else None
+    k1l_actual_margin_before_fuel = k1l_revenue - float(row["k1l_driver_pay"])
     k1l_actual_margin_after_fuel = k1l_actual_margin_before_fuel - float(row["fuel_cost"])
     k1g_actual_margin_before_overhead = float(row["k1g_grand_total"]) - float(row["k1g_driver_pay"])
 
     row.update(
         {
-            "k1l_target_gross_margin": _money(float(row["k1l_grand_total"]) * K1L_MARGIN_TARGET_PCT),
+            "k1l_target_gross_margin": _money(k1l_revenue * K1L_MARGIN_TARGET_PCT),
             "k1l_actual_gross_margin_before_fuel": _money(k1l_actual_margin_before_fuel),
             "k1l_actual_gross_margin_pct_before_fuel": _ratio(
                 k1l_actual_margin_before_fuel,
-                float(row["k1l_grand_total"]),
+                k1l_revenue,
             ),
             "k1l_actual_gross_margin_after_fuel": _money(k1l_actual_margin_after_fuel),
             "k1l_actual_gross_margin_pct_after_fuel": _ratio(
                 k1l_actual_margin_after_fuel,
-                float(row["k1l_grand_total"]),
+                k1l_revenue,
             ),
-            "k1l_revenue_per_mile": _ratio(float(row["k1l_grand_total"]), float(row["miles"])),
-            "k1l_driver_pay_cpm": _ratio(float(row["k1l_driver_pay"]), float(row["miles"])),
-            "k1l_fuel_cpm": _ratio(float(row["fuel_cost"]), float(row["miles"])),
-            "k1l_fuel_plus_driver_cpm": _ratio(k1l_fuel_driver_cost, float(row["miles"])),
+            "k1l_revenue_per_mile": _ratio(k1l_revenue, miles),
+            "k1l_revenue_per_drive_hour": _ratio(k1l_revenue, drive_hours),
+            "k1l_revenue_per_engine_hour": _ratio(k1l_revenue, operating_hours),
+            "k1l_driver_pay_cpm": _ratio(float(row["k1l_driver_pay"]), miles),
+            "k1l_fuel_cpm": _ratio(float(row["fuel_cost"]), miles),
+            "k1l_fuel_plus_driver_cpm": _ratio(k1l_fuel_driver_cost, miles),
             "k1l_true_operating_cpm": _ratio(k1l_true_cost, float(row["miles"]))
-            if row["qbo_expenses_available"]
+            if qbo_expenses_available
+            else None,
+            "k1l_true_operating_cost_per_drive_hour": _ratio(k1l_true_cost, drive_hours)
+            if qbo_expenses_available
+            else None,
+            "k1l_true_operating_cost_per_engine_hour": _ratio(k1l_true_cost, operating_hours)
+            if qbo_expenses_available
             else None,
             "k1l_true_operating_cost": _money(k1l_true_cost)
-            if row["qbo_expenses_available"]
+            if qbo_expenses_available
             else None,
+            "k1l_profit": _money(k1l_profit) if k1l_profit is not None else None,
+            "k1l_profit_per_mile": _ratio(k1l_profit, miles) if k1l_profit is not None else None,
+            "k1l_profit_per_drive_hour": _ratio(k1l_profit, drive_hours) if k1l_profit is not None else None,
+            "k1l_profit_per_engine_hour": _ratio(k1l_profit, operating_hours) if k1l_profit is not None else None,
             "k1g_target_gross_margin": _money(float(row["k1g_grand_total"]) * K1G_MARGIN_TARGET_PCT),
             "k1g_actual_gross_margin_before_overhead": _money(
                 k1g_actual_margin_before_overhead
@@ -470,6 +490,8 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
     totals = {
         "miles": sum(float(row["miles"]) for row in weekly),
         "drive_hours": sum(float(row["drive_hours"]) for row in weekly),
+        "idle_hours": sum(float(row.get("idle_hours") or 0) for row in weekly),
+        "operating_hours": sum(float(row.get("operating_hours") or row["drive_hours"]) for row in weekly),
         "fuel_cost": sum(float(row["fuel_cost"]) for row in weekly),
         "insurance_cost": sum(float(row["insurance_cost"]) for row in weekly),
         "other_expense_cost": sum(float(row["other_expense_cost"]) for row in weekly),
@@ -484,6 +506,8 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
     row = {
         "miles": round(totals["miles"], 2),
         "drive_hours": round(totals["drive_hours"], 2),
+        "idle_hours": round(totals["idle_hours"], 2),
+        "operating_hours": round(totals["operating_hours"], 2),
         "fuel_cost": _money(totals["fuel_cost"]),
         "insurance_cost": _money(totals["insurance_cost"]),
         "other_expense_cost": _money(totals["other_expense_cost"]),
@@ -531,6 +555,17 @@ async def get_entity_margin_snapshot(
             **entity_row,
             "miles": round(float(operating_row.get("miles") or 0), 2),
             "drive_hours": round(float(operating_row.get("drive_hours") or 0), 2),
+            "idle_hours": round(float(operating_row.get("idle_hours") or 0), 2),
+            "operating_hours": round(
+                float(
+                    operating_row.get("operating_hours")
+                    or (
+                        float(operating_row.get("drive_hours") or 0)
+                        + float(operating_row.get("idle_hours") or 0)
+                    )
+                ),
+                2,
+            ),
             "fuel_cost": _money(float(operating_row.get("fuel_cost") or 0)),
             "insurance_cost": _money(float(operating_row.get("insurance_cost") or 0)),
             "other_expense_cost": _money(float(operating_row.get("other_expense_cost") or 0)),
