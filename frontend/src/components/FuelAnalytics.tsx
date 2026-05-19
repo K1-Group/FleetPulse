@@ -420,6 +420,57 @@ interface RevenueProductivitySnapshot {
   }
 }
 
+interface DeliveryCenterPerformanceRow {
+  delivery_center: string
+  entity: string
+  orders: number
+  pickup_orders: number
+  pickup_measured_orders: number
+  pickup_on_time_orders: number
+  pickup_late_orders: number
+  pickup_missing_orders: number
+  pickup_missing_schedule_orders: number
+  pickup_missing_actual_orders: number
+  pickup_on_time_pct: number | null
+  pickup_late_pct: number | null
+  pickup_proof_coverage_pct: number | null
+  pickup_avg_late_minutes: number | null
+  pickup_max_late_minutes: number | null
+  delivery_orders: number
+  delivery_measured_orders: number
+  delivery_on_time_orders: number
+  delivery_late_orders: number
+  delivery_missing_orders: number
+  delivery_missing_schedule_orders: number
+  delivery_missing_actual_orders: number
+  delivery_on_time_pct: number | null
+  delivery_late_pct: number | null
+  delivery_proof_coverage_pct: number | null
+  delivery_avg_late_minutes: number | null
+  delivery_max_late_minutes: number | null
+}
+
+interface DeliveryCenterPerformanceSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: 'read_only'
+  grain: 'delivery_center'
+  rules: {
+    on_time_tolerance_minutes: number
+    pickup_actual_basis?: string
+    delivery_actual_basis?: string
+    deadline_basis?: string
+  }
+  summary: DeliveryCenterPerformanceRow | null
+  delivery_centers: DeliveryCenterPerformanceRow[]
+  source: OperatingCostSource & {
+    table?: string
+    missing_column_families?: string[]
+  }
+}
+
 const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
   value === null || value === undefined
     ? 'Pending'
@@ -498,6 +549,7 @@ export default function FuelAnalytics() {
   const [k1OperatingKpi, setK1OperatingKpi] = useState<K1OperatingCostKpiSnapshot | null>(null)
   const [k1WeeklyEngineKpi, setK1WeeklyEngineKpi] = useState<K1WeeklyEngineKpiSnapshot | null>(null)
   const [revenueProductivity, setRevenueProductivity] = useState<RevenueProductivitySnapshot | null>(null)
+  const [deliveryCenterPerformance, setDeliveryCenterPerformance] = useState<DeliveryCenterPerformanceSnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
@@ -534,7 +586,7 @@ export default function FuelAnalytics() {
       setQboStatus(qboReady)
       setLoading(false)
 
-      const [k1Kpi, weeklyEngineKpi, productivity] = await Promise.all([
+      const [k1Kpi, weeklyEngineKpi, productivity, deliveryPerformance] = await Promise.all([
         fetchJson<K1OperatingCostKpiSnapshot | null>(
           '/api/fuel/k1l-operating-kpi',
           null,
@@ -550,10 +602,16 @@ export default function FuelAnalytics() {
           null,
           90000,
         ),
+        fetchJson<DeliveryCenterPerformanceSnapshot | null>(
+          `/api/fuel/delivery-center-performance?start=${ytdStart}`,
+          null,
+          90000,
+        ),
       ])
       setK1OperatingKpi(k1Kpi)
       setK1WeeklyEngineKpi(weeklyEngineKpi)
       setRevenueProductivity(productivity)
+      setDeliveryCenterPerformance(deliveryPerformance)
 
       void Promise.all([
         fetchJson<OperatingCostSnapshot | null>(
@@ -811,6 +869,18 @@ export default function FuelAnalytics() {
     : productivitySummary?.driver_target_status === 'below_target'
       ? 'text-amber-300'
       : 'text-gray-400'
+  const deliveryPerformanceRows = deliveryCenterPerformance?.delivery_centers ?? []
+  const deliveryPerformanceSummary = deliveryCenterPerformance?.summary
+  const deliveryPerformanceSource = deliveryCenterPerformance?.source
+  const deliveryPerformanceChartRows = deliveryPerformanceRows.slice(0, 8)
+  const deliveryPerformanceSourceClass = deliveryPerformanceSource?.status === 'healthy'
+    ? 'text-emerald-400'
+    : deliveryPerformanceSource?.status === 'partial' || deliveryPerformanceSource?.status === 'awaiting_feed'
+      ? 'text-amber-300'
+      : 'text-red-300'
+  const missingPerformanceProof =
+    Number(deliveryPerformanceSummary?.pickup_missing_orders ?? 0)
+    + Number(deliveryPerformanceSummary?.delivery_missing_orders ?? 0)
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -1094,6 +1164,110 @@ export default function FuelAnalytics() {
         ) : (
           <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
             Weekly engine-hour profitability appears after Geotab hours, Xcelerator revenue, and operating costs are available.
+          </div>
+        )}
+      </motion.div>
+
+      {/* Delivery Center On-Time Performance */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.407 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Target className="w-5 h-5 text-emerald-300" />
+              Delivery Center Pickup / Delivery On-Time
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              {deliveryCenterPerformance?.period_start ?? 'YTD'} to {deliveryCenterPerformance?.period_end ?? 'today'} · Xcelerator ReviewOrders actuals vs target windows · {deliveryCenterPerformance?.rules.on_time_tolerance_minutes ?? 15} min tolerance
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Source: {deliveryPerformanceSource?.table ?? 'ReviewOrders'} ·{' '}
+              <span className={deliveryPerformanceSourceClass}>
+                {(deliveryPerformanceSource?.status ?? 'pending').replace('_', ' ')}
+              </span>
+              {deliveryPerformanceSource?.message ? ` · ${deliveryPerformanceSource.message}` : ''}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Centers</div>
+              <div className="text-white">{formatNumber(deliveryPerformanceRows.length)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Pickup OTD</div>
+              <div className="text-emerald-300">{formatPercent(deliveryPerformanceSummary?.pickup_on_time_pct)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Delivery OTD</div>
+              <div className="text-cyan-300">{formatPercent(deliveryPerformanceSummary?.delivery_on_time_pct)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Missing Proof</div>
+              <div className="text-amber-300">{formatNumber(missingPerformanceProof)}</div>
+            </div>
+          </div>
+        </div>
+
+        {deliveryPerformanceRows.length > 0 ? (
+          <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_760px]">
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={deliveryPerformanceChartRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="delivery_center" stroke="#6b7280" tick={{ fontSize: 11 }} interval={0} tickFormatter={(v) => String(v).replace('K1 ', '')} />
+                <YAxis yAxisId="pct" domain={[0, 1]} stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`} />
+                <YAxis yAxisId="orders" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => {
+                    if (name.includes('OTD') || name.includes('Proof')) return [formatPercent(value), name]
+                    return [formatNumber(value), name]
+                  }}
+                />
+                <Legend />
+                <Bar yAxisId="pct" dataKey="pickup_on_time_pct" name="Pickup OTD" fill="#34d399" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="pct" dataKey="delivery_on_time_pct" name="Delivery OTD" fill="#22d3ee" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="orders" type="monotone" dataKey="orders" name="Orders" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid min-w-[760px] grid-cols-[minmax(170px,1.4fr)_72px_repeat(3,minmax(92px,1fr))_repeat(3,minmax(92px,1fr))] gap-3 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span>Delivery Center</span>
+                <span className="text-right">Orders</span>
+                <span className="text-right">Pickup OTD</span>
+                <span className="text-right">P Late</span>
+                <span className="text-right">P Missing</span>
+                <span className="text-right">Delivery OTD</span>
+                <span className="text-right">D Late</span>
+                <span className="text-right">D Missing</span>
+              </div>
+              <div className="max-h-[260px] divide-y divide-gray-800 overflow-y-auto text-sm">
+                {deliveryPerformanceRows.map((row) => (
+                  <div key={row.delivery_center} className="grid min-w-[760px] grid-cols-[minmax(170px,1.4fr)_72px_repeat(3,minmax(92px,1fr))_repeat(3,minmax(92px,1fr))] gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-white">{row.delivery_center}</div>
+                      <div className="truncate text-[11px] text-gray-500">{row.entity}</div>
+                    </div>
+                    <span className="whitespace-nowrap text-right text-gray-300">{formatNumber(row.orders)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-emerald-300">{formatPercent(row.pickup_on_time_pct)}</span>
+                    <span className="whitespace-nowrap text-right text-rose-300">{formatNumber(row.pickup_late_orders)}</span>
+                    <span className="whitespace-nowrap text-right text-amber-300">{formatNumber(row.pickup_missing_orders)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-cyan-300">{formatPercent(row.delivery_on_time_pct)}</span>
+                    <span className="whitespace-nowrap text-right text-rose-300">{formatNumber(row.delivery_late_orders)}</span>
+                    <span className="whitespace-nowrap text-right text-amber-300">{formatNumber(row.delivery_missing_orders)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 px-6 text-center text-sm text-gray-500">
+            {deliveryPerformanceSource?.message || 'Delivery-center on-time performance appears after Xcelerator ReviewOrders target and actual timestamps are available.'}
           </div>
         )}
       </motion.div>

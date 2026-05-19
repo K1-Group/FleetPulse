@@ -22,6 +22,7 @@ from services.atob_fuel_expense_service import (
     get_atob_vehicle_costs,
     import_atob_fuel_expenses,
 )
+from services.delivery_center_performance_service import get_delivery_center_performance_snapshot
 from services.entity_margin_service import get_entity_margin_snapshot
 from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
 from services.k1l_weekly_engine_kpi_service import get_k1l_weekly_engine_kpi_snapshot
@@ -263,6 +264,32 @@ async def k1l_weekly_engine_kpi(
             days=days,
             start=start,
             end=end,
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/delivery-center-performance")
+async def delivery_center_performance(
+    days: int = Query(370, ge=1, le=370),
+    start: str | None = Query(default=None, description="Inclusive YYYY-MM-DD start date."),
+    end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
+    tolerance_minutes: int = Query(15, ge=0, le=240),
+):
+    """Return Xcelerator pickup/delivery on-time performance by delivery center."""
+    cache_key = f"fuel:delivery-center-performance:{days}:{start or ''}:{end or ''}:{tolerance_minutes}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
+    try:
+        snapshot = await asyncio.to_thread(
+            get_delivery_center_performance_snapshot,
+            days=days,
+            start=start,
+            end=end,
+            tolerance_minutes=tolerance_minutes,
         )
         set_cached(cache_key, snapshot)
         return snapshot
