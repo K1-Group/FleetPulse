@@ -197,7 +197,7 @@ export function useControlTowerSeatKpis(enabled = true) {
 }
 
 export function useOperatingCostWindow(days = 364, enabled = true) {
-  return useFetch<OperatingCostSnapshot>(`${API}/fuel/operating-cost?days=${days}`, 300000, enabled, 120000)
+  return useFetch<OperatingCostSnapshot>(`${API}/fuel/operating-cost?days=${days}`, 300000, enabled, 300000)
 }
 
 export function useLaneStabilityWindow(windowDays: 42 | 91 | 182 | 364 = 364, enabled = true) {
