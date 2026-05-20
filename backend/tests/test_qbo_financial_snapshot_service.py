@@ -15,6 +15,11 @@ from services.qbo_financial_snapshot_service import (  # noqa: E402
     get_qbo_financial_snapshot,
     load_qbo_k1l_expense_rows,
 )
+from services.qbo_financial_feed_import_service import (  # noqa: E402
+    QboFinancialFeedStateStore,
+    import_qbo_financial_feed,
+    qbo_financial_feed_status,
+)
 
 
 def test_qbo_financial_snapshot_summarizes_ap_ar_and_k1l_expenses(tmp_path):
@@ -179,3 +184,75 @@ def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
     assert rows[1]["qbo_expense_bucket"] == "maintenance"
     assert rows[2]["qbo_expense_bucket"] == "rental_trucks_trailers"
     assert rows[3]["qbo_expense_bucket"] == "rental_trucks_trailers"
+
+
+def test_qbo_financial_import_writes_scheduled_state_for_tower(tmp_path):
+    state_path = tmp_path / "qbo-financial-state.json"
+    result = import_qbo_financial_feed(
+        json.dumps(
+            {
+                "accounts_payable": [
+                    {
+                        "Type": "Bill",
+                        "Due Date": "2026-05-01",
+                        "Open Balance": "1,200.00",
+                        "Vendor": "Repair Shop",
+                    }
+                ],
+                "accounts_receivable": [
+                    {
+                        "Type": "Invoice",
+                        "Due Date": "2026-05-10",
+                        "Open Balance": "900.00",
+                        "Customer": "Customer A",
+                    }
+                ],
+                "expenses": [
+                    {
+                        "Date": "2026-05-04",
+                        "Account": "Repairs and Maintenance",
+                        "Amount": "100.00",
+                        "Class": "K1 Logistics Inc",
+                    }
+                ],
+            }
+        ),
+        filename="qbo-financial.json",
+        period_start="2026-05-01",
+        period_end="2026-05-19",
+        store=QboFinancialFeedStateStore(state_path),
+    )
+
+    assert result.status == "ok"
+    assert result.row_count == 3
+    assert state_path.exists()
+
+    snapshot = get_qbo_financial_snapshot(
+        start="2026-05-01",
+        end="2026-05-19",
+        config=QboFinancialConfig(feed_path=str(state_path)),
+        today=date(2026, 5, 19),
+    )
+    assert snapshot["accounts_payable"]["pending_amount"] == 1200.0
+    assert snapshot["accounts_receivable"][0]["amount"] == 900.0
+    assert snapshot["expense_summary"]["maintenance_total"] == 100.0
+
+
+def test_qbo_financial_import_dry_run_does_not_write_state(tmp_path):
+    state_path = tmp_path / "qbo-financial-state.json"
+    result = import_qbo_financial_feed(
+        json.dumps({"expenses": [{"Date": "2026-05-04", "Account": "Fuel", "Amount": "50", "Class": "K1 Logistics Inc"}]}),
+        filename="qbo-financial.json",
+        dry_run=True,
+        store=QboFinancialFeedStateStore(state_path),
+    )
+
+    assert result.status == "ok"
+    assert not state_path.exists()
+
+
+def test_qbo_financial_feed_status_reports_missing_state_path(tmp_path):
+    status = qbo_financial_feed_status(store=QboFinancialFeedStateStore(tmp_path / "missing.json"))
+
+    assert status["status"] == "awaiting_feed"
+    assert status["row_count"] == 0

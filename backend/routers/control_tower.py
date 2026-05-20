@@ -1,6 +1,7 @@
 """Original Control Tower dashboard surfaces, restored as read-only projections."""
 
 from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel, Field
 
 from configs.xtra_lease import XtraLeaseIngestionConfig
 from models import (
@@ -16,6 +17,11 @@ from models import (
 from services import control_tower_service
 from services.control_tower_seat_kpi_service import get_seat_kpi_coverage
 from services.trailer_tracking_service import get_live_trailer_tracking
+from services.xcelerator_event_feed_service import (
+    import_xcelerator_events,
+    validate_xcelerator_event_import_api_key,
+    xcelerator_event_feed_status,
+)
 from services.xtra_lease_ingestion_service import (
     XtraLeaseConfigError,
     ingest_xtra_lease_emails,
@@ -23,6 +29,12 @@ from services.xtra_lease_ingestion_service import (
 )
 
 router = APIRouter()
+
+
+class XceleratorEventImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
 
 
 @router.get("/overview", response_model=ControlTowerOverview)
@@ -67,6 +79,30 @@ def ingest_xtra_trailer_feed(
 @router.get("/financial", response_model=ControlTowerFinancialResponse)
 def financial():
     return control_tower_service.get_financial()
+
+
+@router.get("/xcelerator/events/status")
+def xcelerator_events_status() -> dict:
+    return xcelerator_event_feed_status()
+
+
+@router.post("/xcelerator/events/import")
+def import_xcelerator_event_feed(
+    request: XceleratorEventImportRequest,
+    x_fleetpulse_xcelerator_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    """Import scheduled Xcelerator event rows as read-only Tower evidence."""
+
+    try:
+        validate_xcelerator_event_import_api_key(x_fleetpulse_xcelerator_key or x_api_key)
+        return import_xcelerator_events(
+            request.content,
+            filename=request.filename,
+            dry_run=request.dry_run,
+        ).as_dict()
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @router.get("/seat-kpis", response_model=ControlTowerSeatKpiCoverageResponse)

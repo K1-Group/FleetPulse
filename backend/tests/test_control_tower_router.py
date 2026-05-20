@@ -32,6 +32,10 @@ if "mygeotab" not in sys.modules:
 from models import Alert, AlertSeverity, ControlTowerTrailerTrackingResponse  # noqa: E402
 from routers import control_tower  # noqa: E402
 from services import control_tower_service  # noqa: E402
+from services.xcelerator_event_feed_service import (  # noqa: E402
+    XceleratorEventStateStore,
+    import_xcelerator_events,
+)
 
 
 def _client() -> TestClient:
@@ -101,6 +105,43 @@ def test_attention_projects_xcelerator_feed_rows(monkeypatch):
     xcelerator_feed = next(feed for feed in payload["feeds"] if feed["name"] == "Xcelerator route SLA feed")
     assert xcelerator_feed["status"] == "healthy"
     assert "Read 1 Xcelerator event row" in xcelerator_feed["message"]
+
+
+def test_attention_reads_scheduled_xcelerator_event_state(monkeypatch, tmp_path):
+    state_path = tmp_path / "xcelerator-events.json"
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", raising=False)
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_STATE_PATH", str(state_path))
+    monkeypatch.setattr(control_tower_service, "get_recent_alerts", lambda hours=24: [])
+    monkeypatch.setattr(control_tower_service, "get_monitor_alerts", lambda limit=50: [])
+    monkeypatch.setattr(control_tower_service, "get_monitor_status", lambda: {"running": False})
+    result = import_xcelerator_events(
+        """
+        {
+          "events": [
+            {
+              "event_type": "route_eta_exception_evaluated",
+              "message": "Route ROUTE-902 missed ETA threshold",
+              "route_id": "ROUTE-902",
+              "status": "exception",
+              "timestamp": "2026-05-16T12:30:00Z"
+            }
+          ]
+        }
+        """,
+        filename="xcelerator-events.json",
+        store=XceleratorEventStateStore(state_path),
+    )
+
+    assert result.imported_count == 1
+    response = _client().get("/api/control-tower/attention")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"][0]["source_authority"] == "K1 Group LLC / Xcelerator"
+    assert payload["items"][0]["message"] == "Route ROUTE-902 missed ETA threshold"
+    xcelerator_feed = next(feed for feed in payload["feeds"] if feed["name"] == "Xcelerator route SLA feed")
+    assert xcelerator_feed["status"] == "healthy"
+    assert "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH" in xcelerator_feed["required_config"][0]
 
 
 def test_financial_surface_is_k1_group_read_only_and_awaits_feed(monkeypatch):
@@ -241,6 +282,49 @@ def test_financial_uses_review_orders_evidence_when_event_url_is_not_row_feed(mo
     assert "ReviewOrders evidence file is available" in xcelerator_feed["message"]
     assert "using persisted Xcelerator evidence" in xcelerator_feed["message"]
     assert "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH" in xcelerator_feed["required_config"]
+
+
+def test_financial_reads_scheduled_xcelerator_financial_events(monkeypatch, tmp_path):
+    state_path = tmp_path / "xcelerator-events.json"
+    monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", raising=False)
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_STATE_PATH", str(state_path))
+    monkeypatch.setattr(
+        control_tower_service,
+        "get_qbo_financial_snapshot",
+        lambda: {
+            "status": "awaiting_feed",
+            "message": "QBO pending.",
+            "missing_config": ["FLEETPULSE_QBO_FINANCIAL_STATE_PATH"],
+            "accounts_payable": {},
+            "accounts_receivable": [],
+            "cash_flow": {},
+        },
+    )
+    import_xcelerator_events(
+        """
+        {
+          "events": [
+            {
+              "event_type": "shipment_financial_update",
+              "shipment_id": "SH-1002",
+              "revenue_amount": 2500,
+              "driver_pay_amount": 875,
+              "timestamp": "2026-05-16T12:30:00Z"
+            }
+          ]
+        }
+        """,
+        filename="xcelerator-events.json",
+        store=XceleratorEventStateStore(state_path),
+    )
+
+    response = _client().get("/api/control-tower/financial")
+
+    assert response.status_code == 200
+    xcelerator_feed = response.json()["feeds"][0]
+    assert xcelerator_feed["status"] == "healthy"
+    assert "1 financial row" in xcelerator_feed["message"]
 
 
 def test_trailer_mailbox_config_reports_adapter_pending(monkeypatch):

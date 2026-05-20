@@ -34,6 +34,11 @@ from services.qbo_expense_import_service import (
     qbo_expense_import_status,
     validate_qbo_expense_import_api_key,
 )
+from services.qbo_financial_feed_import_service import (
+    import_qbo_financial_feed,
+    qbo_financial_feed_status,
+    validate_qbo_financial_import_api_key,
+)
 from services.qbo_financial_snapshot_service import get_qbo_financial_snapshot
 from services.revenue_productivity_service import get_revenue_productivity_snapshot
 from services.xcelerator_review_orders_import_service import (
@@ -71,6 +76,14 @@ class XceleratorReviewOrdersImportRequest(BaseModel):
 
 
 class QboExpenseImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
+    period_start: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period_end: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class QboFinancialFeedImportRequest(BaseModel):
     filename: str | None = Field(default=None, max_length=255)
     content: str = Field(min_length=1)
     dry_run: bool = False
@@ -165,6 +178,36 @@ async def qbo_financial_snapshot(
         return get_qbo_financial_snapshot(start=start, end=end)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/qbo/financial/status")
+async def qbo_financial_feed_readiness():
+    """Return readiness for the scheduled QBO financial snapshot feed."""
+    return qbo_financial_feed_status()
+
+
+@router.post("/qbo/financial/import")
+async def import_qbo_financial_snapshot(
+    request: QboFinancialFeedImportRequest,
+    x_fleetpulse_qbo_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    """Replace the scheduled QBO AP/AR/expense snapshot as read-only evidence."""
+    try:
+        validate_qbo_financial_import_api_key(x_fleetpulse_qbo_key or x_api_key)
+        result = import_qbo_financial_feed(
+            request.content,
+            filename=request.filename,
+            dry_run=request.dry_run,
+            period_start=request.period_start,
+            period_end=request.period_end,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not request.dry_run and result.row_count:
+        clear_cached_prefix("fuel:")
+        clear_cached_prefix("control-tower:")
+    return result.as_dict()
 
 
 @router.get("/atob/sharepoint/status")

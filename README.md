@@ -221,6 +221,30 @@ The Control Tower Financial tab also reads `GET /api/fuel/operating-cost?days=36
 and `GET /api/lane-stability?window=364` to show a 52-week financial operating
 cost trend beside lane-stability risk signals.
 
+Scheduled-feed wiring is available for the first missing financial-ops blockers:
+
+```env
+FLEETPULSE_FINANCIAL_FEED_ENABLED=true
+FLEETPULSE_XCELERATOR_EVENT_FEED_URL=
+FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY=
+FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY_HEADER=X-FleetPulse-Xcelerator-Key
+FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
+FLEETPULSE_XCELERATOR_EVENT_IMPORT_API_KEY=
+FLEETPULSE_XCELERATOR_EVENT_RETAINED_RECORDS=50000
+FLEETPULSE_QBO_FINANCIAL_FEED_URL=
+FLEETPULSE_QBO_FINANCIAL_FEED_PATH=
+FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
+FLEETPULSE_QBO_FINANCIAL_IMPORT_API_KEY=
+```
+
+Use `POST /api/fuel/qbo/financial/import` for a daily QBO AP/AR/K1L expense
+snapshot and `POST /api/control-tower/xcelerator/events/import` for daily
+Xcelerator exception/financial events. Both routes are API-key protected when
+the matching `*_IMPORT_API_KEY` value is configured, and both store read-only
+evidence files only. If Zapier or Power Automate writes directly to blob/file
+storage instead, point `FLEETPULSE_QBO_FINANCIAL_FEED_URL` or
+`FLEETPULSE_XCELERATOR_EVENT_FEED_URL` at that governed JSON feed.
+
 #### Operating Cost Per Mile / Hour
 ```env
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
@@ -228,6 +252,7 @@ FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
 FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
 FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES=5000000
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
+FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_QBO_EXPENSE_STATE_PATH=/home/data/fleetpulse_qbo_expenses.json
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
@@ -496,6 +521,8 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `POST /api/fuel/atob/sharepoint/sync` | Sync downloaded AtoB report files from SharePoint |
 | `POST /api/fuel/qbo/expenses/import` | Import downloaded QBO expense report as read-only finance references |
 | `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO K1L cost-bucket expense summary |
+| `GET /api/fuel/qbo/financial/status` | Scheduled QBO AP/AR/K1L expense snapshot readiness |
+| `POST /api/fuel/qbo/financial/import` | Replace scheduled QBO AP/AR/K1L expense snapshot as read-only evidence |
 | `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, Xcelerator, and QBO K1L costs |
 | `GET /api/fuel/entity-margin` | K1L CPM plus K1L/K1G gross-margin target rollups by delivery center |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
@@ -504,6 +531,8 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | **🚚 Control Tower Endpoints** |
 | `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
+| `GET /api/control-tower/xcelerator/events/status` | Scheduled Xcelerator event-feed readiness |
+| `POST /api/control-tower/xcelerator/events/import` | Import scheduled Xcelerator financial/exception events as read-only evidence |
 | `GET /api/control-tower/seat-kpis` | Fixed-seat KPI coverage: live, partial, and missing source contracts |
 | **🧠 AI Endpoints** |
 | `POST /api/ai/chat` | **Claude AI-powered chat** (with conversation history) |

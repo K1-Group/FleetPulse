@@ -31,31 +31,44 @@ _FIELD_ALIASES = {
     "amount": "amount",
     "balance": "balance",
     "class": "class_name",
+    "classname": "class_name",
     "customer": "customer_name",
+    "customer_name": "customer_name",
     "customername": "customer_name",
     "date": "transaction_date",
     "department": "department_name",
+    "department_name": "department_name",
+    "departmentname": "department_name",
     "description": "description",
     "docnum": "document_number",
     "duedate": "due_date",
     "entity": "entity_name",
+    "entity_name": "entity_name",
+    "entityname": "entity_name",
     "location": "location_name",
+    "location_name": "location_name",
+    "locationname": "location_name",
     "memo": "memo",
     "name": "entity_name",
     "openbalance": "balance",
     "openbalanceamount": "balance",
     "posteddate": "transaction_date",
+    "qborowkind": "qbo_row_kind",
     "supplier": "vendor_name",
     "total": "amount",
     "totalamt": "amount",
     "transactiondate": "transaction_date",
+    "transaction_date": "transaction_date",
     "transactionid": "transaction_id",
+    "transaction_id": "transaction_id",
     "transactiontype": "transaction_type",
+    "transaction_type": "transaction_type",
     "txn": "transaction_id",
     "txndate": "transaction_date",
     "txnid": "transaction_id",
     "type": "transaction_type",
     "vendor": "vendor_name",
+    "vendor_name": "vendor_name",
     "vendorname": "vendor_name",
 }
 
@@ -169,6 +182,7 @@ class QboFinancialConfig:
             feed_url=os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", "").strip(),
             feed_path=(
                 os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_PATH", "").strip()
+                or os.getenv("FLEETPULSE_QBO_FINANCIAL_STATE_PATH", "").strip()
                 or os.getenv("FLEETPULSE_QBO_EXPENSE_STATE_PATH", "").strip()
             ),
             api_key=(
@@ -260,6 +274,65 @@ def get_qbo_financial_snapshot(
             missing_config=[],
         )
 
+    return build_qbo_financial_snapshot_from_rows(
+        raw_rows,
+        metadata=metadata,
+        start=period_start,
+        end=period_end,
+        config=config,
+        today=as_of,
+        include_records=include_records,
+    )
+
+
+def build_qbo_financial_snapshot_from_content(
+    content: str,
+    *,
+    filename: str | None = None,
+    start: date | datetime | str | None = None,
+    end: date | datetime | str | None = None,
+    config: QboFinancialConfig | None = None,
+    today: date | None = None,
+    include_records: bool = False,
+) -> dict[str, Any]:
+    """Normalize supplied QBO report/export content without reading live QBO."""
+
+    period_start = _coerce_date(start)
+    period_end = _coerce_date(end) or today or datetime.now(timezone.utc).date()
+    if period_start and period_start > period_end:
+        raise ValueError("start must be on or before end")
+    raw_rows, metadata = _coerce_rows(content, _content_type_from_filename(filename))
+    return build_qbo_financial_snapshot_from_rows(
+        raw_rows,
+        metadata=metadata,
+        start=period_start,
+        end=period_end,
+        config=config or QboFinancialConfig(),
+        today=today,
+        include_records=include_records,
+    )
+
+
+def build_qbo_financial_snapshot_from_rows(
+    raw_rows: list[dict[str, Any]],
+    *,
+    metadata: dict[str, Any] | None = None,
+    start: date | datetime | str | None = None,
+    end: date | datetime | str | None = None,
+    config: QboFinancialConfig | None = None,
+    today: date | None = None,
+    include_records: bool = False,
+) -> dict[str, Any]:
+    """Return AP/AR/K1L expense projection from already-loaded QBO rows."""
+
+    metadata = metadata or {}
+    config = config or QboFinancialConfig()
+    as_of = today or datetime.now(timezone.utc).date()
+    period_start = _coerce_date(start)
+    period_end = _coerce_date(end) or as_of
+    if period_start and period_start > period_end:
+        raise ValueError("start must be on or before end")
+
     canonical_rows = [_canonicalize_row(row) for row in raw_rows]
     ap = _accounts_payable_summary(canonical_rows, today=as_of)
     ar_buckets = _accounts_receivable_buckets(canonical_rows, today=as_of)
@@ -331,6 +404,7 @@ def get_qbo_financial_snapshot(
         "last_updated": metadata.get("last_updated") or metadata.get("last_imported_at"),
     }
     if include_records:
+        snapshot["rows"] = canonical_rows
         snapshot["expense_rows"] = expense_rows
     return snapshot
 
@@ -438,6 +512,15 @@ def _load_rows(
     if config.live_configured:
         return _load_live_qbo_rows(config, start=start, end=end)
     return [], {}
+
+
+def _content_type_from_filename(filename: str | None) -> str:
+    suffix = Path(str(filename or "")).suffix.casefold()
+    if suffix == ".json":
+        return "application/json"
+    if suffix in {".csv", ".tsv", ".txt"}:
+        return "text/csv"
+    return ""
 
 
 def _load_live_qbo_rows(
