@@ -7,3 +7,4 @@
 - feat(tower): scheduled QBO financial and Xcelerator event feed wiring.
 - feat(hr): scheduled HR recruiting snapshot wiring with PII-suppressed analytics.
 - feat(tower): scheduled seat KPI feed status/import wiring for billing, close, dispatch, and SharePoint ledgers.
+- fix(tower): honor longer frontend timeouts for 52-week financial and seat KPI feeds.

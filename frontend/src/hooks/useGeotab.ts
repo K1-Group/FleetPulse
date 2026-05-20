@@ -46,7 +46,7 @@ const fetchWithTimeout = async (url: string, timeout = 10000) => {
   }
 }
 
-function useFetch<T>(url: string, interval = 30000, enabled = true) {
+function useFetch<T>(url: string, interval = 30000, enabled = true, timeout = 10000) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +57,7 @@ function useFetch<T>(url: string, interval = 30000, enabled = true) {
       return
     }
     try {
-      const res = await fetchWithTimeout(url, 10000)
+      const res = await fetchWithTimeout(url, timeout)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setData(await res.json())
       setError(null)
@@ -67,7 +67,7 @@ function useFetch<T>(url: string, interval = 30000, enabled = true) {
     } finally {
       setLoading(false)
     }
-  }, [enabled, url])
+  }, [enabled, timeout, url])
 
   useEffect(() => {
     if (!enabled) {
@@ -119,7 +119,7 @@ export function useMonitorStatus(enabled = true) {
 }
 
 export function useHrRecruitingWorklist(enabled = true) {
-  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist`, 60000, enabled)
+  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist`, 60000, enabled, 60000)
 }
 
 // Driver Coaching hooks
@@ -189,19 +189,19 @@ export function useControlTowerTrailerTracking(enabled = true) {
 }
 
 export function useControlTowerFinancial() {
-  return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000)
+  return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000, true, 60000)
 }
 
 export function useControlTowerSeatKpis(enabled = true) {
-  return useFetch<ControlTowerSeatKpiCoverageResponse>(`${API}/control-tower/seat-kpis`, 300000, enabled)
+  return useFetch<ControlTowerSeatKpiCoverageResponse>(`${API}/control-tower/seat-kpis`, 300000, enabled, 60000)
 }
 
 export function useOperatingCostWindow(days = 364, enabled = true) {
-  return useFetch<OperatingCostSnapshot>(`${API}/fuel/operating-cost?days=${days}`, 300000, enabled)
+  return useFetch<OperatingCostSnapshot>(`${API}/fuel/operating-cost?days=${days}`, 300000, enabled, 120000)
 }
 
 export function useLaneStabilityWindow(windowDays: 42 | 91 | 182 | 364 = 364, enabled = true) {
-  return useFetch<LaneStabilityPayload>(`${API}/lane-stability?window=${windowDays}`, 300000, enabled)
+  return useFetch<LaneStabilityPayload>(`${API}/lane-stability?window=${windowDays}`, 300000, enabled, 60000)
 }
 
 export function useControlTowerAgents() {
