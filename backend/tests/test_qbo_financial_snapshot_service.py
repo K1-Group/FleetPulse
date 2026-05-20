@@ -105,6 +105,17 @@ def test_qbo_financial_snapshot_missing_config_is_explicit():
     assert snapshot["cash_flow"]["k1l_expense_total"] is None
 
 
+def test_qbo_financial_snapshot_configured_empty_source_does_not_fake_zero(tmp_path):
+    snapshot = get_qbo_financial_snapshot(
+        config=QboFinancialConfig(feed_path=str(tmp_path / "missing-qbo.json"))
+    )
+
+    assert snapshot["status"] == "awaiting_feed"
+    assert snapshot["row_count"] == 0
+    assert snapshot["cash_flow"]["k1l_expense_total"] is None
+    assert snapshot["expense_summary"]["k1l_expense_total"] is None
+
+
 def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
     feed_path = tmp_path / "qbo-financial.json"
     feed_path.write_text(

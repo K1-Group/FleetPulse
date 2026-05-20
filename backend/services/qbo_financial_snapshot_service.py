@@ -212,6 +212,7 @@ def get_qbo_financial_snapshot(
         end=period_end,
     )
     expense_total = round(sum(_number(row.get("Amount")) for row in expense_rows), 2)
+    expense_total_value: float | None = expense_total if expense_rows else None
     source_row_count = len(canonical_rows)
 
     status = "healthy" if source_row_count else "awaiting_feed"
@@ -243,18 +244,34 @@ def get_qbo_financial_snapshot(
             "net_weekly": None,
             "weekly_income": None,
             "weekly_expenses": None,
-            "k1l_expense_total": expense_total,
+            "k1l_expense_total": expense_total_value,
         },
         "expense_summary": {
-            "k1l_expense_total": expense_total,
+            "k1l_expense_total": expense_total_value,
             "k1l_expense_count": len(expense_rows),
-            "insurance_total": round(
-                sum(_number(row.get("Amount")) for row in expense_rows if row.get("qbo_expense_bucket") == "insurance"),
-                2,
+            "insurance_total": (
+                round(
+                    sum(
+                        _number(row.get("Amount"))
+                        for row in expense_rows
+                        if row.get("qbo_expense_bucket") == "insurance"
+                    ),
+                    2,
+                )
+                if expense_rows
+                else None
             ),
-            "other_expense_total": round(
-                sum(_number(row.get("Amount")) for row in expense_rows if row.get("qbo_expense_bucket") == "other"),
-                2,
+            "other_expense_total": (
+                round(
+                    sum(
+                        _number(row.get("Amount"))
+                        for row in expense_rows
+                        if row.get("qbo_expense_bucket") == "other"
+                    ),
+                    2,
+                )
+                if expense_rows
+                else None
             ),
         },
         "coverage_start": metadata.get("coverage_start"),
