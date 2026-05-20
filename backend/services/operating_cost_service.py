@@ -1274,6 +1274,7 @@ async def get_operating_cost_snapshot(
     atob_store: AtoBFuelExpenseStateStore | None = None,
     lane_config: LaneStabilityConfig | None = None,
     qbo_config: QboExpenseFeedConfig | None = None,
+    include_driver_pay: bool = True,
 ) -> dict[str, Any]:
     """Return weekly operating-cost rows for dashboard and Power BI use."""
 
@@ -1284,11 +1285,18 @@ async def get_operating_cost_snapshot(
 
     geotab_metrics, telemetry_source = await _geotab_weekly_metrics(weeks)
     fuel_by_week, fuel_source = _atob_weekly_costs(period_start, period_end, store=atob_store)
-    driver_pay_by_week, driver_source = _xcelerator_driver_pay_by_week(
-        period_start,
-        period_end,
-        config=lane_config,
-    )
+    if include_driver_pay:
+        driver_pay_by_week, driver_source = _xcelerator_driver_pay_by_week(
+            period_start,
+            period_end,
+            config=lane_config,
+        )
+    else:
+        driver_pay_by_week, driver_source = {}, _source(
+            "skipped",
+            XCELERATOR_AUTHORITY,
+            message="Skipped because caller supplies Xcelerator driver pay separately.",
+        )
     try:
         qbo_by_week, qbo_source = _qbo_weekly_costs(period_start, period_end, config=qbo_config)
     except Exception as exc:

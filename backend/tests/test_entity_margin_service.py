@@ -16,7 +16,8 @@ from integrations.xcelerator.review_orders_feed import ReviewOrdersFeedConfig  #
 from services import entity_margin_service as service  # noqa: E402
 
 
-async def _fake_operating_cost_snapshot(days=90, start=None, end=None):
+async def _fake_operating_cost_snapshot(days=90, start=None, end=None, **kwargs):
+    assert kwargs.get("include_driver_pay") is False
     return {
         "period_start": str(start),
         "period_end": str(end),

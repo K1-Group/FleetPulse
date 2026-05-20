@@ -701,7 +701,12 @@ async def get_entity_margin_snapshot(
     config = config or EntityMarginConfig.from_env()
 
     operating_snapshot, entity_result = await asyncio.gather(
-        get_operating_cost_snapshot(days=days, start=period_start, end=period_end),
+        get_operating_cost_snapshot(
+            days=days,
+            start=period_start,
+            end=period_end,
+            include_driver_pay=False,
+        ),
         asyncio.to_thread(_xcelerator_entity_weekly, period_start, period_end, config=config),
     )
     entity_weekly, xcelerator_source, excluded_centers, xcelerator_source_type = entity_result
