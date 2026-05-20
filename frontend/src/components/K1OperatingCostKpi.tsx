@@ -7,10 +7,15 @@ import ValidationBadge from './ValidationBadge'
 interface K1OperatingCostSummary {
   added_p_and_l_ops: number
   cost_per_mile: number | null
+  driver_pay?: number | null
+  employee?: number | null
   fleet_maintenance: number
+  fuel?: number | null
   gross_profit?: number | null
+  insurance?: number | null
   miles: number
   profit_per_mile?: number | null
+  rental_trucks_trailers?: number | null
   revenue?: number | null
   revenue_per_mile?: number | null
   total_cost: number
@@ -27,6 +32,11 @@ interface K1OperatingCostSnapshot {
     row_count?: number | null
     status?: string
   }
+  cost_source_status?: {
+    message?: string
+    row_count?: number | null
+    status?: string
+  }
   source?: string
   status: 'configured' | 'configuration_error' | 'not_configured'
   summary: K1OperatingCostSummary | null
@@ -38,7 +48,46 @@ interface Props {
   validation?: DashboardValidationItem | null
 }
 
-const endpoint = '/api/fuel/k1l-operating-kpi'
+interface OperatingCostApiSummary {
+  driver_pay?: number | null
+  employee_cost?: number | null
+  fuel_cost?: number | null
+  insurance_cost?: number | null
+  known_cost_per_mile?: number | null
+  known_operating_cost?: number | null
+  maintenance_cost?: number | null
+  miles?: number | null
+  other_expense_cost?: number | null
+  rental_trucks_trailers_cost?: number | null
+  true_cost_per_mile?: number | null
+  true_operating_cost?: number | null
+}
+
+interface OperatingCostApiSnapshot {
+  complete_cost_available?: boolean
+  period_end?: string
+  period_start?: string
+  row_counts?: Record<string, number>
+  summary?: OperatingCostApiSummary | null
+  unresolved_sources?: string[]
+}
+
+interface EntityMarginApiSnapshot {
+  summary?: {
+    k1l_grand_total?: number | null
+  } | null
+  sources?: Array<{
+    row_count?: number | null
+    status?: string
+    table?: string
+  }>
+  xcelerator_source_type?: string
+}
+
+const legacyEndpoint = '/api/fuel/k1l-operating-kpi'
+const ytdStart = `${new Date().getFullYear()}-01-01`
+const operatingCostEndpoint = `/api/fuel/operating-cost?start=${ytdStart}`
+const entityMarginEndpoint = `/api/fuel/entity-margin?start=${ytdStart}`
 
 function formatCurrency(value: number | null | undefined, compact = true) {
   if (value === null || value === undefined) return 'Pending'
@@ -63,13 +112,93 @@ function formatCpm(value: number | null | undefined) {
   return `$${Number(value).toFixed(3)}/mi`
 }
 
+function round(value: number | null | undefined, digits = 3) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
+  const factor = 10 ** digits
+  return Math.round(Number(value) * factor) / factor
+}
+
+function sum(values: Array<number | null | undefined>): number {
+  return values.reduce<number>((total, value) => total + (Number.isFinite(Number(value)) ? Number(value) : 0), 0)
+}
+
+async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
+  const response = await fetch(url, { signal })
+  if (!response.ok) return null
+  return await response.json() as T
+}
+
 async function fetchKpiSnapshot(): Promise<K1OperatingCostSnapshot | null> {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 7000)
+  const timeout = window.setTimeout(() => controller.abort(), 60000)
   try {
-    const response = await fetch(endpoint, { signal: controller.signal })
-    if (!response.ok) return null
-    return await response.json() as K1OperatingCostSnapshot
+    const [operatingCost, entityMargin] = await Promise.all([
+      fetchJson<OperatingCostApiSnapshot>(operatingCostEndpoint, controller.signal),
+      fetchJson<EntityMarginApiSnapshot>(entityMarginEndpoint, controller.signal),
+    ])
+    const operatingSummary = operatingCost?.summary
+    if (!operatingSummary) {
+      return await fetchJson<K1OperatingCostSnapshot>(legacyEndpoint, controller.signal)
+    }
+
+    const miles = Number(operatingSummary.miles || 0)
+    const totalCost = (
+      Number.isFinite(Number(operatingSummary.true_operating_cost))
+        ? Number(operatingSummary.true_operating_cost)
+        : Number(operatingSummary.known_operating_cost || 0)
+    )
+    const costPerMile = (
+      Number.isFinite(Number(operatingSummary.true_cost_per_mile))
+        ? Number(operatingSummary.true_cost_per_mile)
+        : round(operatingSummary.known_cost_per_mile)
+    )
+    const revenue = entityMargin?.summary?.k1l_grand_total ?? null
+    const revenuePerMile = revenue !== null && miles > 0 ? round(Number(revenue) / miles) : null
+    const grossProfit = revenue !== null ? Number(revenue) - totalCost : null
+    const profitPerMile = revenuePerMile !== null && costPerMile !== null ? round(revenuePerMile - costPerMile) : null
+    const unresolved = operatingCost?.unresolved_sources ?? []
+    const revenueSource = entityMargin?.xcelerator_source_type || 'fabric_warehouse_sql'
+    const xceleratorRows = (entityMargin?.sources ?? []).find(source => source.table === 'dbo.xcelerator_review_orders')?.row_count
+
+    return {
+      as_of_date: operatingCost?.period_end,
+      cost_source_status: {
+        message: unresolved.length ? `Unresolved source: ${unresolved.join(', ')}` : 'Complete K1L operating cost stack.',
+        row_count: operatingCost?.row_counts?.qbo_expenses ?? null,
+        status: operatingCost?.complete_cost_available ? 'healthy' : 'pending',
+      },
+      entity: 'K1 Logistics Inc',
+      projection_mode: 'read_only',
+      revenue_source: revenueSource,
+      revenue_source_status: {
+        message: revenue !== null ? 'Xcelerator revenue is available.' : 'Xcelerator revenue is awaiting feed.',
+        row_count: xceleratorRows ?? null,
+        status: revenue !== null ? 'healthy' : 'awaiting_feed',
+      },
+      source: 'Xcelerator Warehouse SQL revenue/driver pay + QBO K1L expenses + Geotab miles/hours',
+      status: 'configured',
+      summary: {
+        added_p_and_l_ops: sum([
+          operatingSummary.insurance_cost,
+          operatingSummary.employee_cost,
+          operatingSummary.rental_trucks_trailers_cost,
+          operatingSummary.other_expense_cost,
+        ]),
+        cost_per_mile: costPerMile,
+        driver_pay: operatingSummary.driver_pay ?? null,
+        employee: operatingSummary.employee_cost ?? null,
+        fleet_maintenance: Number(operatingSummary.maintenance_cost || 0),
+        fuel: operatingSummary.fuel_cost ?? null,
+        gross_profit: grossProfit,
+        insurance: operatingSummary.insurance_cost ?? null,
+        miles,
+        profit_per_mile: profitPerMile,
+        rental_trucks_trailers: operatingSummary.rental_trucks_trailers_cost ?? null,
+        revenue,
+        revenue_per_mile: revenuePerMile,
+        total_cost: totalCost,
+      },
+    }
   } catch {
     return null
   } finally {
@@ -97,16 +226,19 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
   const summary = snapshot?.summary
   const sourceLabel = snapshot?.source || 'QBO + Xcelerator + AtoB + Geotab'
   const revenueSourceStatus = snapshot?.revenue_source_status?.status || 'not_configured'
-  const revenueSourceLabel = snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
-    ? 'Xcelerator CEO Power BI'
-    : 'Monthly JSON fallback'
+  const costSourceStatus = snapshot?.cost_source_status?.status || 'not_configured'
+  const revenueSourceLabel = snapshot?.revenue_source === 'fabric_warehouse_sql'
+    ? 'Xcelerator Warehouse SQL'
+    : snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
+      ? 'Xcelerator CEO Power BI'
+      : 'Monthly JSON fallback'
   const rpmVerified = (
-    snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
+    (snapshot?.revenue_source === 'fabric_warehouse_sql' || snapshot?.revenue_source === 'xcelerator_ceo_powerbi')
     && revenueSourceStatus === 'healthy'
     && Number.isFinite(Number(summary?.revenue_per_mile))
     && Number.isFinite(Number(summary?.profit_per_mile))
   )
-  const fallbackVerified = Boolean(configured && rpmVerified && Number.isFinite(Number(summary?.cost_per_mile)))
+  const fallbackVerified = Boolean(configured && rpmVerified && costSourceStatus === 'healthy' && Number.isFinite(Number(summary?.cost_per_mile)))
 
   return (
     <motion.div
@@ -144,7 +276,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
       </div>
 
       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500 light:text-gray-600">
-        <span>CPM: Geotab/QBO/AtoB/Xcelerator</span>
+        <span>CPM: Geotab miles + QBO K1L expenses + Xcelerator driver pay</span>
         <span>Revenue / Mile: {revenueSourceLabel} ({revenueSourceStatus.replace('_', ' ')})</span>
       </div>
 
@@ -170,7 +302,8 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         <div className="mt-3 text-xs text-gray-500 light:text-gray-600">
           <div className="truncate" title={sourceLabel}>{sourceLabel}</div>
           <div>Revenue {formatCurrency(summary?.revenue)} · Profit {formatCurrency(summary?.gross_profit)}</div>
-          <div>Ops added {formatCurrency(summary?.added_p_and_l_ops)} · Fleet maintenance {formatCurrency(summary?.fleet_maintenance)}</div>
+          <div>Driver pay {formatCurrency(summary?.driver_pay)} · Fuel {formatCurrency(summary?.fuel)} · Maintenance {formatCurrency(summary?.fleet_maintenance)}</div>
+          <div>Insurance {formatCurrency(summary?.insurance)} · Rental/lease {formatCurrency(summary?.rental_trucks_trailers)} · Ops added {formatCurrency(summary?.added_p_and_l_ops)}</div>
         </div>
       )}
     </motion.div>
