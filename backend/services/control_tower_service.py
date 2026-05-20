@@ -39,6 +39,10 @@ from models import (
 from services.alert_service import get_recent_alerts
 from services.fleet_service import LOCATIONS
 from services.monitor_service import get_monitor_alerts, get_monitor_status
+from services.qbo_financial_snapshot_service import (
+    QBO_FINANCIAL_AUTHORITY,
+    get_qbo_financial_snapshot,
+)
 from services.xtra_lease_ingestion_service import XtraLeaseProjection, get_xtra_lease_projection
 
 
@@ -637,7 +641,14 @@ def get_financial() -> ControlTowerFinancialResponse:
 
     enabled = _bool_env("FLEETPULSE_FINANCIAL_FEED_ENABLED", False)
     xcelerator_event_url_configured = _env_present(XCELERATOR_EVENT_FEED_ENV)
-    qbo_feed_configured = _env_present("FLEETPULSE_QBO_FINANCIAL_FEED_URL")
+    qbo_snapshot = get_qbo_financial_snapshot()
+    qbo_status_text = str(qbo_snapshot.get("status") or "awaiting_feed")
+    qbo_status = {
+        "healthy": ControlTowerStatus.HEALTHY,
+        "partial": ControlTowerStatus.WARNING,
+        "warning": ControlTowerStatus.WARNING,
+        "unavailable": ControlTowerStatus.UNAVAILABLE,
+    }.get(qbo_status_text, ControlTowerStatus.AWAITING_FEED)
     xcelerator_status = ControlTowerStatus.AWAITING_FEED
     xcelerator_message = "Financial feed is not connected to this FleetPulse service yet."
     xcelerator_last_updated: datetime | None = None
@@ -693,8 +704,14 @@ def get_financial() -> ControlTowerFinancialResponse:
             xcelerator_message = f"Xcelerator financial event feed unavailable: {type(xcelerator_event_error).__name__}"
     return ControlTowerFinancialResponse(
         generated_at=_now(),
-        accounts_receivable=[ControlTowerFinancialBucket(bucket=bucket) for bucket in AR_BUCKETS],
-        cash_flow={"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None},
+        accounts_payable=qbo_snapshot.get("accounts_payable") or {},
+        accounts_receivable=[
+            ControlTowerFinancialBucket(**bucket)
+            for bucket in (qbo_snapshot.get("accounts_receivable") or [])
+        ]
+        or [ControlTowerFinancialBucket(bucket=bucket) for bucket in AR_BUCKETS],
+        cash_flow=qbo_snapshot.get("cash_flow")
+        or {"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None},
         audit_queue={"pending_audits": 0, "passed_today": 0, "failed_today": 0, "fail_reasons": []},
         feeds=[
             _feed(
@@ -707,14 +724,11 @@ def get_financial() -> ControlTowerFinancialResponse:
             ),
             _feed(
                 "QuickBooks AR/AP snapshots",
-                "K1 Group LLC / QuickBooks",
-                ControlTowerStatus.WARNING if qbo_feed_configured else ControlTowerStatus.AWAITING_FEED,
-                (
-                    "QuickBooks financial feed URL is configured, but the read-only adapter is not live yet."
-                    if qbo_feed_configured
-                    else "QuickBooks financial snapshots are not connected to this FleetPulse service yet."
-                ),
-                ["FLEETPULSE_QBO_FINANCIAL_FEED_URL"],
+                QBO_FINANCIAL_AUTHORITY,
+                qbo_status,
+                str(qbo_snapshot.get("message") or "QuickBooks financial snapshots are not connected yet."),
+                list(qbo_snapshot.get("missing_config") or []),
+                _parse_datetime(qbo_snapshot.get("last_updated")),
             ),
         ],
     )

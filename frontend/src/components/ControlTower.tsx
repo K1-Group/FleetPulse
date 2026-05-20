@@ -298,7 +298,7 @@ export default function ControlTower() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <Panel className="xl:col-span-2">
             <h3 className="mb-3 text-lg font-semibold text-white light:text-gray-900">Financial Ops</h3>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="rounded-lg bg-gray-800/50 p-4 light:bg-gray-50">
                 <p className="text-xs text-gray-400 light:text-gray-600">AP Pending</p>
                 <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.accounts_payable.pending_amount)}</p>
@@ -313,6 +313,11 @@ export default function ControlTower() {
                 <p className="text-xs text-gray-400 light:text-gray-600">Net Weekly</p>
                 <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.cash_flow.net_weekly)}</p>
                 <p className="mt-1 text-xs text-gray-500">{financial.data?.source_authority || 'K1 Group LLC'}</p>
+              </div>
+              <div className="rounded-lg bg-gray-800/50 p-4 light:bg-gray-50">
+                <p className="text-xs text-gray-400 light:text-gray-600">K1L Expenses</p>
+                <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.cash_flow.k1l_expense_total)}</p>
+                <p className="mt-1 text-xs text-gray-500">QBO cost evidence</p>
               </div>
             </div>
             <h4 className="mt-5 mb-2 text-sm font-semibold text-gray-200 light:text-gray-800">AR Aging</h4>

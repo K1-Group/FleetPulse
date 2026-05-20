@@ -32,6 +32,7 @@ from services.lane_stability_service import (
     LaneStabilityConfig,
     get_lane_stability_snapshot,
 )
+from services.qbo_financial_snapshot_service import load_qbo_k1l_expense_rows
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_weekly_driver_pay,
 )
@@ -59,6 +60,7 @@ class QboExpenseFeedConfig:
     timeout_seconds: float = 30.0
     insurance_patterns: tuple[str, ...] = ("insurance",)
     excluded_patterns: tuple[str, ...] = (
+        "accounts payable",
         "accounts receivable",
         "atob",
         "carrier",
@@ -106,9 +108,9 @@ class QboExpenseFeedConfig:
             excluded_patterns=_csv_env(
                 "FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS",
                 (
-                    "accounts receivable,atob,diesel,driver pay,driver settlement,"
-                    "carrier,cogs,contractor,cost of goods sold,factoring,fuel,"
-                    "freight in,income,payroll,revenue,sales,wages"
+                    "accounts payable,accounts receivable,atob,diesel,driver pay,"
+                    "driver settlement,carrier,cogs,contractor,cost of goods sold,"
+                    "factoring,fuel,freight in,income,payroll,revenue,sales,wages"
                 ),
             ),
         )
@@ -893,7 +895,16 @@ def _coerce_feed(text: str, content_type: str) -> tuple[list[dict[str, Any]], di
                 for key in ("coverage_start", "coverage_end", "last_imported_at")
                 if payload.get(key)
             }
-            for key in ("rows", "value", "expenses", "data", "items"):
+            for key in (
+                "expense_rows",
+                "k1l_expenses",
+                "k1l_expense_rows",
+                "expenses",
+                "rows",
+                "value",
+                "data",
+                "items",
+            ):
                 value = payload.get(key)
                 if isinstance(value, list):
                     return [item for item in value if isinstance(item, dict)], metadata
@@ -988,17 +999,20 @@ def _qbo_weekly_costs(
 ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
     config = config or QboExpenseFeedConfig.from_env()
     if not config.configured:
-        return {}, _source(
-            "awaiting_feed",
-            QBO_AUTHORITY,
-            message="QBO expense feed URL/path is not configured.",
-        )
-
-    rows, metadata = _load_qbo_feed(config)
+        rows, metadata = load_qbo_k1l_expense_rows(start=start, end=end)
+        if not rows:
+            return {}, _source(
+                "awaiting_feed",
+                QBO_AUTHORITY,
+                message="QBO expense feed URL/path is not configured.",
+            )
+    else:
+        rows, metadata = _load_qbo_feed(config)
+    source_authority = metadata.get("source_authority") or QBO_AUTHORITY
     if not rows:
         return {}, _source(
             "awaiting_feed",
-            QBO_AUTHORITY,
+            source_authority,
             message="QBO expense feed is configured, but no expense rows are available yet.",
         )
 
@@ -1020,7 +1034,7 @@ def _qbo_weekly_costs(
     if not source_row_count:
         return {}, _source(
             "awaiting_feed",
-            QBO_AUTHORITY,
+            source_authority,
             message="QBO expense feed has no rows inside the requested reporting period.",
         )
 
@@ -1042,7 +1056,7 @@ def _qbo_weekly_costs(
         },
         _source(
             source_status,
-            QBO_AUTHORITY,
+            source_authority,
             message=source_message
             or (
                 f"{included_row_count} QBO expense rows included after account exclusions."

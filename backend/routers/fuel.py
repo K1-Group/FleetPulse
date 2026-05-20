@@ -34,6 +34,7 @@ from services.qbo_expense_import_service import (
     qbo_expense_import_status,
     validate_qbo_expense_import_api_key,
 )
+from services.qbo_financial_snapshot_service import get_qbo_financial_snapshot
 from services.revenue_productivity_service import get_revenue_productivity_snapshot
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_summary,
@@ -151,6 +152,18 @@ async def qbo_expenses_summary(days: int = 370):
 async def qbo_expense_transactions(limit: int = 100):
     """Return latest imported QBO expense records."""
     return get_qbo_expense_transactions(limit=limit)
+
+
+@router.get("/qbo/financial-snapshot")
+async def qbo_financial_snapshot(
+    start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Return read-only QBO AP, AR, and K1 Logistics expense evidence."""
+    try:
+        return get_qbo_financial_snapshot(start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/atob/sharepoint/status")

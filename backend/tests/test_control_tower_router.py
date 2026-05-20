@@ -123,6 +123,26 @@ def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monk
     monkeypatch.setenv("FLEETPULSE_QBO_FINANCIAL_FEED_URL", "https://example.invalid/qbo")
     monkeypatch.setattr(
         control_tower_service,
+        "get_qbo_financial_snapshot",
+        lambda: {
+            "status": "healthy",
+            "message": "Read 1 QBO financial row.",
+            "source_authority": "QuickBooks Online financial snapshot",
+            "missing_config": [],
+            "last_updated": None,
+            "accounts_payable": {
+                "pending_amount": 100,
+                "pending_bills": 1,
+                "overdue_amount": 0,
+                "overdue_count": 0,
+                "total": 100,
+            },
+            "accounts_receivable": [{"bucket": "0-30", "amount": 200, "count": 1}],
+            "cash_flow": {"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None, "k1l_expense_total": 75},
+        },
+    )
+    monkeypatch.setattr(
+        control_tower_service,
         "_fetch_xcelerator_event_rows",
         lambda: (
             [
@@ -142,9 +162,9 @@ def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monk
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["accounts_payable"]["pending_amount"] is None
+    assert payload["accounts_payable"]["pending_amount"] == 100
     assert payload["feeds"][0]["status"] == "healthy"
-    assert payload["feeds"][1]["status"] == "warning"
+    assert payload["feeds"][1]["status"] == "healthy"
     assert "Read 1 Xcelerator row" in payload["feeds"][0]["message"]
     assert "adapter is not live yet" not in payload["feeds"][0]["message"]
     assert "12345" not in response.text
