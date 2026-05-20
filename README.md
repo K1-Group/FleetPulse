@@ -231,7 +231,8 @@ FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
 FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY=
 FLEETPULSE_QBO_EXPENSE_RETAINED_RECORDS=50000
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
-FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts payable,accounts receivable,atob,carrier,contractor,driver pay,driver settlement,factoring,income,revenue,sales
+FLEETPULSE_K1L_INSURANCE_COST_PER_MILE=0.27
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts payable,accounts receivable,brokerage commission,carrier,commissions & fees,contractor,driver pay,driver settlement,factoring,income,revenue,sales
 FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY=4
 FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES=2
 K1L_OPERATING_COST_REVENUE_SOURCE=xcelerator_ceo_powerbi
@@ -248,9 +249,13 @@ FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
 cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
-Xcelerator driver pay, and K1 Logistics QuickBooks maintenance, fuel,
-insurance, employee, rental truck, and trailer costs. AtoB remains available as
-fuel-card audit evidence but is not double-counted when QBO fuel rows are live.
+Xcelerator driver pay, K1 Logistics QuickBooks maintenance/fuel/employee/rental
+costs, and the configured K1L insurance allocation rate. `FLEETPULSE_K1L_INSURANCE_COST_PER_MILE`
+defaults to `0.27`, so weekly CPM carries insurance by miles instead of waiting
+for one lumpy posted insurance bill date. AtoB remains available as fuel-card
+audit evidence but is not double-counted when QBO fuel rows are live. Rental and
+lease matching includes Ryder, Bruckner, Idealease/Idlease, XTRA Lease, and
+Camarena rows when those names appear on the vendor/memo/description fields.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data

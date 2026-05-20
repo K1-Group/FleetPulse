@@ -173,7 +173,12 @@ interface OperatingCostSummary {
   trips: number
   fuel_cost: number
   driver_pay: number
+  maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
+  employee_cost?: number
+  rental_trucks_trailers_cost?: number
   other_expense_cost: number
   known_operating_cost: number
   true_operating_cost: number | null
@@ -225,7 +230,12 @@ interface EntityMarginSummary {
   idle_hours: number
   operating_hours: number
   fuel_cost: number
+  maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
+  employee_cost?: number
+  rental_trucks_trailers_cost?: number
   other_expense_cost: number
   k1l_orders: number
   k1l_grand_total: number
@@ -1449,8 +1459,10 @@ export default function FuelAnalytics() {
               <Legend />
               <Bar yAxisId="cost" dataKey="fuel_cost" name="Fuel Cost" stackId="cost" fill="#10b981" />
               <Bar yAxisId="cost" dataKey="driver_pay" name="Driver Pay" stackId="cost" fill="#3b82f6" />
-              <Bar yAxisId="cost" dataKey="insurance_cost" name="Insurance" stackId="cost" fill="#a855f7" />
-              <Bar yAxisId="cost" dataKey="other_expense_cost" name="Other Expense" stackId="cost" fill="#f59e0b" />
+              <Bar yAxisId="cost" dataKey="insurance_cost" name="Insurance / Mile" stackId="cost" fill="#a855f7" />
+              <Bar yAxisId="cost" dataKey="maintenance_cost" name="Maintenance" stackId="cost" fill="#f59e0b" />
+              <Bar yAxisId="cost" dataKey="employee_cost" name="Employee" stackId="cost" fill="#facc15" />
+              <Bar yAxisId="cost" dataKey="rental_trucks_trailers_cost" name="Rental / Lease" stackId="cost" fill="#fb7185" />
               <Line yAxisId="rate" type="monotone" dataKey="known_cost_per_mile" name="Known CPM" stroke="#f8fafc" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="known_cost_per_drive_hour" name="Known Cost/Hour" stroke="#fb7185" strokeWidth={2} dot={false} />
             </ComposedChart>

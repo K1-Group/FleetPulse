@@ -74,41 +74,67 @@ QBO_K1L_COST_BUCKETS = (
 )
 _EMPLOYEE_PATTERNS = (
     "employee",
+    "company contributions",
+    "health insurance",
     "payroll",
+    "pre-employment",
     "salary",
     "salaries",
     "wages",
     "worker",
-    "pre-employment",
 )
 _RENTAL_TRUCK_TRAILER_PATTERNS = (
+    "bruckner",
+    "camarena",
+    "equipment rental",
+    "equipment rental - cogs",
+    "idlease",
+    "idealease",
+    "ryder",
     "truck lease",
     "trucks/trailers lease",
     "trailer lease",
     "truck rental",
     "trailer rental",
-    "equipment rental",
+    "xtra",
+    "xtra lease",
 )
 _MAINTENANCE_PATTERNS = (
+    "2290",
+    "highway used tax",
+    "ifta",
+    "parking",
+    "permit",
+    "permits",
     "repair",
     "maintenance",
-    "towing",
-    "ifta",
-    "registration",
-    "permit",
-    "license",
+    "road services",
     "safety compliance",
-    "2290",
+    "registration",
+    "registrations",
+    "toll",
+    "tolls",
+    "towing",
+    "license",
+    "licenses",
+    "truck wash",
+    "vehicle registration",
+    "vehicle wash",
 )
 _FUEL_PATTERNS = (
-    "fuel",
     "diesel",
+    "fuel",
+    "fuel - cost",
+    "gas & fuel",
+    "vehicle gas",
+    "vehicle gas & fuel",
 )
 _DEFAULT_EXCLUDED_EXPENSE_PATTERNS = (
     "accounts payable",
     "accounts receivable",
-    "atob",
+    "brokerage commission",
     "carrier",
+    "commissions & fees",
     "contractor",
     "driver pay",
     "driver settlement",
@@ -741,7 +767,16 @@ def _is_expense_row(row: dict[str, Any]) -> bool:
 def _expense_bucket(row: dict[str, Any], *, config: QboFinancialConfig) -> str | None:
     haystack = " ".join(
         str(row.get(key) or "")
-        for key in ("account_name", "category", "vendor_name", "memo", "description", "transaction_type")
+        for key in (
+            "account_name",
+            "category",
+            "vendor_name",
+            "entity_name",
+            "name",
+            "memo",
+            "description",
+            "transaction_type",
+        )
     ).casefold()
     if any(pattern.casefold() in haystack for pattern in config.excluded_expense_patterns):
         return None

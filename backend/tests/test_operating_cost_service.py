@@ -224,13 +224,15 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
     assert snapshot["summary"]["fuel_cost"] == 125.0
     assert snapshot["summary"]["driver_pay"] == 250.0
     assert snapshot["summary"]["maintenance_cost"] == 75.0
-    assert snapshot["summary"]["insurance_cost"] == 50.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
+    assert snapshot["summary"]["insurance_cost_per_mile"] == 0.27
     assert snapshot["summary"]["employee_cost"] == 80.0
     assert snapshot["summary"]["rental_trucks_trailers_cost"] == 40.0
     assert snapshot["summary"]["other_expense_cost"] == 195.0
-    assert snapshot["summary"]["true_operating_cost"] == 620.0
-    assert snapshot["summary"]["true_cost_per_mile"] == 6.2
-    assert snapshot["summary"]["true_cost_per_drive_hour"] == 124.0
+    assert snapshot["summary"]["true_operating_cost"] == 597.0
+    assert snapshot["summary"]["true_cost_per_mile"] == 5.97
+    assert snapshot["summary"]["true_cost_per_drive_hour"] == 119.4
 
 
 def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tmp_path):
@@ -350,7 +352,9 @@ def test_operating_cost_snapshot_marks_partial_driver_pay_as_incomplete(monkeypa
     assert snapshot["sources"]["driver_pay"]["status"] == "partial"
     assert "driver_pay" in snapshot["unresolved_sources"]
     assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
-    assert snapshot["summary"]["known_operating_cost"] == 300.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
+    assert snapshot["summary"]["known_operating_cost"] == 277.0
     assert snapshot["summary"]["true_cost_per_mile"] is None
 
 
@@ -419,8 +423,9 @@ def test_operating_cost_snapshot_reads_imported_qbo_expense_state(monkeypatch, t
 
     assert snapshot["sources"]["qbo_expenses"]["status"] == "healthy"
     assert snapshot["sources"]["qbo_expenses"]["row_count"] == 3
-    assert snapshot["summary"]["insurance_cost"] == 50.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
     assert snapshot["summary"]["maintenance_cost"] == 75.0
     assert snapshot["summary"]["fuel_cost"] == 999.0
     assert snapshot["summary"]["other_expense_cost"] == 75.0
-    assert snapshot["summary"]["known_operating_cost"] == 1124.0
+    assert snapshot["summary"]["known_operating_cost"] == 1101.0

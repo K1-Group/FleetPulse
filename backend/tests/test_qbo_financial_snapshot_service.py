@@ -143,6 +143,19 @@ def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
                         "Class": "K1 Logistics Inc",
                     },
                     {
+                        "Date": "2026-05-06",
+                        "Account": "Lease Expense",
+                        "Vendor": "Ryder",
+                        "Amount": "210.00",
+                        "Class": "K1 Logistics Inc",
+                    },
+                    {
+                        "Date": "2026-05-06",
+                        "Account": "Brokerage Commission Fees",
+                        "Amount": "800.00",
+                        "Class": "K1 Logistics Inc",
+                    },
+                    {
                         "Date": "2026-05-05",
                         "Account": "Repairs and Maintenance",
                         "Amount": "30.00",
@@ -161,7 +174,8 @@ def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
     )
 
     assert metadata["source_status"] == "healthy"
-    assert [row["Amount"] for row in rows] == [50.0, 75.0, 125.0]
+    assert [row["Amount"] for row in rows] == [50.0, 75.0, 125.0, 210.0]
     assert rows[0]["qbo_expense_bucket"] == "insurance"
     assert rows[1]["qbo_expense_bucket"] == "maintenance"
     assert rows[2]["qbo_expense_bucket"] == "rental_trucks_trailers"
+    assert rows[3]["qbo_expense_bucket"] == "rental_trucks_trailers"

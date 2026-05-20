@@ -47,38 +47,65 @@ QBO_AUTHORITY = "K1 Logistics Inc / QuickBooks Online"
 OPERATING_COST_AUTHORITY = (
     "Geotab miles/hours + Xcelerator sales/driver pay + QBO K1 Logistics cost stack"
 )
+K1L_INSURANCE_RATE_AUTHORITY = "K1 Logistics Inc insurance allocation"
+DEFAULT_K1L_INSURANCE_COST_PER_MILE = 0.27
 KM_TO_MILES = 0.621371
 _EMPLOYEE_PATTERNS = (
     "employee",
+    "company contributions",
+    "health insurance",
     "payroll",
+    "pre-employment",
     "salary",
     "salaries",
     "wages",
     "worker",
-    "pre-employment",
 )
 _RENTAL_TRUCK_TRAILER_PATTERNS = (
+    "bruckner",
+    "camarena",
+    "equipment rental",
+    "equipment rental - cogs",
+    "idlease",
+    "idealease",
+    "ryder",
     "truck lease",
     "trucks/trailers lease",
     "trailer lease",
     "truck rental",
     "trailer rental",
-    "equipment rental",
+    "xtra",
+    "xtra lease",
 )
 _MAINTENANCE_PATTERNS = (
+    "2290",
+    "highway used tax",
+    "ifta",
+    "parking",
+    "permit",
+    "permits",
     "repair",
     "maintenance",
-    "towing",
-    "ifta",
-    "registration",
-    "permit",
-    "license",
+    "road services",
     "safety compliance",
-    "2290",
+    "registration",
+    "registrations",
+    "toll",
+    "tolls",
+    "towing",
+    "license",
+    "licenses",
+    "truck wash",
+    "vehicle registration",
+    "vehicle wash",
 )
 _FUEL_PATTERNS = (
-    "fuel",
     "diesel",
+    "fuel",
+    "fuel - cost",
+    "gas & fuel",
+    "vehicle gas",
+    "vehicle gas & fuel",
 )
 
 
@@ -92,11 +119,13 @@ class QboExpenseFeedConfig:
     api_key_header: str = "X-FleetPulse-QBO-Key"
     timeout_seconds: float = 30.0
     insurance_patterns: tuple[str, ...] = ("insurance",)
+    insurance_cost_per_mile: float = DEFAULT_K1L_INSURANCE_COST_PER_MILE
     excluded_patterns: tuple[str, ...] = (
         "accounts payable",
         "accounts receivable",
-        "atob",
+        "brokerage commission",
         "carrier",
+        "commissions & fees",
         "contractor",
         "driver pay",
         "driver settlement",
@@ -134,11 +163,16 @@ class QboExpenseFeedConfig:
                 "FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS",
                 "insurance",
             ),
+            insurance_cost_per_mile=_float_env(
+                "FLEETPULSE_K1L_INSURANCE_COST_PER_MILE",
+                DEFAULT_K1L_INSURANCE_COST_PER_MILE,
+            ),
             excluded_patterns=_csv_env(
                 "FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS",
                 (
-                    "accounts payable,accounts receivable,atob,driver pay,"
-                    "driver settlement,carrier,contractor,factoring,income,revenue,sales"
+                    "accounts payable,accounts receivable,brokerage commission,"
+                    "carrier,commissions & fees,driver pay,driver settlement,contractor,"
+                    "factoring,income,revenue,sales"
                 ),
             ),
         )
@@ -290,6 +324,9 @@ def _empty_week(start: date, end: date) -> dict[str, Any]:
         "driver_pay": 0.0,
         "maintenance_cost": 0.0,
         "insurance_cost": 0.0,
+        "posted_insurance_cost": 0.0,
+        "insurance_cost_method": "per_mile_rate",
+        "insurance_cost_per_mile": DEFAULT_K1L_INSURANCE_COST_PER_MILE,
         "employee_cost": 0.0,
         "rental_trucks_trailers_cost": 0.0,
         "other_expense_cost": 0.0,
@@ -990,29 +1027,25 @@ def _qbo_row_amount(row: dict[str, Any]) -> float:
 
 def _qbo_row_bucket(row: dict[str, Any], config: QboExpenseFeedConfig) -> str | None:
     haystack = " ".join(
-        str(
-            _find_value(
-                row,
-                (
-                    "Account",
-                    "Account Name",
-                    "account_name",
-                    "Category",
-                    "Expense Category",
-                    "category",
-                    "Name",
-                    "vendor_name",
-                    "Memo",
-                    "memo",
-                    "Description",
-                    "description",
-                    "Transaction Type",
-                    "transaction_type",
-                ),
-            )
-            or ""
+        str(_find_value(row, (alias,)) or "")
+        for alias in (
+            "Account",
+            "Account Name",
+            "account_name",
+            "Category",
+            "Expense Category",
+            "category",
+            "Name",
+            "Vendor",
+            "vendor_name",
+            "entity_name",
+            "Memo",
+            "memo",
+            "Description",
+            "description",
+            "Transaction Type",
+            "transaction_type",
         )
-        for _ in range(1)
     ).casefold()
     if not haystack:
         haystack = " ".join(str(value or "") for value in row.values()).casefold()
@@ -1109,6 +1142,40 @@ def _qbo_weekly_costs(
     )
 
 
+def _insurance_source(config: QboExpenseFeedConfig) -> dict[str, Any]:
+    rate = max(float(config.insurance_cost_per_mile or 0.0), 0.0)
+    if rate > 0:
+        return _source(
+            "healthy",
+            K1L_INSURANCE_RATE_AUTHORITY,
+            message=f"K1L insurance allocated at ${rate:.2f}/mile.",
+        )
+    return _source(
+        "disabled",
+        K1L_INSURANCE_RATE_AUTHORITY,
+        message="K1L insurance per-mile allocation is disabled; using posted QBO insurance rows only.",
+    )
+
+
+def _apply_insurance_allocation(
+    weekly: dict[str, dict[str, Any]],
+    *,
+    config: QboExpenseFeedConfig,
+) -> None:
+    rate = max(float(config.insurance_cost_per_mile or 0.0), 0.0)
+    for row in weekly.values():
+        row["insurance_cost_per_mile"] = rate
+        posted = _money(float(row.get("posted_insurance_cost") or row.get("insurance_cost") or 0.0))
+        row["posted_insurance_cost"] = posted
+        miles = float(row.get("miles") or 0.0)
+        if rate > 0 and miles > 0:
+            row["insurance_cost"] = _money(miles * rate)
+            row["insurance_cost_method"] = "per_mile_rate"
+            continue
+        row["insurance_cost"] = posted
+        row["insurance_cost_method"] = "qbo_posted" if posted else "none"
+
+
 def _component_sources_complete(sources: dict[str, dict[str, Any]]) -> bool:
     return all(
         sources[name]["status"] == "healthy"
@@ -1153,6 +1220,7 @@ def _summary_from_weekly(weekly: list[dict[str, Any]], *, complete: bool) -> dic
         "driver_pay": sum(float(row["driver_pay"]) for row in weekly),
         "maintenance_cost": sum(float(row.get("maintenance_cost") or 0) for row in weekly),
         "insurance_cost": sum(float(row["insurance_cost"]) for row in weekly),
+        "posted_insurance_cost": sum(float(row.get("posted_insurance_cost") or 0) for row in weekly),
         "employee_cost": sum(float(row.get("employee_cost") or 0) for row in weekly),
         "rental_trucks_trailers_cost": sum(float(row.get("rental_trucks_trailers_cost") or 0) for row in weekly),
         "other_expense_cost": sum(float(row["other_expense_cost"]) for row in weekly),
@@ -1169,6 +1237,8 @@ def _summary_from_weekly(weekly: list[dict[str, Any]], *, complete: bool) -> dic
         "driver_pay": _money(totals["driver_pay"]),
         "maintenance_cost": _money(totals["maintenance_cost"]),
         "insurance_cost": _money(totals["insurance_cost"]),
+        "posted_insurance_cost": _money(totals["posted_insurance_cost"]),
+        "insurance_cost_per_mile": _ratio(totals["insurance_cost"], totals["miles"]),
         "employee_cost": _money(totals["employee_cost"]),
         "rental_trucks_trailers_cost": _money(totals["rental_trucks_trailers_cost"]),
         "other_expense_cost": _money(totals["other_expense_cost"]),
@@ -1208,6 +1278,7 @@ async def get_operating_cost_snapshot(
     """Return weekly operating-cost rows for dashboard and Power BI use."""
 
     period_start, period_end = _resolve_window(days, start, end)
+    qbo_config = qbo_config or QboExpenseFeedConfig.from_env()
     weeks = _week_windows(period_start, period_end)
     weekly = {_week_key(start_date): _empty_week(start_date, end_date) for start_date, end_date in weeks}
 
@@ -1245,14 +1316,17 @@ async def get_operating_cost_snapshot(
         bucket = weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))
         bucket["maintenance_cost"] = value.get("maintenance", 0.0)
         bucket["fuel_cost"] = value.get("fuel", 0.0)
-        bucket["insurance_cost"] = value.get("insurance", 0.0)
+        bucket["posted_insurance_cost"] = value.get("insurance", 0.0)
         bucket["employee_cost"] = value.get("employee", 0.0)
         bucket["rental_trucks_trailers_cost"] = value.get("rental_trucks_trailers", 0.0)
+
+    _apply_insurance_allocation(weekly, config=qbo_config)
 
     sources = {
         "telemetry": telemetry_source,
         "fuel": qbo_source,
         "fuel_card_audit": fuel_source,
+        "insurance": _insurance_source(qbo_config),
         "driver_pay": driver_source,
         "qbo_expenses": qbo_source,
     }

@@ -21,6 +21,9 @@ interface EntityMarginWeeklyRow {
   fuel_cost: number
   maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
+  insurance_cost_method?: string
   employee_cost?: number
   rental_trucks_trailers_cost?: number
   other_expense_cost: number
@@ -39,6 +42,8 @@ interface EntityMarginSummary {
   fuel_cost: number
   maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
   employee_cost?: number
   rental_trucks_trailers_cost?: number
   other_expense_cost: number
@@ -132,6 +137,16 @@ function formatMoney(value: number | null | undefined): string {
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(value)
+}
+
+function formatRate(value: number | null | undefined, suffix: string): string {
+  if (value === null || value === undefined) return 'Pending'
+  return `${new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}${suffix}`
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -346,6 +361,8 @@ export default function FinancialPerformanceDashboard() {
     + numberValue(summary?.insurance_cost)
     + numberValue(summary?.employee_cost)
     + numberValue(summary?.rental_trucks_trailers_cost)
+  const insuranceRate = summary?.insurance_cost_per_mile ?? null
+  const insuranceRateLabel = insuranceRate !== null ? `${formatRate(insuranceRate, '/mi')} insurance` : 'insurance allocation'
   const orgTotalCost = orgDriverPay + qboK1lCost
   const orgProfit = orgRevenue - orgTotalCost
   const summaryMarginPct = orgRevenue > 0 ? (orgProfit / orgRevenue) * 100 : null
@@ -426,14 +443,14 @@ export default function FinancialPerformanceDashboard() {
             <MetricTile label="Org Gross Profit" value={formatMoney(orgProfit)} helper={`${formatMoney(orgRevenue)} sales`} icon={<TrendingUp className="h-4 w-4 text-emerald-300" />} />
             <MetricTile label="Target Gap" value={formatMoney(targetGap)} helper={targetGap >= 0 ? 'Above target' : 'Below target'} tone={targetGap >= 0 ? 'good' : 'bad'} />
             <MetricTile label="Xcelerator Pay" value={formatMoney(orgDriverPay)} helper={`${formatNumber((summary?.k1l_orders ?? 0) + (summary?.k1g_orders ?? 0))} orders`} />
-            <MetricTile label="QBO K1L Cost" value={formatMoney(qboK1lCost)} helper="Maintenance, fuel, insurance, employee, rentals" />
+            <MetricTile label="K1L Cost Stack" value={formatMoney(qboK1lCost)} helper={`Fuel, maintenance, ${insuranceRateLabel}, employee, rentals`} />
           </>
         )}
       </section>
 
       <section className={`${CARD_CLASS} min-h-[390px]`}>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h3 className="text-base font-semibold text-white light:text-gray-900">Weekly Org Sales / Driver Pay / QBO Cost / Margin</h3>
+          <h3 className="text-base font-semibold text-white light:text-gray-900">Weekly Org Sales / Driver Pay / K1L Cost / Margin</h3>
           <span className="text-xs text-gray-500 light:text-gray-500">{entityMargin?.period_start ?? 'Pending'} to {entityMargin?.period_end ?? 'Pending'}</span>
         </div>
         {loading && !entityMargin ? (
@@ -451,7 +468,7 @@ export default function FinancialPerformanceDashboard() {
               <Legend />
               <Bar yAxisId="money" dataKey="orgRevenue" name="Xcelerator Sales" fill="#14b8a6" radius={[4, 4, 0, 0]} />
               <Bar yAxisId="money" dataKey="orgDriverPay" name="Xcelerator Driver Pay" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="money" dataKey="orgQboCost" name="QBO K1L Cost" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="money" dataKey="orgQboCost" name="K1L Cost Stack" fill="#38bdf8" radius={[4, 4, 0, 0]} />
               <Line yAxisId="pct" type="monotone" dataKey="orgMarginPct" name="Org Margin %" stroke="#facc15" strokeWidth={3} dot={false} />
               <Line yAxisId="pct" type="monotone" dataKey="targetPct" name="Target %" stroke="#93c5fd" strokeWidth={2} strokeDasharray="6 5" dot={false} />
             </ComposedChart>
@@ -461,7 +478,7 @@ export default function FinancialPerformanceDashboard() {
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className={`${CARD_CLASS} min-h-[340px]`}>
-          <h3 className="mb-4 text-base font-semibold text-white light:text-gray-900">QBO Cost Buckets</h3>
+          <h3 className="mb-4 text-base font-semibold text-white light:text-gray-900">K1L Cost Buckets</h3>
           {chartRows.length === 0 ? (
             <EmptyState />
           ) : (
@@ -473,7 +490,7 @@ export default function FinancialPerformanceDashboard() {
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="maintenance_cost" name="Maintenance" fill="#38bdf8" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="fuel_cost" name="Fuel" fill="#14b8a6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="insurance_cost" name="Insurance" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="insurance_cost" name="Insurance / Mile" fill="#a78bfa" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="employee_cost" name="Employee" fill="#facc15" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="rental_trucks_trailers_cost" name="Truck/Trailer Rental" fill="#fb7185" radius={[4, 4, 0, 0]} />
               </ComposedChart>
