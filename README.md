@@ -357,6 +357,25 @@ remaining the seat authority.
 manager-seat KPI to its source authority, current FleetPulse route if one
 exists, readiness status, missing app setting names, and the next owner action.
 
+#### HR Recruiting Feed Wiring
+```env
+HR_WORKLIST_SLA_HOURS=24,48,72
+HR_RECRUITING_SOURCE=zapier_table
+HR_RECRUITING_SNAPSHOT_URL=
+HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
+HR_RECRUITING_IMPORT_API_KEY=
+SHAREPOINT_HR_REPORTING_LOG_URL=
+```
+
+`POST /api/hr-recruiting/import` replaces the scheduled HR recruiting snapshot
+with approved Zapier/Outlook evidence. FleetPulse stores the source rows as a
+read-only state file, then `GET /api/hr-recruiting/worklist` and the Power BI
+HR exports suppress applicant PII from every dashboard payload. Zapier or Power
+Automate should run this daily from the approved TenStreet Outlook/Zapier source
+and pass `X-FleetPulse-HR-Key` when `HR_RECRUITING_IMPORT_API_KEY` is configured.
+See [`docs/fleetpulse-scheduled-feed-wiring.md`](docs/fleetpulse-scheduled-feed-wiring.md)
+for the QBO, Xcelerator, and HR Zapier/Power Automate job contracts.
+
 ### Backend
 ```bash
 # Create virtual environment
@@ -528,6 +547,9 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |
+| `GET /api/hr-recruiting/status` | HR recruiting feed readiness without applicant PII |
+| `GET /api/hr-recruiting/worklist` | Read-only HR recruiting worklist analytics with PII suppressed |
+| `POST /api/hr-recruiting/import` | Replace scheduled HR recruiting snapshot from approved Zapier/Outlook evidence |
 | **🚚 Control Tower Endpoints** |
 | `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |

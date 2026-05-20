@@ -311,6 +311,18 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         owner_action="Publish Training_History completion by employee and seat.",
     ),
     SeatKpiContract(
+        key="hr_recruiting_worklist_sla",
+        label="HR Recruiting Worklist SLA",
+        seat_id="people_systems_manager",
+        target="0 stale leads past SLA",
+        source_authority="Zapier Table + approved TenStreet Outlook emails",
+        source_route="/api/hr-recruiting/worklist",
+        base_status=ControlTowerStatus.WARNING,
+        required_config=("HR_RECRUITING_STATE_PATH|HR_RECRUITING_SNAPSHOT_URL",),
+        blocker="hr_recruiting_snapshot_partial_or_missing",
+        owner_action="Schedule approved HR snapshot import and monitor stale recruiting queues.",
+    ),
+    SeatKpiContract(
         key="access_lifecycle_sla",
         label="Access Lifecycle SLA",
         seat_id="people_systems_manager",
