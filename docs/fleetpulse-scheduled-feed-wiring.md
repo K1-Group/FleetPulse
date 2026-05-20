@@ -137,6 +137,11 @@ Common route shape:
 - Status: `GET https://k1-fleetpulse.azurewebsites.net/api/control-tower/seat-kpis/feeds/{feed_key}/status`
 - Import: `POST https://k1-fleetpulse.azurewebsites.net/api/control-tower/seat-kpis/feeds/{feed_key}/import`
 - Header: `X-FleetPulse-Seat-KPI-Key: <matching Key Vault secret value>`
+- Full contract manifest: `GET https://k1-fleetpulse.azurewebsites.net/api/control-tower/scheduled-feeds/contracts`
+
+The contract manifest is safe to share with Power Automate/Zapier builders. It
+contains route paths, auth header names, accepted JSON containers, and minimum
+field groups, but never returns secret values.
 
 Feed keys and minimum useful fields:
 

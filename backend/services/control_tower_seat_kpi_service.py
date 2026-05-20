@@ -370,27 +370,41 @@ CATALOG: tuple[SeatKpiContract, ...] = (
 )
 
 
-def _status_for(contract: SeatKpiContract) -> tuple[ControlTowerStatus, str | None, list[str]]:
+def _status_for(contract: SeatKpiContract) -> tuple[ControlTowerStatus, str | None, list[str], dict]:
     missing = _missing_config(contract.required_config)
     if contract.feed_key:
         try:
             feed_status = get_seat_kpi_feed_status(contract.feed_key)
         except KeyError:
-            return ControlTowerStatus.UNAVAILABLE, "seat_kpi_feed_registry_missing", [contract.feed_key]
+            return ControlTowerStatus.UNAVAILABLE, "seat_kpi_feed_registry_missing", [contract.feed_key], {}
+        metric_summary = _metric_summary_from_feed(contract.feed_key, feed_status)
         if missing or not feed_status.get("state_path_configured"):
             return (
                 ControlTowerStatus.AWAITING_FEED,
                 contract.blocker or "required_config_missing",
                 missing or [feed_state_path_env(contract.feed_key)],
+                metric_summary,
             )
         if feed_status.get("status") != "healthy":
-            return ControlTowerStatus.AWAITING_FEED, contract.blocker or "scheduled_feed_awaiting_rows", []
-        return contract.base_status, contract.blocker if contract.base_status != ControlTowerStatus.HEALTHY else None, []
+            return ControlTowerStatus.AWAITING_FEED, contract.blocker or "scheduled_feed_awaiting_rows", [], metric_summary
+        return contract.base_status, contract.blocker if contract.base_status != ControlTowerStatus.HEALTHY else None, [], metric_summary
     if contract.source_route is None:
-        return ControlTowerStatus.AWAITING_FEED, contract.blocker or "fleetpulse_route_not_implemented", missing
+        return ControlTowerStatus.AWAITING_FEED, contract.blocker or "fleetpulse_route_not_implemented", missing, {}
     if missing:
-        return ControlTowerStatus.AWAITING_FEED, contract.blocker or "required_config_missing", missing
-    return contract.base_status, contract.blocker if contract.base_status != ControlTowerStatus.HEALTHY else None, []
+        return ControlTowerStatus.AWAITING_FEED, contract.blocker or "required_config_missing", missing, {}
+    return contract.base_status, contract.blocker if contract.base_status != ControlTowerStatus.HEALTHY else None, [], {}
+
+
+def _metric_summary_from_feed(feed_key: str, feed_status: dict) -> dict:
+    summary = feed_status.get("summary") if isinstance(feed_status.get("summary"), dict) else {}
+    metric_summary = {
+        "feed_key": feed_key,
+        "feed_status": feed_status.get("status"),
+        "row_count": feed_status.get("row_count", 0),
+        "last_updated": feed_status.get("last_updated"),
+    }
+    metric_summary.update(summary)
+    return {key: value for key, value in metric_summary.items() if value not in (None, {}, [])}
 
 
 def get_seat_kpi_coverage() -> ControlTowerSeatKpiCoverageResponse:
@@ -400,7 +414,7 @@ def get_seat_kpi_coverage() -> ControlTowerSeatKpiCoverageResponse:
     items: list[ControlTowerSeatKpiItem] = []
     for contract in CATALOG:
         seat = seats.get(contract.seat_id)
-        status, blocker, missing = _status_for(contract)
+        status, blocker, missing, metric_summary = _status_for(contract)
         items.append(
             ControlTowerSeatKpiItem(
                 key=contract.key,
@@ -415,6 +429,7 @@ def get_seat_kpi_coverage() -> ControlTowerSeatKpiCoverageResponse:
                 blocker=blocker,
                 required_config=missing or list(contract.required_config),
                 owner_action=contract.owner_action,
+                metric_summary=metric_summary,
             )
         )
 

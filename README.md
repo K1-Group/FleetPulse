@@ -264,6 +264,11 @@ The remaining fixed-seat KPI blockers use the generic scheduled feed route
 specific import key for each feed, or `FLEETPULSE_SEAT_KPI_IMPORT_API_KEY` as a
 shared scheduler key stored in Key Vault.
 
+`GET /api/control-tower/scheduled-feeds/contracts` returns a secret-free,
+machine-readable manifest for Power Automate/Zapier builders. It includes the
+QBO, Xcelerator, HR, and seat KPI import routes, status routes, accepted JSON
+containers, auth header names, and minimum field groups.
+
 #### Operating Cost Per Mile / Hour
 ```env
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
@@ -574,6 +579,7 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
 | `GET /api/control-tower/xcelerator/events/status` | Scheduled Xcelerator event-feed readiness |
 | `POST /api/control-tower/xcelerator/events/import` | Import scheduled Xcelerator financial/exception events as read-only evidence |
+| `GET /api/control-tower/scheduled-feeds/contracts` | Secret-free QBO, Xcelerator, HR, and seat KPI scheduled-feed POST contracts |
 | `GET /api/control-tower/seat-kpis` | Fixed-seat KPI coverage: live, partial, and missing source contracts |
 | **🧠 AI Endpoints** |
 | `POST /api/ai/chat` | **Claude AI-powered chat** (with conversation history) |

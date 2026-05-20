@@ -262,6 +262,25 @@ def test_seat_kpi_coverage_uses_scheduled_feed_rows(monkeypatch, tmp_path):
     by_key = {item["key"]: item for item in response.json()["kpis"]}
     assert by_key["billing_exception_aging"]["status"] == "warning"
     assert by_key["billing_exception_aging"]["source_route"].endswith("/billing_exceptions/status")
+    assert by_key["billing_exception_aging"]["metric_summary"]["feed_key"] == "billing_exceptions"
+    assert by_key["billing_exception_aging"]["metric_summary"]["row_count"] == 1
+    assert by_key["billing_exception_aging"]["metric_summary"]["open_count"] == 1
+
+
+def test_scheduled_feed_contracts_expose_post_targets_without_secret_values():
+    response = _client().get("/api/control-tower/scheduled-feeds/contracts")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    by_key = {feed["key"]: feed for feed in payload["feeds"]}
+    assert by_key["qbo_financial"]["import_route"] == "/api/fuel/qbo/financial/import"
+    assert by_key["xcelerator_events"]["import_route"] == "/api/control-tower/xcelerator/events/import"
+    assert by_key["hr_recruiting"]["import_route"] == "/api/hr-recruiting/import"
+    assert by_key["billing_exceptions"]["import_route"] == "/api/control-tower/seat-kpis/feeds/billing_exceptions/import"
+    assert by_key["dispatch_timestamps"]["auth_header"] == "X-FleetPulse-Seat-KPI-Key"
+    assert "secret" not in response.text.casefold()
+    assert "value" not in by_key["qbo_financial"]
 
 
 def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monkeypatch):
