@@ -182,6 +182,42 @@ as the short-term bridge for that file-backed source, then repoint the semantic
 model to the shared `atob` folder so FleetPulse, SharePoint, and Power BI read
 from the same governed location.
 
+#### Lane Stability Lakehouse API
+```env
+LAKEHOUSE_SQL_SERVER=
+LAKEHOUSE_SQL_DB=
+LAKEHOUSE_SP_TENANT=
+LAKEHOUSE_SP_CLIENT_ID=
+LAKEHOUSE_SP_CLIENT_SECRET=
+LAKEHOUSE_SQL_TIMEOUT_SECONDS=15
+LAKEHOUSE_LANE_STABILITY_TABLE=dbo.lane_stability_daily_kpi
+LAKEHOUSE_LANE_STABILITY_SERVICE_COLUMN=
+```
+
+The Stability tab reads `GET /api/lane-stability?window=42|91|182|364`.
+FleetPulse queries Fabric table `dbo.lane_stability_daily_kpi` as a read-only
+analytics projection, caches responses for 15 minutes, and keeps Power BI as a
+read-only reporting layer. Store production values as Key Vault references in
+App Service settings; do not commit service principal secrets. Set
+`LAKEHOUSE_LANE_STABILITY_SERVICE_COLUMN` only if the lakehouse table exposes a
+service column that should back the optional `service` query filter. If the
+`LAKEHOUSE_*` connection settings are omitted, the API reuses the existing
+`FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*` / `FLEETPULSE_GRAPH_*` read-only Fabric
+credentials.
+
+#### K1 Group Consolidated P&L
+The Finance tab combines existing read-only sources:
+
+- `GET /api/fuel/entity-margin` for Xcelerator/Fabric sales and driver pay
+  across K1 Logistics Inc and K1 Group LLC delivery centers.
+- `GET /api/fuel/operating-cost` through the entity-margin service for K1
+  Logistics QuickBooks maintenance, fuel, insurance, employee, rental truck,
+  and trailer costs.
+- `GET /api/control-tower/financial` for QuickBooks AP/AR pressure.
+
+No separate write credentials are required. The dashboard reads the same
+Xcelerator/Fabric and QBO app settings used by Control Tower and Fuel analytics.
+
 #### Operating Cost Per Mile / Hour
 ```env
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
@@ -195,7 +231,7 @@ FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
 FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY=
 FLEETPULSE_QBO_EXPENSE_RETAINED_RECORDS=50000
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
-FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts payable,accounts receivable,atob,carrier,contractor,driver pay,driver settlement,factoring,income,revenue,sales
 FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY=4
 FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES=2
 K1L_OPERATING_COST_REVENUE_SOURCE=xcelerator_ceo_powerbi
@@ -212,7 +248,9 @@ FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
 cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
-AtoB fuel/DEF cost, Xcelerator driver pay, and QBO insurance/other expenses.
+Xcelerator driver pay, and K1 Logistics QuickBooks maintenance, fuel,
+insurance, employee, rental truck, and trailer costs. AtoB remains available as
+fuel-card audit evidence but is not double-counted when QBO fuel rows are live.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data
@@ -222,15 +260,15 @@ Downloaded Xcelerator ReviewOrders CSV/JSON exports can be loaded with
 read-only driver-pay evidence and marks the source partial when the imported
 date span does not cover the requested reporting window.
 Downloaded QBO transaction-detail expense CSV/JSON exports can be loaded with
-`POST /api/fuel/qbo/expenses/import`; FleetPulse stores insurance and other
-operating expenses as read-only QBO evidence, excludes known fuel/driver-pay/COGS
-accounts to prevent double counting, and uses import coverage dates when
+`POST /api/fuel/qbo/expenses/import`; FleetPulse stores K1 Logistics operating
+expenses as read-only QBO evidence, excludes Xcelerator-owned driver pay and
+revenue accounts to prevent double counting, and uses import coverage dates when
 provided to avoid certifying partial finance feeds as complete.
 
 `GET /api/fuel/entity-margin?start=YYYY-MM-DD&end=YYYY-MM-DD` adds the dashboard
 split requested for K1 operations review. K1 Logistics Inc CPM uses only orders
 assigned to the `K1 Logistics Inc` delivery center for revenue and driver pay,
-with Geotab miles, AtoB fuel, and optional QBO overhead applied to the K1L cost
+with Geotab miles and K1 Logistics QBO cost buckets applied to the K1L cost
 stack. K1 Group LLC is shown as gross-margin tracking only with no CPM field.
 The dashboard policy targets are 72% gross margin for K1 Logistics Inc and 20%
 for K1 Group LLC. The preferred Xcelerator source is the `Xcelerator CEO
@@ -424,8 +462,8 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/fuel/atob/sharepoint/status` | Readiness for the BI-connected AtoB SharePoint folder |
 | `POST /api/fuel/atob/sharepoint/sync` | Sync downloaded AtoB report files from SharePoint |
 | `POST /api/fuel/qbo/expenses/import` | Import downloaded QBO expense report as read-only finance references |
-| `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO insurance and other expense summary |
-| `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, AtoB, Xcelerator, and QBO |
+| `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO K1L cost-bucket expense summary |
+| `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, Xcelerator, and QBO K1L costs |
 | `GET /api/fuel/entity-margin` | K1L CPM plus K1L/K1G gross-margin target rollups by delivery center |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |

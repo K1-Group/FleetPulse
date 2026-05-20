@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 
 DEFAULT_XCELERATOR_WAREHOUSE_SERVER = (
@@ -88,7 +88,11 @@ class FabricWarehouseSqlConfig:
         )
 
 
-def execute_sql_query(config: FabricWarehouseSqlConfig, query: str) -> list[dict[str, Any]]:
+def execute_sql_query(
+    config: FabricWarehouseSqlConfig,
+    query: str,
+    params: Sequence[Any] | None = None,
+) -> list[dict[str, Any]]:
     """Run a read-only SQL query against Fabric Warehouse and return rows."""
 
     if not config.configured:
@@ -104,7 +108,10 @@ def execute_sql_query(config: FabricWarehouseSqlConfig, query: str) -> list[dict
         cursor = connection.cursor()
         if hasattr(cursor, "timeout"):
             cursor.timeout = config.timeout_seconds
-        cursor.execute(query)
+        if params:
+            cursor.execute(query, *params)
+        else:
+            cursor.execute(query)
         columns = [column[0] for column in (cursor.description or [])]
         return [
             {columns[index]: value for index, value in enumerate(row)}

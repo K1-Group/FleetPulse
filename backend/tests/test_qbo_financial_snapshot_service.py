@@ -92,8 +92,10 @@ def test_qbo_financial_snapshot_summarizes_ap_ar_and_k1l_expenses(tmp_path):
     ar = {bucket["bucket"]: bucket for bucket in snapshot["accounts_receivable"]}
     assert ar["0-30"]["amount"] == 1000.0
     assert ar["61-90"]["amount"] == 250.0
-    assert snapshot["expense_summary"]["k1l_expense_total"] == 100.0
-    assert snapshot["expense_summary"]["k1l_expense_count"] == 1
+    assert snapshot["expense_summary"]["k1l_expense_total"] == 1099.0
+    assert snapshot["expense_summary"]["k1l_expense_count"] == 2
+    assert snapshot["expense_summary"]["maintenance_total"] == 100.0
+    assert snapshot["expense_summary"]["fuel_total"] == 999.0
 
 
 def test_qbo_financial_snapshot_missing_config_is_explicit():
@@ -135,6 +137,12 @@ def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
                         "Class": "K1 Logistics Inc",
                     },
                     {
+                        "Date": "2026-05-06",
+                        "Account": "Trucks/Trailers Lease",
+                        "Amount": "125.00",
+                        "Class": "K1 Logistics Inc",
+                    },
+                    {
                         "Date": "2026-05-05",
                         "Account": "Repairs and Maintenance",
                         "Amount": "30.00",
@@ -153,6 +161,7 @@ def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
     )
 
     assert metadata["source_status"] == "healthy"
-    assert [row["Amount"] for row in rows] == [50.0, 75.0]
+    assert [row["Amount"] for row in rows] == [50.0, 75.0, 125.0]
     assert rows[0]["qbo_expense_bucket"] == "insurance"
-    assert rows[1]["qbo_expense_bucket"] == "other"
+    assert rows[1]["qbo_expense_bucket"] == "maintenance"
+    assert rows[2]["qbo_expense_bucket"] == "rental_trucks_trailers"

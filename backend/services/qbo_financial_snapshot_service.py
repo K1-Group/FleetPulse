@@ -65,25 +65,57 @@ _DEFAULT_K1L_PATTERNS = (
     "k1 logistics, inc",
 )
 _DEFAULT_INSURANCE_PATTERNS = ("insurance",)
+QBO_K1L_COST_BUCKETS = (
+    "maintenance",
+    "fuel",
+    "insurance",
+    "employee",
+    "rental_trucks_trailers",
+)
+_EMPLOYEE_PATTERNS = (
+    "employee",
+    "payroll",
+    "salary",
+    "salaries",
+    "wages",
+    "worker",
+    "pre-employment",
+)
+_RENTAL_TRUCK_TRAILER_PATTERNS = (
+    "truck lease",
+    "trucks/trailers lease",
+    "trailer lease",
+    "truck rental",
+    "trailer rental",
+    "equipment rental",
+)
+_MAINTENANCE_PATTERNS = (
+    "repair",
+    "maintenance",
+    "towing",
+    "ifta",
+    "registration",
+    "permit",
+    "license",
+    "safety compliance",
+    "2290",
+)
+_FUEL_PATTERNS = (
+    "fuel",
+    "diesel",
+)
 _DEFAULT_EXCLUDED_EXPENSE_PATTERNS = (
     "accounts payable",
     "accounts receivable",
     "atob",
     "carrier",
-    "cogs",
     "contractor",
-    "cost of goods sold",
-    "diesel",
     "driver pay",
     "driver settlement",
     "factoring",
-    "freight in",
-    "fuel",
     "income",
-    "payroll",
     "revenue",
     "sales",
-    "wages",
 )
 
 
@@ -211,6 +243,7 @@ def get_qbo_financial_snapshot(
         start=period_start,
         end=period_end,
     )
+    expense_totals = _expense_totals_by_bucket(expense_rows)
     expense_total = round(sum(_number(row.get("Amount")) for row in expense_rows), 2)
     expense_total_value: float | None = expense_total if expense_rows else None
     source_row_count = len(canonical_rows)
@@ -249,25 +282,18 @@ def get_qbo_financial_snapshot(
         "expense_summary": {
             "k1l_expense_total": expense_total_value,
             "k1l_expense_count": len(expense_rows),
-            "insurance_total": (
-                round(
-                    sum(
-                        _number(row.get("Amount"))
-                        for row in expense_rows
-                        if row.get("qbo_expense_bucket") == "insurance"
-                    ),
-                    2,
-                )
-                if expense_rows
-                else None
-            ),
+            "category_totals": expense_totals if expense_rows else {},
+            "maintenance_total": expense_totals.get("maintenance") if expense_rows else None,
+            "fuel_total": expense_totals.get("fuel") if expense_rows else None,
+            "insurance_total": expense_totals.get("insurance") if expense_rows else None,
+            "employee_total": expense_totals.get("employee") if expense_rows else None,
+            "rental_trucks_trailers_total": expense_totals.get("rental_trucks_trailers") if expense_rows else None,
             "other_expense_total": (
                 round(
-                    sum(
-                        _number(row.get("Amount"))
-                        for row in expense_rows
-                        if row.get("qbo_expense_bucket") == "other"
-                    ),
+                    expense_totals.get("maintenance", 0.0)
+                    + expense_totals.get("fuel", 0.0)
+                    + expense_totals.get("employee", 0.0)
+                    + expense_totals.get("rental_trucks_trailers", 0.0),
                     2,
                 )
                 if expense_rows
@@ -308,6 +334,15 @@ def load_qbo_k1l_expense_rows(
     }
 
 
+def _expense_totals_by_bucket(expense_rows: list[dict[str, Any]]) -> dict[str, float]:
+    totals = {bucket: 0.0 for bucket in QBO_K1L_COST_BUCKETS}
+    for row in expense_rows:
+        bucket = str(row.get("qbo_expense_bucket") or "")
+        if bucket in totals:
+            totals[bucket] += _number(row.get("Amount"))
+    return {bucket: round(total, 2) for bucket, total in totals.items()}
+
+
 def _empty_snapshot(status: str, message: str, *, missing_config: list[str]) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -337,7 +372,12 @@ def _empty_snapshot(status: str, message: str, *, missing_config: list[str]) -> 
         "expense_summary": {
             "k1l_expense_total": None,
             "k1l_expense_count": 0,
+            "category_totals": {},
+            "maintenance_total": None,
+            "fuel_total": None,
             "insurance_total": None,
+            "employee_total": None,
+            "rental_trucks_trailers_total": None,
             "other_expense_total": None,
         },
         "coverage_start": None,
@@ -705,9 +745,17 @@ def _expense_bucket(row: dict[str, Any], *, config: QboFinancialConfig) -> str |
     ).casefold()
     if any(pattern.casefold() in haystack for pattern in config.excluded_expense_patterns):
         return None
+    if any(pattern in haystack for pattern in _EMPLOYEE_PATTERNS):
+        return "employee"
+    if any(pattern in haystack for pattern in _RENTAL_TRUCK_TRAILER_PATTERNS):
+        return "rental_trucks_trailers"
+    if any(pattern in haystack for pattern in _MAINTENANCE_PATTERNS):
+        return "maintenance"
+    if any(pattern in haystack for pattern in _FUEL_PATTERNS):
+        return "fuel"
     if any(pattern.casefold() in haystack for pattern in config.insurance_patterns):
         return "insurance"
-    return "other"
+    return None
 
 
 def _ar_bucket(row: dict[str, Any], *, today: date) -> str:

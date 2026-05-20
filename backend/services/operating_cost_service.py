@@ -3,9 +3,10 @@
 This service joins cost evidence without changing any source system:
 
 - Geotab Data Connector owns miles and hours.
-- AtoB exports own fuel card spend evidence.
+- AtoB exports provide fuel-card audit evidence.
 - Xcelerator ReviewOrders owns driver pay.
-- QuickBooks Online owns insurance and other company expenses.
+- QuickBooks Online K1 Logistics owns maintenance, fuel, insurance,
+  employee, rental truck, and trailer operating expenses.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from services.lane_stability_service import (
     LaneStabilityConfig,
     get_lane_stability_snapshot,
 )
-from services.qbo_financial_snapshot_service import load_qbo_k1l_expense_rows
+from services.qbo_financial_snapshot_service import QBO_K1L_COST_BUCKETS, load_qbo_k1l_expense_rows
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_weekly_driver_pay,
 )
@@ -42,11 +43,43 @@ GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab Data Connector"
 GEOTAB_FABRIC_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 ATOB_AUTHORITY = "AtoB manual fuel expense export"
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator"
-QBO_AUTHORITY = "K1 Group LLC / QuickBooks Online"
+QBO_AUTHORITY = "K1 Logistics Inc / QuickBooks Online"
 OPERATING_COST_AUTHORITY = (
-    "Geotab miles/hours + AtoB fuel + Xcelerator driver pay + QBO expenses"
+    "Geotab miles/hours + Xcelerator sales/driver pay + QBO K1 Logistics cost stack"
 )
 KM_TO_MILES = 0.621371
+_EMPLOYEE_PATTERNS = (
+    "employee",
+    "payroll",
+    "salary",
+    "salaries",
+    "wages",
+    "worker",
+    "pre-employment",
+)
+_RENTAL_TRUCK_TRAILER_PATTERNS = (
+    "truck lease",
+    "trucks/trailers lease",
+    "trailer lease",
+    "truck rental",
+    "trailer rental",
+    "equipment rental",
+)
+_MAINTENANCE_PATTERNS = (
+    "repair",
+    "maintenance",
+    "towing",
+    "ifta",
+    "registration",
+    "permit",
+    "license",
+    "safety compliance",
+    "2290",
+)
+_FUEL_PATTERNS = (
+    "fuel",
+    "diesel",
+)
 
 
 @dataclass(frozen=True)
@@ -64,20 +97,13 @@ class QboExpenseFeedConfig:
         "accounts receivable",
         "atob",
         "carrier",
-        "cogs",
         "contractor",
-        "cost of goods sold",
-        "diesel",
         "driver pay",
         "driver settlement",
         "factoring",
-        "fuel",
-        "freight in",
         "income",
-        "payroll",
         "revenue",
         "sales",
-        "wages",
     )
 
     @classmethod
@@ -111,9 +137,8 @@ class QboExpenseFeedConfig:
             excluded_patterns=_csv_env(
                 "FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS",
                 (
-                    "accounts payable,accounts receivable,atob,diesel,driver pay,"
-                    "driver settlement,carrier,cogs,contractor,cost of goods sold,"
-                    "factoring,fuel,freight in,income,payroll,revenue,sales,wages"
+                    "accounts payable,accounts receivable,atob,driver pay,"
+                    "driver settlement,carrier,contractor,factoring,income,revenue,sales"
                 ),
             ),
         )
@@ -261,8 +286,12 @@ def _empty_week(start: date, end: date) -> dict[str, Any]:
         "operating_hours": 0.0,
         "trips": 0,
         "fuel_cost": 0.0,
+        "fuel_card_audit_cost": 0.0,
         "driver_pay": 0.0,
+        "maintenance_cost": 0.0,
         "insurance_cost": 0.0,
+        "employee_cost": 0.0,
+        "rental_trucks_trailers_cost": 0.0,
         "other_expense_cost": 0.0,
         "known_operating_cost": 0.0,
         "true_operating_cost": None,
@@ -989,9 +1018,17 @@ def _qbo_row_bucket(row: dict[str, Any], config: QboExpenseFeedConfig) -> str | 
         haystack = " ".join(str(value or "") for value in row.values()).casefold()
     if any(pattern.casefold() in haystack for pattern in config.excluded_patterns):
         return None
+    if any(pattern in haystack for pattern in _EMPLOYEE_PATTERNS):
+        return "employee"
+    if any(pattern in haystack for pattern in _RENTAL_TRUCK_TRAILER_PATTERNS):
+        return "rental_trucks_trailers"
+    if any(pattern in haystack for pattern in _MAINTENANCE_PATTERNS):
+        return "maintenance"
+    if any(pattern in haystack for pattern in _FUEL_PATTERNS):
+        return "fuel"
     if any(pattern.casefold() in haystack for pattern in config.insurance_patterns):
         return "insurance"
-    return "other"
+    return None
 
 
 def _qbo_weekly_costs(
@@ -1022,6 +1059,7 @@ def _qbo_weekly_costs(
     weekly: dict[str, dict[str, float]] = {}
     source_row_count = 0
     included_row_count = 0
+    bucket_template = {bucket: 0.0 for bucket in QBO_K1L_COST_BUCKETS}
     for row in rows:
         day = _qbo_row_day(row)
         if day is None or not (start <= day <= end):
@@ -1030,7 +1068,7 @@ def _qbo_weekly_costs(
         bucket_name = _qbo_row_bucket(row, config)
         if bucket_name is None:
             continue
-        week = weekly.setdefault(_week_key(day), {"insurance": 0.0, "other": 0.0})
+        week = weekly.setdefault(_week_key(day), dict(bucket_template))
         week[bucket_name] += _qbo_row_amount(row)
         included_row_count += 1
 
@@ -1054,7 +1092,7 @@ def _qbo_weekly_costs(
 
     return (
         {
-            key: {"insurance": _money(value["insurance"]), "other": _money(value["other"])}
+            key: {bucket: _money(value.get(bucket, 0.0)) for bucket in QBO_K1L_COST_BUCKETS}
             for key, value in weekly.items()
         },
         _source(
@@ -1074,16 +1112,22 @@ def _qbo_weekly_costs(
 def _component_sources_complete(sources: dict[str, dict[str, Any]]) -> bool:
     return all(
         sources[name]["status"] == "healthy"
-        for name in ("telemetry", "fuel", "driver_pay", "qbo_expenses")
+        for name in ("telemetry", "driver_pay", "qbo_expenses")
     )
 
 
 def _finalize_week(row: dict[str, Any], *, complete: bool) -> dict[str, Any]:
+    qbo_non_fuel_expense = (
+        float(row["maintenance_cost"])
+        + float(row["employee_cost"])
+        + float(row["rental_trucks_trailers_cost"])
+    )
+    row["other_expense_cost"] = _money(qbo_non_fuel_expense)
     known_cost = (
         float(row["fuel_cost"])
         + float(row["driver_pay"])
         + float(row["insurance_cost"])
-        + float(row["other_expense_cost"])
+        + qbo_non_fuel_expense
     )
     row["known_operating_cost"] = _money(known_cost)
     row["known_cost_per_mile"] = _ratio(known_cost, float(row["miles"]))
@@ -1105,8 +1149,12 @@ def _summary_from_weekly(weekly: list[dict[str, Any]], *, complete: bool) -> dic
         "operating_hours": sum(float(row["operating_hours"]) for row in weekly),
         "trips": sum(int(row["trips"]) for row in weekly),
         "fuel_cost": sum(float(row["fuel_cost"]) for row in weekly),
+        "fuel_card_audit_cost": sum(float(row.get("fuel_card_audit_cost") or 0) for row in weekly),
         "driver_pay": sum(float(row["driver_pay"]) for row in weekly),
+        "maintenance_cost": sum(float(row.get("maintenance_cost") or 0) for row in weekly),
         "insurance_cost": sum(float(row["insurance_cost"]) for row in weekly),
+        "employee_cost": sum(float(row.get("employee_cost") or 0) for row in weekly),
+        "rental_trucks_trailers_cost": sum(float(row.get("rental_trucks_trailers_cost") or 0) for row in weekly),
         "other_expense_cost": sum(float(row["other_expense_cost"]) for row in weekly),
         "known_operating_cost": sum(float(row["known_operating_cost"]) for row in weekly),
     }
@@ -1117,8 +1165,12 @@ def _summary_from_weekly(weekly: list[dict[str, Any]], *, complete: bool) -> dic
         "operating_hours": round(totals["operating_hours"], 2),
         "trips": totals["trips"],
         "fuel_cost": _money(totals["fuel_cost"]),
+        "fuel_card_audit_cost": _money(totals["fuel_card_audit_cost"]),
         "driver_pay": _money(totals["driver_pay"]),
+        "maintenance_cost": _money(totals["maintenance_cost"]),
         "insurance_cost": _money(totals["insurance_cost"]),
+        "employee_cost": _money(totals["employee_cost"]),
+        "rental_trucks_trailers_cost": _money(totals["rental_trucks_trailers_cost"]),
         "other_expense_cost": _money(totals["other_expense_cost"]),
         "known_operating_cost": _money(totals["known_operating_cost"]),
         "true_operating_cost": _money(totals["known_operating_cost"]) if complete else None,
@@ -1186,17 +1238,21 @@ async def get_operating_cost_snapshot(
             }
         )
     for key, value in fuel_by_week.items():
-        weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))["fuel_cost"] = value
+        weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))["fuel_card_audit_cost"] = value
     for key, value in driver_pay_by_week.items():
         weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))["driver_pay"] = value
     for key, value in qbo_by_week.items():
         bucket = weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))
-        bucket["insurance_cost"] = value["insurance"]
-        bucket["other_expense_cost"] = value["other"]
+        bucket["maintenance_cost"] = value.get("maintenance", 0.0)
+        bucket["fuel_cost"] = value.get("fuel", 0.0)
+        bucket["insurance_cost"] = value.get("insurance", 0.0)
+        bucket["employee_cost"] = value.get("employee", 0.0)
+        bucket["rental_trucks_trailers_cost"] = value.get("rental_trucks_trailers", 0.0)
 
     sources = {
         "telemetry": telemetry_source,
-        "fuel": fuel_source,
+        "fuel": qbo_source,
+        "fuel_card_audit": fuel_source,
         "driver_pay": driver_source,
         "qbo_expenses": qbo_source,
     }
@@ -1206,7 +1262,7 @@ async def get_operating_cost_snapshot(
     unresolved_sources = [
         name
         for name, source in sources.items()
-        if source.get("status") != "healthy"
+        if name != "fuel_card_audit" and source.get("status") != "healthy"
     ]
 
     return {

@@ -549,6 +549,13 @@ def _finish_entity_week(row: dict[str, Any]) -> dict[str, Any]:
     operating_hours = float(row.get("operating_hours") or drive_hours)
     k1l_fuel_driver_cost = float(row["fuel_cost"]) + float(row["k1l_driver_pay"])
     k1l_true_cost = k1l_fuel_driver_cost + float(row["insurance_cost"]) + float(row["other_expense_cost"])
+    qbo_k1l_operating_cost = (
+        float(row["fuel_cost"])
+        + float(row.get("maintenance_cost") or 0)
+        + float(row["insurance_cost"])
+        + float(row.get("employee_cost") or 0)
+        + float(row.get("rental_trucks_trailers_cost") or 0)
+    )
     qbo_expenses_available = bool(row["qbo_expenses_available"])
     k1l_profit = k1l_revenue - k1l_true_cost if qbo_expenses_available else None
     k1l_actual_margin_before_fuel = k1l_revenue - float(row["k1l_driver_pay"])
@@ -574,6 +581,9 @@ def _finish_entity_week(row: dict[str, Any]) -> dict[str, Any]:
             "k1l_driver_pay_cpm": _ratio(float(row["k1l_driver_pay"]), miles),
             "k1l_fuel_cpm": _ratio(float(row["fuel_cost"]), miles),
             "k1l_fuel_plus_driver_cpm": _ratio(k1l_fuel_driver_cost, miles),
+            "k1l_qbo_operating_cost": _money(qbo_k1l_operating_cost)
+            if qbo_expenses_available
+            else None,
             "k1l_true_operating_cpm": _ratio(k1l_true_cost, float(row["miles"]))
             if qbo_expenses_available
             else None,
@@ -610,7 +620,11 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
         "idle_hours": sum(float(row.get("idle_hours") or 0) for row in weekly),
         "operating_hours": sum(float(row.get("operating_hours") or row["drive_hours"]) for row in weekly),
         "fuel_cost": sum(float(row["fuel_cost"]) for row in weekly),
+        "fuel_card_audit_cost": sum(float(row.get("fuel_card_audit_cost") or 0) for row in weekly),
+        "maintenance_cost": sum(float(row.get("maintenance_cost") or 0) for row in weekly),
         "insurance_cost": sum(float(row["insurance_cost"]) for row in weekly),
+        "employee_cost": sum(float(row.get("employee_cost") or 0) for row in weekly),
+        "rental_trucks_trailers_cost": sum(float(row.get("rental_trucks_trailers_cost") or 0) for row in weekly),
         "other_expense_cost": sum(float(row["other_expense_cost"]) for row in weekly),
         "k1l_orders": sum(int(row["k1l_orders"]) for row in weekly),
         "k1l_grand_total": sum(float(row["k1l_grand_total"]) for row in weekly),
@@ -626,7 +640,11 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
         "idle_hours": round(totals["idle_hours"], 2),
         "operating_hours": round(totals["operating_hours"], 2),
         "fuel_cost": _money(totals["fuel_cost"]),
+        "fuel_card_audit_cost": _money(totals["fuel_card_audit_cost"]),
+        "maintenance_cost": _money(totals["maintenance_cost"]),
         "insurance_cost": _money(totals["insurance_cost"]),
+        "employee_cost": _money(totals["employee_cost"]),
+        "rental_trucks_trailers_cost": _money(totals["rental_trucks_trailers_cost"]),
         "other_expense_cost": _money(totals["other_expense_cost"]),
         "k1l_orders": totals["k1l_orders"],
         "k1l_grand_total": _money(totals["k1l_grand_total"]),
@@ -684,7 +702,11 @@ async def get_entity_margin_snapshot(
                 2,
             ),
             "fuel_cost": _money(float(operating_row.get("fuel_cost") or 0)),
+            "fuel_card_audit_cost": _money(float(operating_row.get("fuel_card_audit_cost") or 0)),
+            "maintenance_cost": _money(float(operating_row.get("maintenance_cost") or 0)),
             "insurance_cost": _money(float(operating_row.get("insurance_cost") or 0)),
+            "employee_cost": _money(float(operating_row.get("employee_cost") or 0)),
+            "rental_trucks_trailers_cost": _money(float(operating_row.get("rental_trucks_trailers_cost") or 0)),
             "other_expense_cost": _money(float(operating_row.get("other_expense_cost") or 0)),
             "qbo_expenses_available": qbo_expenses_available,
         }

@@ -12,7 +12,7 @@ logger = logging.getLogger("fleetpulse")
 app = FastAPI(
     title="FleetPulse API",
     description="Multi-location fleet intelligence for K1 Logistics DFW",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -45,6 +45,7 @@ _ROUTERS = [
     ("hr_recruiting", "/api/hr-recruiting", ["HR Recruiting"]),
     ("hr_recruiting_powerbi", "/api/powerbi", ["Power BI"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),
+    ("lane_stability", "/api/lane-stability", ["Lane Stability"]),
     ("zapier", "/api/zapier", ["Zapier"]),
 ]
 for _name, _prefix, _tags in _ROUTERS:

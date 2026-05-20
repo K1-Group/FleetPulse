@@ -200,7 +200,9 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
                 "2026-05-05,Repairs and Maintenance,75.00",
                 "2026-05-05,Carrier & Factoring Company,900.00",
                 "2026-05-05,Contractors,100.00",
-                "2026-05-05,Fuel Expense,999.00",
+                "2026-05-05,Fuel Expense,125.00",
+                "2026-05-05,Payroll expenses,80.00",
+                "2026-05-05,Trucks/Trailers Lease,40.00",
             ]
         ),
         encoding="utf-8",
@@ -218,13 +220,17 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
     )
 
     assert snapshot["complete_cost_available"] is True
-    assert snapshot["summary"]["fuel_cost"] == 100.0
+    assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
+    assert snapshot["summary"]["fuel_cost"] == 125.0
     assert snapshot["summary"]["driver_pay"] == 250.0
+    assert snapshot["summary"]["maintenance_cost"] == 75.0
     assert snapshot["summary"]["insurance_cost"] == 50.0
-    assert snapshot["summary"]["other_expense_cost"] == 75.0
-    assert snapshot["summary"]["true_operating_cost"] == 475.0
-    assert snapshot["summary"]["true_cost_per_mile"] == 4.75
-    assert snapshot["summary"]["true_cost_per_drive_hour"] == 95.0
+    assert snapshot["summary"]["employee_cost"] == 80.0
+    assert snapshot["summary"]["rental_trucks_trailers_cost"] == 40.0
+    assert snapshot["summary"]["other_expense_cost"] == 195.0
+    assert snapshot["summary"]["true_operating_cost"] == 620.0
+    assert snapshot["summary"]["true_cost_per_mile"] == 6.2
+    assert snapshot["summary"]["true_cost_per_drive_hour"] == 124.0
 
 
 def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tmp_path):
@@ -255,7 +261,6 @@ def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tm
     )
 
     assert snapshot["complete_cost_available"] is False
-    assert "fuel" in snapshot["unresolved_sources"]
     assert "driver_pay" in snapshot["unresolved_sources"]
     assert "qbo_expenses" in snapshot["unresolved_sources"]
     assert snapshot["summary"]["true_cost_per_mile"] is None
@@ -344,7 +349,8 @@ def test_operating_cost_snapshot_marks_partial_driver_pay_as_incomplete(monkeypa
     assert snapshot["complete_cost_available"] is False
     assert snapshot["sources"]["driver_pay"]["status"] == "partial"
     assert "driver_pay" in snapshot["unresolved_sources"]
-    assert snapshot["summary"]["known_operating_cost"] == 400.0
+    assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
+    assert snapshot["summary"]["known_operating_cost"] == 300.0
     assert snapshot["summary"]["true_cost_per_mile"] is None
 
 
@@ -414,5 +420,7 @@ def test_operating_cost_snapshot_reads_imported_qbo_expense_state(monkeypatch, t
     assert snapshot["sources"]["qbo_expenses"]["status"] == "healthy"
     assert snapshot["sources"]["qbo_expenses"]["row_count"] == 3
     assert snapshot["summary"]["insurance_cost"] == 50.0
+    assert snapshot["summary"]["maintenance_cost"] == 75.0
+    assert snapshot["summary"]["fuel_cost"] == 999.0
     assert snapshot["summary"]["other_expense_cost"] == 75.0
-    assert snapshot["summary"]["known_operating_cost"] == 225.0
+    assert snapshot["summary"]["known_operating_cost"] == 1124.0
