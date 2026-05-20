@@ -584,10 +584,13 @@ export default function ControlTower() {
   const attention = useControlTowerAttention()
   const trailers = useControlTowerTrailers()
   const liveTrailers = useControlTowerTrailerTracking()
-  const financial = useControlTowerFinancial()
-  const operatingCost52 = useOperatingCostWindow(364, active === 'financial')
-  const laneStability52 = useLaneStabilityWindow(364, active === 'financial')
-  const seatKpis = useControlTowerSeatKpis(active === 'financial')
+  const financialActive = active === 'financial'
+  const financial = useControlTowerFinancial(financialActive)
+  const financialReady = financialActive && Boolean(financial.data || financial.error)
+  const laneStability52 = useLaneStabilityWindow(364, financialReady)
+  const seatKpis = useControlTowerSeatKpis(financialReady)
+  const operatingCostReady = financialReady && Boolean(laneStability52.data || laneStability52.error) && Boolean(seatKpis.data || seatKpis.error)
+  const operatingCost52 = useOperatingCostWindow(364, operatingCostReady)
   const agents = useControlTowerAgents()
   const codex = useControlTowerCodex()
 
@@ -781,7 +784,7 @@ export default function ControlTower() {
           <FinancialOps52WeekPanel
             operatingCost={operatingCost52.data}
             laneStability={laneStability52.data}
-            loading={operatingCost52.loading || laneStability52.loading}
+            loading={financial.loading || operatingCost52.loading || laneStability52.loading}
             error={operatingCost52.error || laneStability52.error}
           />
           <SeatKpiNeedsPanel
