@@ -92,11 +92,14 @@ class QboExpenseFeedConfig:
                 or os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_PATH", "").strip()
                 or os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_PATH", "").strip()
             ),
-            api_key=os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_API_KEY", "").strip(),
+            api_key=(
+                os.getenv("FLEETPULSE_QBO_EXPENSE_FEED_API_KEY", "").strip()
+                or os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_API_KEY", "").strip()
+            ),
             api_key_header=(
                 os.getenv(
                     "FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER",
-                    "X-FleetPulse-QBO-Key",
+                    os.getenv("FLEETPULSE_QBO_FINANCIAL_FEED_API_KEY_HEADER", "X-FleetPulse-QBO-Key"),
                 ).strip()
                 or "X-FleetPulse-QBO-Key"
             ),
