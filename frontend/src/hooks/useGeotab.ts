@@ -6,6 +6,7 @@ import type {
   ControlTowerCodexResponse,
   ControlTowerFinancialResponse,
   ControlTowerOverview,
+  ControlTowerSeatKpiCoverageResponse,
   ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
   DashboardValidationResponse,
@@ -15,10 +16,12 @@ import type {
   FleetCoachingSummary,
   FleetOverview,
   HrRecruitingDataset,
+  LaneStabilityPayload,
   OperatingSystemConfigurationResponse,
   LocationStats,
   OperatingSystemOrgChartResponse,
   OperatingSystemTaskKpiMatrixResponse,
+  OperatingCostSnapshot,
   Vehicle,
   VehicleSafetyScore,
 } from '../types/fleet'
@@ -189,6 +192,18 @@ export function useControlTowerFinancial() {
   return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000)
 }
 
+export function useControlTowerSeatKpis(enabled = true) {
+  return useFetch<ControlTowerSeatKpiCoverageResponse>(`${API}/control-tower/seat-kpis`, 300000, enabled)
+}
+
+export function useOperatingCostWindow(days = 364, enabled = true) {
+  return useFetch<OperatingCostSnapshot>(`${API}/fuel/operating-cost?days=${days}`, 300000, enabled)
+}
+
+export function useLaneStabilityWindow(windowDays: 42 | 91 | 182 | 364 = 364, enabled = true) {
+  return useFetch<LaneStabilityPayload>(`${API}/lane-stability?window=${windowDays}`, 300000, enabled)
+}
+
 export function useControlTowerAgents() {
   return useFetch<ControlTowerAgentsResponse>(`${API}/control-tower/agents`, 30000)
 }
@@ -202,8 +217,8 @@ export function useOperatingSystemOrgChart() {
   return useFetch<OperatingSystemOrgChartResponse>(`${API}/operating-system/org-chart`, 60000)
 }
 
-export function useOperatingSystemTaskKpiMatrix() {
-  return useFetch<OperatingSystemTaskKpiMatrixResponse>(`${API}/operating-system/task-kpi-matrix`, 60000)
+export function useOperatingSystemTaskKpiMatrix(enabled = true) {
+  return useFetch<OperatingSystemTaskKpiMatrixResponse>(`${API}/operating-system/task-kpi-matrix`, 60000, enabled)
 }
 
 export function useOperatingSystemConfiguration() {

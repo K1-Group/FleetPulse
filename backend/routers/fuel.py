@@ -1,5 +1,6 @@
 """Fuel analytics endpoints."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -21,8 +22,10 @@ from services.atob_fuel_expense_service import (
     get_atob_vehicle_costs,
     import_atob_fuel_expenses,
 )
+from services.delivery_center_performance_service import get_delivery_center_performance_snapshot
 from services.entity_margin_service import get_entity_margin_snapshot
 from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
+from services.k1l_weekly_engine_kpi_service import get_k1l_weekly_engine_kpi_snapshot
 from services.operating_cost_service import get_operating_cost_snapshot
 from services.qbo_expense_import_service import (
     get_qbo_expense_summary,
@@ -31,12 +34,25 @@ from services.qbo_expense_import_service import (
     qbo_expense_import_status,
     validate_qbo_expense_import_api_key,
 )
+from services.qbo_financial_feed_import_service import (
+    import_qbo_financial_feed,
+    qbo_financial_feed_status,
+    validate_qbo_financial_import_api_key,
+)
+from services.qbo_financial_snapshot_service import get_qbo_financial_snapshot
+from services.revenue_productivity_service import get_revenue_productivity_snapshot
 from services.xcelerator_review_orders_import_service import (
     get_xcelerator_review_orders_summary,
     import_xcelerator_review_orders,
 )
 
 router = APIRouter()
+
+
+async def _run_analytics_snapshot(coro_factory):
+    """Run mixed async/blocking analytics rollups away from the request event loop."""
+
+    return await asyncio.to_thread(lambda: asyncio.run(coro_factory()))
 
 # Average fuel costs
 AVG_FUEL_PRICE_PER_GALLON = 3.45
@@ -67,6 +83,14 @@ class QboExpenseImportRequest(BaseModel):
     period_end: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
+class QboFinancialFeedImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
+    period_start: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period_end: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 @router.post("/atob/import")
 async def import_atob_report(request: AtoBFuelImportRequest):
     """Import a downloaded AtoB fuel report as read-only expense evidence."""
@@ -83,7 +107,8 @@ async def import_atob_report(request: AtoBFuelImportRequest):
 @router.post("/xcelerator/review-orders/import")
 async def import_xcelerator_review_orders_report(request: XceleratorReviewOrdersImportRequest):
     """Import a downloaded Xcelerator ReviewOrders report as read-only driver-pay evidence."""
-    result = import_xcelerator_review_orders(
+    result = await asyncio.to_thread(
+        import_xcelerator_review_orders,
         request.content,
         filename=request.filename,
         dry_run=request.dry_run,
@@ -96,7 +121,7 @@ async def import_xcelerator_review_orders_report(request: XceleratorReviewOrders
 @router.get("/xcelerator/review-orders/summary")
 async def xcelerator_review_orders_summary(days: int = 370):
     """Return actual imported Xcelerator ReviewOrders driver-pay summary."""
-    return get_xcelerator_review_orders_summary(days=days)
+    return await asyncio.to_thread(get_xcelerator_review_orders_summary, days=days)
 
 
 @router.get("/qbo/expenses/status")
@@ -141,6 +166,48 @@ async def qbo_expenses_summary(days: int = 370):
 async def qbo_expense_transactions(limit: int = 100):
     """Return latest imported QBO expense records."""
     return get_qbo_expense_transactions(limit=limit)
+
+
+@router.get("/qbo/financial-snapshot")
+async def qbo_financial_snapshot(
+    start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Return read-only QBO AP, AR, and K1 Logistics expense evidence."""
+    try:
+        return get_qbo_financial_snapshot(start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/qbo/financial/status")
+async def qbo_financial_feed_readiness():
+    """Return readiness for the scheduled QBO financial snapshot feed."""
+    return qbo_financial_feed_status()
+
+
+@router.post("/qbo/financial/import")
+async def import_qbo_financial_snapshot(
+    request: QboFinancialFeedImportRequest,
+    x_fleetpulse_qbo_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    """Replace the scheduled QBO AP/AR/expense snapshot as read-only evidence."""
+    try:
+        validate_qbo_financial_import_api_key(x_fleetpulse_qbo_key or x_api_key)
+        result = import_qbo_financial_feed(
+            request.content,
+            filename=request.filename,
+            dry_run=request.dry_run,
+            period_start=request.period_start,
+            period_end=request.period_end,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if not request.dry_run and result.row_count:
+        clear_cached_prefix("fuel:")
+        clear_cached_prefix("control-tower:")
+    return result.as_dict()
 
 
 @router.get("/atob/sharepoint/status")
@@ -194,8 +261,16 @@ async def operating_cost(
     end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
 ):
     """Return weekly true-cost rollups from Geotab, AtoB, Xcelerator, and QBO."""
+    cache_key = f"fuel:operating-cost:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
     try:
-        return await get_operating_cost_snapshot(days=days, start=start, end=end)
+        snapshot = await _run_analytics_snapshot(
+            lambda: get_operating_cost_snapshot(days=days, start=start, end=end)
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -207,8 +282,16 @@ async def entity_margin(
     end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
 ):
     """Return K1L CPM and K1G/K1L gross-margin rollups by delivery center."""
+    cache_key = f"fuel:entity-margin:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
     try:
-        return await get_entity_margin_snapshot(days=days, start=start, end=end)
+        snapshot = await _run_analytics_snapshot(
+            lambda: get_entity_margin_snapshot(days=days, start=start, end=end)
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -218,7 +301,57 @@ async def k1l_operating_kpi(
     date: str | None = Query(default=None, description="Optional YYYY-MM-DD cutoff date."),
 ):
     """Return the lightweight K1 Logistics final CPM card snapshot."""
-    return get_k1l_operating_kpi_snapshot(date_value=date)
+    return await asyncio.to_thread(get_k1l_operating_kpi_snapshot, date_value=date)
+
+
+@router.get("/k1l-weekly-engine-kpi")
+async def k1l_weekly_engine_kpi(
+    days: int = Query(370, ge=1, le=370),
+    start: str | None = Query(default=None, description="Inclusive YYYY-MM-DD start date."),
+    end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
+):
+    """Return fast weekly K1L revenue/cost/profit per engine-hour trend."""
+    cache_key = f"fuel:k1l-weekly-engine-kpi:{days}:{start or ''}:{end or ''}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
+    try:
+        snapshot = await asyncio.to_thread(
+            get_k1l_weekly_engine_kpi_snapshot,
+            days=days,
+            start=start,
+            end=end,
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/delivery-center-performance")
+async def delivery_center_performance(
+    days: int = Query(370, ge=1, le=370),
+    start: str | None = Query(default=None, description="Inclusive YYYY-MM-DD start date."),
+    end: str | None = Query(default=None, description="Inclusive YYYY-MM-DD end date."),
+    tolerance_minutes: int = Query(15, ge=0, le=240),
+):
+    """Return Xcelerator pickup/delivery on-time performance by delivery center."""
+    cache_key = f"fuel:delivery-center-performance:{days}:{start or ''}:{end or ''}:{tolerance_minutes}"
+    cached = get_cached(cache_key, ttl=900)
+    if cached is not None:
+        return cached
+    try:
+        snapshot = await asyncio.to_thread(
+            get_delivery_center_performance_snapshot,
+            days=days,
+            start=start,
+            end=end,
+            tolerance_minutes=tolerance_minutes,
+        )
+        set_cached(cache_key, snapshot)
+        return snapshot
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/summary")
@@ -453,6 +586,19 @@ async def fuel_efficiency_by_vehicle():
         
     except Exception as e:
         return []
+
+
+@router.get("/revenue-productivity")
+async def fuel_revenue_productivity(days: int = Query(7, ge=1, le=31)):
+    """Get weekly revenue per active truck and dispatch driver."""
+    cache_key = f"fuel:revenue-productivity:{days}"
+    cached = get_cached(cache_key)
+    if cached:
+        return cached
+
+    snapshot = await asyncio.to_thread(get_revenue_productivity_snapshot, days)
+    set_cached(cache_key, snapshot, ttl=900)
+    return snapshot
 
 
 def _parse_date(date_str: str) -> datetime:

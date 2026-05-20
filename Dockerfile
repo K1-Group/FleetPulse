@@ -15,9 +15,19 @@ RUN npm run build
 # ---------- Stage 2: Production runtime ----------
 FROM python:3.11-slim
 
-# System deps
+# System deps, including Microsoft ODBC for read-only Fabric Warehouse SQL.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    ca-certificates \
+    gnupg \
+    unixodbc \
+    unixodbc-dev \
+    && version_id="$(. /etc/os-release && echo "$VERSION_ID" | cut -d '.' -f 1)" \
+    && curl -fsSLO "https://packages.microsoft.com/config/debian/${version_id}/packages-microsoft-prod.deb" \
+    && dpkg -i packages-microsoft-prod.deb \
+    && rm packages-microsoft-prod.deb \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

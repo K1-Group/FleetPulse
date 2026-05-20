@@ -15,7 +15,11 @@ from typing import Any
 from configs.operating_system import OperatingSystemRuntimeConfig
 from services.alert_service import get_recent_alerts
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
-from services.k1l_operating_kpi_service import get_k1l_operating_kpi_snapshot
+from services.k1l_operating_kpi_service import (
+    POWERBI_REVENUE_SOURCE,
+    WAREHOUSE_SQL_REVENUE_SOURCE,
+    get_k1l_operating_kpi_snapshot,
+)
 from services.safety_service import get_safety_scores
 from services.monitor_service import get_monitor_status
 from services.validation_audit_service import audit_contract_ok, last_seen_row_at, record_probe
@@ -194,7 +198,7 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
     status = str(snapshot.get("status") or "")
     summary = snapshot.get("summary") or {}
     monthly = snapshot.get("monthly") or []
-    configured = (
+    cost_ready = (
         status == "configured"
         and isinstance(monthly, list)
         and len(monthly) > 0
@@ -202,9 +206,85 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
         and _has_positive_number(summary.get("miles"))
         and summary.get("cost_per_mile") is not None
     )
+    revenue_status = snapshot.get("revenue_source_status") if isinstance(snapshot.get("revenue_source_status"), dict) else {}
+    revenue_source = str(snapshot.get("revenue_source") or "")
+    rpm_ready = (
+        cost_ready
+        and revenue_source in {POWERBI_REVENUE_SOURCE, WAREHOUSE_SQL_REVENUE_SOURCE}
+        and str(revenue_status.get("status") or "") == "healthy"
+        and _has_positive_number(summary.get("revenue"))
+        and summary.get("revenue_per_mile") is not None
+        and summary.get("profit_per_mile") is not None
+    )
 
-    if configured:
+    source_authority = (
+        "CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack; "
+        "Revenue/Mile: Xcelerator CEO Power BI semantic model or Fabric Warehouse SQL"
+    )
+    revenue_required_config = [
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        (
+            "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_* or "
+            "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN/client credentials"
+        ),
+    ]
+
+    if cost_ready and rpm_ready:
         item = _item(
+            "k1l_final_cpm",
+            "K1L Revenue/Mile / CPM / Profit",
+            "verified",
+            source_authority=source_authority,
+            message="Validated CPM from monthly cost rows and revenue-per-mile/profit from Xcelerator revenue projection.",
+            row_count=len(monthly),
+            metrics=[
+                "cost_per_mile",
+                "revenue_per_mile",
+                "profit_per_mile",
+                "total_cost",
+                "miles",
+                "revenue",
+                "gross_profit",
+                "fleet_maintenance",
+                "added_p_and_l_ops",
+            ],
+        )
+        cost_item = _copy_metric(item, "k1l_final_cpm", "K1L Final CPM")
+        revenue_item = _copy_metric(item, "k1l_revenue_per_mile", "K1L Revenue Per Mile")
+        profit_item = _copy_metric(item, "k1l_profit_per_mile", "K1L Profit Per Mile")
+    elif cost_ready:
+        revenue_status_name = str(revenue_status.get("status") or "not_configured")
+        pending_status = "pending_no_data" if revenue_status_name == "awaiting_feed" else "pending"
+        item = _item(
+            "k1l_final_cpm",
+            "K1L Revenue/Mile / CPM / Profit",
+            pending_status,
+            source_authority=source_authority,
+            message=(
+                "CPM is configured, but revenue-per-mile/profit are not verified until "
+                "Xcelerator revenue projection is healthy."
+            ),
+            row_count=len(monthly),
+            required_config=revenue_required_config,
+            blocked_by="no_rows" if pending_status == "pending_no_data" else "revenue_unverified",
+            metrics=[
+                "cost_per_mile",
+                "revenue_per_mile",
+                "profit_per_mile",
+                "total_cost",
+                "miles",
+                "revenue",
+                "gross_profit",
+                "fleet_maintenance",
+                "added_p_and_l_ops",
+            ],
+            contract={
+                "cost_stack": "monthly rows with positive total_cost, miles, and cost_per_mile",
+                "revenue_per_mile_stack": "Xcelerator monthly K1 Logistics Inc revenue projection with rowcount > 0",
+                "revenue_source_status": revenue_status_name,
+            },
+        )
+        cost_item = _item(
             "k1l_final_cpm",
             "K1L Final CPM",
             "verified",
@@ -212,33 +292,45 @@ def _validate_k1l_final_cpm() -> tuple[ValidationItem, dict[str, ValidationItem]
             or "QBO K1 Logistics P&L + Xcelerator driver pay + AtoB fuel + Geotab miles",
             message="Validated from configured monthly cost rows with positive total cost, miles, and CPM.",
             row_count=len(monthly),
-            metrics=["cost_per_mile", "total_cost", "miles", "fleet_maintenance", "added_p_and_l_ops"],
+            metrics=["cost_per_mile"],
         )
+        revenue_item = _copy_metric(item, "k1l_revenue_per_mile", "K1L Revenue Per Mile")
+        profit_item = _copy_metric(item, "k1l_profit_per_mile", "K1L Profit Per Mile")
     elif status == "configuration_error":
         item = _item(
             "k1l_final_cpm",
-            "K1L Final CPM",
+            "K1L Revenue/Mile / CPM / Profit",
             "failed",
             source_authority="QBO + Xcelerator + AtoB + Geotab",
             message=str(snapshot.get("error") or "K1L operating-cost configuration could not be parsed."),
             required_config=["K1L_OPERATING_COST_MONTHLY_JSON"],
         )
+        cost_item = _copy_metric(item, "k1l_final_cpm", "K1L Final CPM")
+        revenue_item = _copy_metric(item, "k1l_revenue_per_mile", "K1L Revenue Per Mile")
+        profit_item = _copy_metric(item, "k1l_profit_per_mile", "K1L Profit Per Mile")
     else:
         item = _item(
             "k1l_final_cpm",
-            "K1L Final CPM",
+            "K1L Revenue/Mile / CPM / Profit",
             "pending",
             source_authority="QBO + Xcelerator + AtoB + Geotab",
             message="K1L operating-cost monthly rows are not configured, so CPM is not verified.",
             required_config=["K1L_OPERATING_COST_MONTHLY_JSON"],
         )
+        cost_item = _copy_metric(item, "k1l_final_cpm", "K1L Final CPM")
+        revenue_item = _copy_metric(item, "k1l_revenue_per_mile", "K1L Revenue Per Mile")
+        profit_item = _copy_metric(item, "k1l_profit_per_mile", "K1L Profit Per Mile")
 
     metrics = {
-        "k1l_final_cpm": _copy_metric(item, "k1l_final_cpm", "K1L Final CPM"),
-        "k1l_total_cost": _copy_metric(item, "k1l_total_cost", "K1L Total Cost"),
-        "k1l_miles": _copy_metric(item, "k1l_miles", "K1L Miles"),
-        "k1l_fleet_maintenance": _copy_metric(item, "k1l_fleet_maintenance", "K1L Fleet Maintenance"),
-        "k1l_added_ops": _copy_metric(item, "k1l_added_ops", "K1L Added P&L Ops"),
+        "k1l_final_cpm": cost_item,
+        "k1l_revenue_per_mile": revenue_item,
+        "k1l_profit_per_mile": profit_item,
+        "k1l_total_cost": _copy_metric(cost_item, "k1l_total_cost", "K1L Total Cost"),
+        "k1l_miles": _copy_metric(cost_item, "k1l_miles", "K1L Miles"),
+        "k1l_revenue": _copy_metric(revenue_item, "k1l_revenue", "K1L Revenue"),
+        "k1l_gross_profit": _copy_metric(profit_item, "k1l_gross_profit", "K1L Gross Profit"),
+        "k1l_fleet_maintenance": _copy_metric(cost_item, "k1l_fleet_maintenance", "K1L Fleet Maintenance"),
+        "k1l_added_ops": _copy_metric(cost_item, "k1l_added_ops", "K1L Added P&L Ops"),
     }
     return item, metrics
 

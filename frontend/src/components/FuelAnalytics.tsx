@@ -173,7 +173,12 @@ interface OperatingCostSummary {
   trips: number
   fuel_cost: number
   driver_pay: number
+  maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
+  employee_cost?: number
+  rental_trucks_trailers_cost?: number
   other_expense_cost: number
   known_operating_cost: number
   true_operating_cost: number | null
@@ -222,8 +227,15 @@ interface OperatingCostSnapshot {
 interface EntityMarginSummary {
   miles: number
   drive_hours: number
+  idle_hours: number
+  operating_hours: number
   fuel_cost: number
+  maintenance_cost?: number
   insurance_cost: number
+  posted_insurance_cost?: number
+  insurance_cost_per_mile?: number | null
+  employee_cost?: number
+  rental_trucks_trailers_cost?: number
   other_expense_cost: number
   k1l_orders: number
   k1l_grand_total: number
@@ -234,11 +246,41 @@ interface EntityMarginSummary {
   k1l_actual_gross_margin_after_fuel: number
   k1l_actual_gross_margin_pct_after_fuel: number | null
   k1l_revenue_per_mile: number | null
+  k1l_revenue_per_drive_hour: number | null
+  k1l_revenue_per_engine_hour: number | null
   k1l_driver_pay_cpm: number | null
   k1l_fuel_cpm: number | null
   k1l_fuel_plus_driver_cpm: number | null
   k1l_true_operating_cpm: number | null
   k1l_true_operating_cost: number | null
+  k1l_true_operating_cost_per_drive_hour: number | null
+  k1l_true_operating_cost_per_engine_hour: number | null
+  k1l_profit: number | null
+  k1l_profit_per_mile: number | null
+  k1l_profit_per_drive_hour: number | null
+  k1l_profit_per_engine_hour: number | null
+  k1l_route_lh_orders?: number
+  k1l_route_lh_candidate_orders?: number
+  k1l_route_lh_revenue?: number
+  k1l_route_lh_driver_pay?: number
+  k1l_route_lh_hours?: number
+  k1l_route_lh_revenue_per_hour?: number | null
+  k1l_route_lh_driver_pay_per_hour?: number | null
+  k1l_route_lh_direct_cost?: number | null
+  k1l_route_lh_direct_cost_per_hour?: number | null
+  k1l_route_lh_direct_profit?: number | null
+  k1l_route_lh_direct_profit_per_hour?: number | null
+  k1l_route_lh_true_operating_cost?: number | null
+  k1l_route_lh_true_operating_cost_per_hour?: number | null
+  k1l_route_lh_loaded_profit?: number | null
+  k1l_route_lh_loaded_profit_per_hour?: number | null
+  k1l_route_lh_profit?: number | null
+  k1l_route_lh_profit_per_hour?: number | null
+  k1l_route_lh_excluded_non_route_lh_orders?: number
+  k1l_route_lh_excluded_low_revenue_orders?: number
+  k1l_route_lh_excluded_short_duration_orders?: number
+  k1l_route_lh_excluded_missing_duration_orders?: number
+  k1l_route_lh_excluded_revenue?: number
   k1g_orders: number
   k1g_grand_total: number
   k1g_driver_pay: number
@@ -280,17 +322,54 @@ interface EntityMarginSnapshot {
   excluded_delivery_centers: Record<string, number>
 }
 
+interface K1WeeklyEngineKpiSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: string
+  grain: string
+  efficiency_basis?: string
+  efficiency_rules?: {
+    scope: string
+    min_revenue: number
+    min_lifecycle_hours: number
+    hour_window: string
+    cost_allocation?: string
+    primary_cost_basis?: string
+    loaded_cost_diagnostic?: string
+  }
+  complete_k1l_engine_kpi_available: boolean
+  unresolved_sources: string[]
+  xcelerator_source_type: string
+  sources: {
+    telemetry: OperatingCostSource
+    xcelerator_entity: OperatingCostSource
+    xcelerator_route_lh_efficiency?: OperatingCostSource
+    operating_cost_stack: OperatingCostSource
+  }
+  summary: EntityMarginSummary
+  weekly: WeeklyEntityMargin[]
+  best_week: WeeklyEntityMargin | null
+  weakest_week: WeeklyEntityMargin | null
+  excluded_delivery_centers: Record<string, number>
+}
+
 interface K1OperatingCostMonth {
   added_p_and_l_ops: number
   cost_per_mile: number | null
   driver_pay: number
   fleet_maintenance: number
   fuel: number
+  gross_profit: number | null
   miles: number
   month: string
   other_ops: number
   payroll: number
+  profit_per_mile: number | null
   prior_cost: number
+  revenue: number | null
+  revenue_per_mile: number | null
   total_cost: number
 }
 
@@ -302,13 +381,104 @@ interface K1OperatingCostKpiSnapshot {
   method?: string
   monthly?: K1OperatingCostMonth[]
   projection_mode: 'read_only'
+  revenue_source?: string
+  revenue_source_status?: {
+    message?: string
+    row_count?: number | null
+    status?: string
+  }
   source?: string
   status: 'configured' | 'configuration_error' | 'not_configured'
   summary: {
+    added_p_and_l_ops?: number
     cost_per_mile: number | null
+    gross_profit?: number | null
     miles: number
+    profit_per_mile?: number | null
+    revenue?: number | null
+    revenue_per_mile?: number | null
     total_cost: number
   } | null
+}
+
+interface RevenueProductivitySnapshot {
+  period_start: string
+  period_end: string
+  period_days: number
+  projection_mode: 'read_only'
+  source_authority: string
+  targets: {
+    revenue_per_driver_week: number
+    revenue_per_truck_week: number
+  }
+  summary: {
+    revenue: number | null
+    truck_count: number | null
+    driver_count: number | null
+    driver_source: string | null
+    revenue_per_truck: number | null
+    revenue_per_driver: number | null
+    truck_target_delta: number | null
+    driver_target_delta: number | null
+    truck_target_status: string
+    driver_target_status: string
+  }
+  sources: {
+    revenue: OperatingCostSource
+    trucks: OperatingCostSource
+    drivers: OperatingCostSource
+  }
+}
+
+interface DeliveryCenterPerformanceRow {
+  delivery_center: string
+  entity: string
+  orders: number
+  pickup_orders: number
+  pickup_measured_orders: number
+  pickup_on_time_orders: number
+  pickup_late_orders: number
+  pickup_missing_orders: number
+  pickup_missing_schedule_orders: number
+  pickup_missing_actual_orders: number
+  pickup_on_time_pct: number | null
+  pickup_late_pct: number | null
+  pickup_proof_coverage_pct: number | null
+  pickup_avg_late_minutes: number | null
+  pickup_max_late_minutes: number | null
+  delivery_orders: number
+  delivery_measured_orders: number
+  delivery_on_time_orders: number
+  delivery_late_orders: number
+  delivery_missing_orders: number
+  delivery_missing_schedule_orders: number
+  delivery_missing_actual_orders: number
+  delivery_on_time_pct: number | null
+  delivery_late_pct: number | null
+  delivery_proof_coverage_pct: number | null
+  delivery_avg_late_minutes: number | null
+  delivery_max_late_minutes: number | null
+}
+
+interface DeliveryCenterPerformanceSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: 'read_only'
+  grain: 'delivery_center'
+  rules: {
+    on_time_tolerance_minutes: number
+    pickup_actual_basis?: string
+    delivery_actual_basis?: string
+    deadline_basis?: string
+  }
+  summary: DeliveryCenterPerformanceRow | null
+  delivery_centers: DeliveryCenterPerformanceRow[]
+  source: OperatingCostSource & {
+    table?: string
+    missing_column_families?: string[]
+  }
 }
 
 const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
@@ -335,6 +505,33 @@ const formatPercent = (value?: number | null) => (
   value === null || value === undefined ? 'Pending' : `${(value * 100).toFixed(1)}%`
 )
 
+const formatDeltaCurrency = (value?: number | null) => {
+  if (value === null || value === undefined) return 'Pending'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${formatCurrency(value)}`
+}
+
+const rateDelta = (left?: number | null, right?: number | null) => (
+  left === null || left === undefined || right === null || right === undefined
+    ? null
+    : Number((left - right).toFixed(3))
+)
+
+const finiteValue = (value?: number | null) => (
+  value === null || value === undefined || !Number.isFinite(Number(value))
+    ? null
+    : Number(value)
+)
+
+const safeRatio = (numerator?: number | null, denominator?: number | null, digits = 4) => {
+  const resolvedNumerator = finiteValue(numerator)
+  const resolvedDenominator = finiteValue(denominator)
+  if (resolvedNumerator === null || resolvedDenominator === null || resolvedDenominator <= 0) {
+    return null
+  }
+  return Number((resolvedNumerator / resolvedDenominator).toFixed(digits))
+}
+
 async function fetchJson<T>(url: string, fallback: T, timeoutMs = 20000): Promise<T> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
@@ -360,6 +557,9 @@ export default function FuelAnalytics() {
   const [operatingCost, setOperatingCost] = useState<OperatingCostSnapshot | null>(null)
   const [entityMargin, setEntityMargin] = useState<EntityMarginSnapshot | null>(null)
   const [k1OperatingKpi, setK1OperatingKpi] = useState<K1OperatingCostKpiSnapshot | null>(null)
+  const [k1WeeklyEngineKpi, setK1WeeklyEngineKpi] = useState<K1WeeklyEngineKpiSnapshot | null>(null)
+  const [revenueProductivity, setRevenueProductivity] = useState<RevenueProductivitySnapshot | null>(null)
+  const [deliveryCenterPerformance, setDeliveryCenterPerformance] = useState<DeliveryCenterPerformanceSnapshot | null>(null)
   const [trends, setTrends] = useState<FuelTrend[]>([])
   const [efficiency, setEfficiency] = useState<VehicleEfficiency[]>([])
   const [loading, setLoading] = useState(true)
@@ -396,26 +596,48 @@ export default function FuelAnalytics() {
       setQboStatus(qboReady)
       setLoading(false)
 
-      const [oc, em, k1Kpi] = await Promise.all([
+      const [k1Kpi, weeklyEngineKpi, productivity, deliveryPerformance] = await Promise.all([
+        fetchJson<K1OperatingCostKpiSnapshot | null>(
+          '/api/fuel/k1l-operating-kpi',
+          null,
+          90000,
+        ),
+        fetchJson<K1WeeklyEngineKpiSnapshot | null>(
+          `/api/fuel/k1l-weekly-engine-kpi?start=${ytdStart}`,
+          null,
+          90000,
+        ),
+        fetchJson<RevenueProductivitySnapshot | null>(
+          '/api/fuel/revenue-productivity?days=7',
+          null,
+          90000,
+        ),
+        fetchJson<DeliveryCenterPerformanceSnapshot | null>(
+          `/api/fuel/delivery-center-performance?start=${ytdStart}`,
+          null,
+          90000,
+        ),
+      ])
+      setK1OperatingKpi(k1Kpi)
+      setK1WeeklyEngineKpi(weeklyEngineKpi)
+      setRevenueProductivity(productivity)
+      setDeliveryCenterPerformance(deliveryPerformance)
+
+      void Promise.all([
         fetchJson<OperatingCostSnapshot | null>(
           `/api/fuel/operating-cost?start=${ytdStart}`,
           null,
-          45000,
+          30000,
         ),
         fetchJson<EntityMarginSnapshot | null>(
           `/api/fuel/entity-margin?start=${ytdStart}`,
           null,
-          45000,
+          30000,
         ),
-        fetchJson<K1OperatingCostKpiSnapshot | null>(
-          '/api/fuel/k1l-operating-kpi',
-          null,
-          20000,
-        ),
-      ])
-      setOperatingCost(oc)
-      setEntityMargin(em)
-      setK1OperatingKpi(k1Kpi)
+      ]).then(([oc, em]) => {
+        setOperatingCost(oc)
+        setEntityMargin(em)
+      })
     } finally {
       setLoading(false)
     }
@@ -531,10 +753,144 @@ export default function FuelAnalytics() {
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
   const unresolvedCostSources = operatingCost?.unresolved_sources.join(', ') || ''
   const entitySummary = entityMargin?.summary
-  const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available)
-  const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available)
+  const weeklyEngineSummary = k1WeeklyEngineKpi?.summary
+  const marginSummary = entitySummary ?? weeklyEngineSummary
   const unresolvedEntitySources = entityMargin?.unresolved_sources.join(', ') || ''
   const monthlyK1CpmRows = (k1OperatingKpi?.monthly ?? []).filter((row) => row.cost_per_mile !== null)
+  const k1OperatingSummary = k1OperatingKpi?.summary
+  const k1lFinalCpm = k1OperatingSummary?.cost_per_mile ?? null
+  const k1lRevenuePerMile = k1OperatingSummary?.revenue_per_mile ?? entitySummary?.k1l_revenue_per_mile ?? null
+  const k1lProfitPerMile = k1OperatingSummary?.profit_per_mile ?? rateDelta(k1lRevenuePerMile, k1lFinalCpm)
+  const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available || k1lFinalCpm !== null)
+  const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available || k1lFinalCpm !== null)
+  const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
+    ? 'Revenue/Mile - Final CPM'
+    : 'Revenue/Mile - CPM'
+  const k1lEngineHours = finiteValue(weeklyEngineSummary?.operating_hours ?? entitySummary?.operating_hours)
+  const k1lTotalCost = finiteValue(k1OperatingSummary?.total_cost ?? entitySummary?.k1l_true_operating_cost)
+  const k1lRevenue = finiteValue(k1OperatingSummary?.revenue ?? entitySummary?.k1l_grand_total)
+  const k1lGrossProfit = finiteValue(k1OperatingSummary?.gross_profit) ?? (
+    k1lRevenue !== null && k1lTotalCost !== null ? Number((k1lRevenue - k1lTotalCost).toFixed(2)) : null
+  )
+  const k1lSummaryRevenuePerEngineHour = safeRatio(k1lRevenue, k1lEngineHours) ?? entitySummary?.k1l_revenue_per_engine_hour ?? null
+  const k1lSummaryCostPerEngineHour = safeRatio(k1lTotalCost, k1lEngineHours) ?? entitySummary?.k1l_true_operating_cost_per_engine_hour ?? null
+  const k1lSummaryProfitPerEngineHour = safeRatio(k1lGrossProfit, k1lEngineHours) ?? entitySummary?.k1l_profit_per_engine_hour ?? null
+  const useRouteLhEfficiency = k1WeeklyEngineKpi?.efficiency_basis === 'route_lh_qualified'
+  const routeLhSummaryHours = finiteValue(weeklyEngineSummary?.k1l_route_lh_hours)
+  const routeLhSummaryRph = finiteValue(weeklyEngineSummary?.k1l_route_lh_revenue_per_hour)
+  const routeLhSummaryCostHr = finiteValue(
+    weeklyEngineSummary?.k1l_route_lh_direct_cost_per_hour
+      ?? weeklyEngineSummary?.k1l_route_lh_driver_pay_per_hour,
+  )
+  const routeLhSummaryProfitHr = finiteValue(
+    weeklyEngineSummary?.k1l_route_lh_direct_profit_per_hour
+      ?? weeklyEngineSummary?.k1l_route_lh_profit_per_hour,
+  )
+  const routeLhLoadedCostHr = finiteValue(weeklyEngineSummary?.k1l_route_lh_true_operating_cost_per_hour)
+  const displayedSummaryHours = useRouteLhEfficiency ? routeLhSummaryHours : k1lEngineHours
+  const displayedSummaryRph = useRouteLhEfficiency ? routeLhSummaryRph : k1lSummaryRevenuePerEngineHour
+  const displayedSummaryCostHr = useRouteLhEfficiency ? routeLhSummaryCostHr : k1lSummaryCostPerEngineHour
+  const displayedSummaryProfitHr = useRouteLhEfficiency ? routeLhSummaryProfitHr : k1lSummaryProfitPerEngineHour
+  const routeLhExcludedOrders = useRouteLhEfficiency
+    ? Number(weeklyEngineSummary?.k1l_route_lh_excluded_low_revenue_orders ?? 0)
+      + Number(weeklyEngineSummary?.k1l_route_lh_excluded_short_duration_orders ?? 0)
+      + Number(weeklyEngineSummary?.k1l_route_lh_excluded_missing_duration_orders ?? 0)
+      + Number(weeklyEngineSummary?.k1l_route_lh_excluded_non_route_lh_orders ?? 0)
+    : 0
+  const entitySourceCards = (entityMargin?.sources ?? k1WeeklyEngineKpi?.sources ?? {}) as Record<string, OperatingCostSource>
+  const entityTrendRows = (entityMargin?.weekly.length ?? 0) > 0
+    ? entityMargin?.weekly ?? []
+    : k1WeeklyEngineKpi?.weekly ?? []
+  const weeklyK1lRows = (k1WeeklyEngineKpi?.weekly ?? entityMargin?.weekly ?? []).map((row) => {
+    const routeHours = finiteValue(row.k1l_route_lh_hours)
+    const routeOrders = Number(row.k1l_route_lh_orders ?? 0)
+    const routeRevenue = finiteValue(row.k1l_route_lh_revenue)
+    const routeCost = finiteValue(row.k1l_route_lh_direct_cost ?? row.k1l_route_lh_driver_pay)
+    const routeCostHr = finiteValue(row.k1l_route_lh_direct_cost_per_hour ?? row.k1l_route_lh_driver_pay_per_hour)
+    const routeProfit = finiteValue(row.k1l_route_lh_direct_profit ?? row.k1l_route_lh_profit)
+    const routeProfitHr = finiteValue(row.k1l_route_lh_direct_profit_per_hour ?? row.k1l_route_lh_profit_per_hour)
+    const routeRph = finiteValue(row.k1l_route_lh_revenue_per_hour)
+    const useRouteRow = useRouteLhEfficiency && routeOrders > 0 && routeHours !== null && routeHours > 0
+    const rowEngineHours = useRouteRow ? routeHours : finiteValue(row.operating_hours)
+    const rowRevenue = useRouteRow ? routeRevenue : finiteValue(row.k1l_grand_total)
+    const rowRevenuePerEngineHour = useRouteRow
+      ? routeRph ?? safeRatio(rowRevenue, rowEngineHours)
+      : safeRatio(rowRevenue, rowEngineHours) ?? row.k1l_revenue_per_engine_hour
+    const rowCostPerEngineHour = useRouteRow
+      ? routeCostHr ?? safeRatio(routeCost, rowEngineHours)
+      : finiteValue(row.k1l_true_operating_cost_per_engine_hour) ?? k1lSummaryCostPerEngineHour
+    const rowAllocatedCost = useRouteRow
+      ? routeCost
+      : rowCostPerEngineHour !== null && rowCostPerEngineHour !== undefined && rowEngineHours !== null
+        ? Number((Number(rowCostPerEngineHour) * rowEngineHours).toFixed(2))
+        : finiteValue(row.k1l_true_operating_cost)
+    const rowProfit = rowRevenue !== null && rowAllocatedCost !== null
+      ? Number((rowRevenue - rowAllocatedCost).toFixed(2))
+      : useRouteRow
+        ? routeProfit
+        : finiteValue(row.k1l_profit)
+    const rowProfitPerEngineHour = useRouteRow
+      ? routeProfitHr ?? safeRatio(rowProfit, rowEngineHours)
+      : safeRatio(rowProfit, rowEngineHours) ?? row.k1l_profit_per_engine_hour
+
+    return {
+      ...row,
+      k1l_orders: useRouteRow ? routeOrders : row.k1l_orders,
+      k1l_grand_total: rowRevenue ?? row.k1l_grand_total,
+      operating_hours: rowEngineHours ?? row.operating_hours,
+      k1l_revenue_per_engine_hour: rowRevenuePerEngineHour,
+      k1l_true_operating_cost: rowAllocatedCost,
+      k1l_true_operating_cost_per_engine_hour: rowCostPerEngineHour,
+      k1l_profit: rowProfit,
+      k1l_profit_per_engine_hour: rowProfitPerEngineHour,
+      k1l_profit_per_mile: safeRatio(rowProfit, row.miles) ?? row.k1l_profit_per_mile,
+    }
+  }).filter((row) => Number(row.k1l_orders) > 0 && finiteValue(row.k1l_revenue_per_engine_hour) !== null)
+  const rankedK1lWeeks = weeklyK1lRows.filter((row) => finiteValue(row.k1l_profit_per_engine_hour) !== null)
+  const bestK1lWeek = rankedK1lWeeks.reduce<WeeklyEntityMargin | null>((best, row) => {
+    if (!best) return row
+    return Number(row.k1l_profit_per_engine_hour) > Number(best.k1l_profit_per_engine_hour) ? row : best
+  }, null)
+  const weakestK1lWeek = rankedK1lWeeks.reduce<WeeklyEntityMargin | null>((weakest, row) => {
+    if (!weakest) return row
+    return Number(row.k1l_profit_per_engine_hour) < Number(weakest.k1l_profit_per_engine_hour) ? row : weakest
+  }, null)
+  const k1OperatingRevenueSourceStatus = k1OperatingKpi?.revenue_source_status?.status || 'not_configured'
+  const k1OperatingRevenueSourceLabel = k1OperatingKpi?.revenue_source === 'xcelerator_fabric_warehouse_sql'
+    ? 'Xcelerator Fabric Warehouse SQL'
+    : k1OperatingKpi?.revenue_source === 'xcelerator_ceo_powerbi'
+      ? 'Xcelerator CEO Power BI'
+      : 'Monthly JSON fallback'
+  const k1OperatingRevenueSourceClass = k1OperatingRevenueSourceStatus === 'healthy'
+    ? 'text-emerald-400'
+    : k1OperatingRevenueSourceStatus === 'awaiting_feed'
+      ? 'text-amber-400'
+      : 'text-red-300'
+  const productivitySummary = revenueProductivity?.summary
+  const truckTarget = revenueProductivity?.targets.revenue_per_truck_week ?? 7000
+  const driverTarget = revenueProductivity?.targets.revenue_per_driver_week ?? 5000
+  const truckProductivityClass = productivitySummary?.truck_target_status === 'above_target'
+    ? 'text-emerald-400'
+    : productivitySummary?.truck_target_status === 'below_target'
+      ? 'text-amber-300'
+      : 'text-gray-400'
+  const driverProductivityClass = productivitySummary?.driver_target_status === 'above_target'
+    ? 'text-emerald-400'
+    : productivitySummary?.driver_target_status === 'below_target'
+      ? 'text-amber-300'
+      : 'text-gray-400'
+  const deliveryPerformanceRows = deliveryCenterPerformance?.delivery_centers ?? []
+  const deliveryPerformanceSummary = deliveryCenterPerformance?.summary
+  const deliveryPerformanceSource = deliveryCenterPerformance?.source
+  const deliveryPerformanceChartRows = deliveryPerformanceRows.slice(0, 8)
+  const deliveryPerformanceSourceClass = deliveryPerformanceSource?.status === 'healthy'
+    ? 'text-emerald-400'
+    : deliveryPerformanceSource?.status === 'partial' || deliveryPerformanceSource?.status === 'awaiting_feed'
+      ? 'text-amber-300'
+      : 'text-red-300'
+  const missingPerformanceProof =
+    Number(deliveryPerformanceSummary?.pickup_missing_orders ?? 0)
+    + Number(deliveryPerformanceSummary?.delivery_missing_orders ?? 0)
 
   const gradeColor = (grade: string) => {
     switch (grade) {
@@ -610,11 +966,11 @@ export default function FuelAnalytics() {
               K1 Entity CPM & Margin
             </h3>
             <div className="mt-1 text-sm text-gray-400">
-              {entityMargin?.period_start ?? 'YTD'} to {entityMargin?.period_end ?? 'today'} · {completeEntityCpm ? 'K1L CPM ready' : `K1L CPM pending${unresolvedEntitySources ? ` · ${unresolvedEntitySources}` : ''}`}
+              {entityMargin?.period_start ?? k1WeeklyEngineKpi?.period_start ?? 'YTD'} to {entityMargin?.period_end ?? k1WeeklyEngineKpi?.period_end ?? k1OperatingKpi?.as_of_date ?? 'today'} · {completeEntityCpm ? 'K1L CPM ready' : `K1L CPM pending${unresolvedEntitySources ? ` · ${unresolvedEntitySources}` : ''}`}
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            {Object.entries((entityMargin?.sources ?? {}) as Record<string, OperatingCostSource>).map(([key, source]) => (
+            {Object.entries(entitySourceCards).map(([key, source]) => (
               <div key={key} className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
                 <div className="text-[10px] uppercase tracking-wide text-gray-500">{key.replace('_', ' ')}</div>
                 <div className={source.status === 'healthy' ? 'text-emerald-400' : source.status === 'awaiting_feed' ? 'text-amber-400' : 'text-red-300'}>
@@ -625,40 +981,47 @@ export default function FuelAnalytics() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
-            <div className="text-xs uppercase text-gray-500">K1L Fuel + Driver CPM</div>
+            <div className="text-xs uppercase text-gray-500">K1L Final CPM</div>
             <div className="mt-1 text-2xl font-bold text-emerald-400">
-              {formatRate(entitySummary?.k1l_fuel_plus_driver_cpm)}
+              {formatRate(k1lFinalCpm ?? marginSummary?.k1l_true_operating_cpm)}
             </div>
-            <div className="mt-1 text-xs text-gray-500">{formatCurrency(entitySummary?.k1l_grand_total)} revenue</div>
+            <div className="mt-1 text-xs text-gray-500">{formatCurrency(k1lTotalCost ?? marginSummary?.k1l_true_operating_cost)} total cost</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
-            <div className="text-xs uppercase text-gray-500">K1L True CPM</div>
-            <div className="mt-1 text-2xl font-bold text-blue-400">
-              {formatRate(completeEntityTrueCpm ? entitySummary?.k1l_true_operating_cpm : null)}
+            <div className="text-xs uppercase text-gray-500">K1L Revenue / Mile</div>
+            <div className="mt-1 text-2xl font-bold text-teal-300">
+              {formatRate(k1lRevenuePerMile)}
             </div>
-            <div className="mt-1 text-xs text-gray-500">Incl. QBO overhead</div>
+            <div className="mt-1 text-xs text-gray-500">Xcelerator revenue / Geotab miles</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">K1L Profit / Mi</div>
+            <div className="mt-1 text-2xl font-bold text-blue-400">
+              {formatRate(completeEntityTrueCpm ? k1lProfitPerMile : null)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">{k1lProfitPerMileLabel}</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
               <Target className="h-3.5 w-3.5" /> K1L GM Target
             </div>
-            <div className="mt-1 text-2xl font-bold text-white">{formatCurrency(entitySummary?.k1l_target_gross_margin)}</div>
-            <div className="mt-1 text-xs text-gray-500">72% · actual {formatPercent(entitySummary?.k1l_actual_gross_margin_pct_before_fuel)}</div>
+            <div className="mt-1 text-2xl font-bold text-white">{formatCurrency(marginSummary?.k1l_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">72% · actual {formatPercent(marginSummary?.k1l_actual_gross_margin_pct_before_fuel)}</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
             <div className="flex items-center gap-1 text-xs uppercase text-gray-500">
               <Target className="h-3.5 w-3.5" /> K1G GM Target
             </div>
-            <div className="mt-1 text-2xl font-bold text-purple-400">{formatCurrency(entitySummary?.k1g_target_gross_margin)}</div>
-            <div className="mt-1 text-xs text-gray-500">20% · actual {formatPercent(entitySummary?.k1g_actual_gross_margin_pct_before_overhead)}</div>
+            <div className="mt-1 text-2xl font-bold text-purple-400">{formatCurrency(marginSummary?.k1g_target_gross_margin)}</div>
+            <div className="mt-1 text-xs text-gray-500">20% · actual {formatPercent(marginSummary?.k1g_actual_gross_margin_pct_before_overhead)}</div>
           </div>
         </div>
 
-        {(entityMargin?.weekly.length ?? 0) > 0 ? (
+        {entityTrendRows.length > 0 ? (
           <ResponsiveContainer width="100%" height={320}>
-            <ComposedChart data={entityMargin?.weekly ?? []}>
+            <ComposedChart data={entityTrendRows}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis dataKey="week_start" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
               <YAxis yAxisId="margin" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
@@ -676,7 +1039,7 @@ export default function FuelAnalytics() {
               <Legend />
               <Bar yAxisId="margin" dataKey="k1l_target_gross_margin" name="K1L 72% GM Target" fill="#10b981" />
               <Bar yAxisId="margin" dataKey="k1g_target_gross_margin" name="K1G 20% GM Target" fill="#a855f7" />
-              <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_mile" name="K1L Revenue/Mile" stroke="#f8fafc" strokeWidth={2} dot={false} />
+              <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_mile" name="K1L Revenue / Mile" stroke="#f8fafc" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="k1l_fuel_plus_driver_cpm" name="K1L Fuel+Driver CPM" stroke="#38bdf8" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cpm" name="K1L True CPM" stroke="#fb7185" strokeWidth={2} dot={false} />
             </ComposedChart>
@@ -684,6 +1047,237 @@ export default function FuelAnalytics() {
         ) : (
           <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
             Entity margin trend appears after Xcelerator delivery-center rows are available.
+          </div>
+        )}
+      </motion.div>
+
+      {/* K1L Weekly Engine-Hour Profitability */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.405 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Gauge className="w-5 h-5 text-cyan-300" />
+              {useRouteLhEfficiency ? 'K1L Route/LH Revenue / Cost per Hr' : 'K1L Weekly Revenue / Cost per Engine Hr'}
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              {useRouteLhEfficiency
+                ? 'Qualified rows only: revenue >= $1,000 and start-to-finish >= 12 hrs · cost/hr uses Xcelerator driver pay per lifecycle hour'
+                : 'Engine hrs = Geotab drive + idle hours · cost stack allocated by engine-hour share'}
+            </div>
+            {useRouteLhEfficiency && (
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
+                <span className="rounded border border-cyan-500/20 bg-cyan-950/20 px-2 py-1 text-cyan-200">
+                  {formatNumber(weeklyEngineSummary?.k1l_route_lh_orders, 0)} qualified
+                </span>
+                <span className="rounded border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-amber-200">
+                  {formatNumber(routeLhExcludedOrders, 0)} excluded by rule
+                </span>
+                <span className="rounded border border-gray-700 bg-gray-950/40 px-2 py-1 text-gray-300">
+                  Loaded stack diagnostic: {formatRate(routeLhLoadedCostHr, '/hr')}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">RPH</div>
+              <div className="text-cyan-300">{formatRate(displayedSummaryRph, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">{useRouteLhEfficiency ? 'Driver Pay / Hr' : 'Cost / Hr'}</div>
+              <div className="text-rose-300">{formatRate(displayedSummaryCostHr, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">{useRouteLhEfficiency ? 'Gross Profit / Hr' : 'Profit / Hr'}</div>
+              <div className="text-amber-300">{formatRate(displayedSummaryProfitHr, '/hr')}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">{useRouteLhEfficiency ? 'Route/LH Hrs' : 'Engine Hrs'}</div>
+              <div className="text-white">{formatNumber(displayedSummaryHours, 1)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2 mb-5">
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wide text-emerald-300">Best week</div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-xl font-semibold text-white">{bestK1lWeek?.week_start ?? 'Pending'}</span>
+              <span className="text-sm text-emerald-300">{formatRate(bestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
+              <span className="text-sm text-gray-400">{formatCurrency(bestK1lWeek?.k1l_profit)} {useRouteLhEfficiency ? 'gross profit' : 'profit'}</span>
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 px-4 py-3">
+            <div className="text-[10px] uppercase tracking-wide text-amber-300">Weakest week</div>
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-xl font-semibold text-white">{weakestK1lWeek?.week_start ?? 'Pending'}</span>
+              <span className="text-sm text-amber-300">{formatRate(weakestK1lWeek?.k1l_profit_per_engine_hour, '/hr')}</span>
+              <span className="text-sm text-gray-400">{formatCurrency(weakestK1lWeek?.k1l_profit)} {useRouteLhEfficiency ? 'gross profit' : 'profit'}</span>
+            </div>
+          </div>
+        </div>
+
+        {weeklyK1lRows.length > 0 ? (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_460px]">
+            <ResponsiveContainer width="100%" height={320}>
+              <ComposedChart data={weeklyK1lRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="week_start" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => String(v).slice(5)} />
+                <YAxis yAxisId="dollars" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v) / 1000}k`} />
+                <YAxis yAxisId="rate" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Number(v).toFixed(0)}`} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => {
+                    if (name.includes('/Hr')) return [formatRate(value, '/hr'), name]
+                    if (name === 'Engine Hrs') return [formatNumber(value, 1), name]
+                    return [formatCurrency(value), name]
+                  }}
+                />
+                <Legend />
+                <Bar yAxisId="dollars" dataKey="k1l_grand_total" name={useRouteLhEfficiency ? 'Qualified Revenue' : 'Revenue'} fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="dollars" dataKey="k1l_true_operating_cost" name={useRouteLhEfficiency ? 'Driver Pay' : 'Cost (alloc)'} fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_engine_hour" name="RPH /Hr" stroke="#67e8f9" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cost_per_engine_hour" name={useRouteLhEfficiency ? 'Pay /Hr' : 'Cost /Hr'} stroke="#fb7185" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="k1l_profit_per_engine_hour" name={useRouteLhEfficiency ? 'Gross Profit /Hr' : 'Profit /Hr'} stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid min-w-[620px] grid-cols-[64px_repeat(3,minmax(104px,1fr))_minmax(108px,1fr)_80px] gap-3 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span className="whitespace-nowrap">Week</span>
+                <span className="whitespace-nowrap text-right">RPH</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Pay/Hr' : 'Cost/Hr'}</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Gross/Hr' : 'Profit/Hr'}</span>
+                <span className="whitespace-nowrap text-right">Profit</span>
+                <span className="whitespace-nowrap text-right">{useRouteLhEfficiency ? 'Hours' : 'Eng Hrs'}</span>
+              </div>
+              <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
+                {weeklyK1lRows.map((row) => (
+                  <div key={row.week_start} className="grid min-w-[620px] grid-cols-[64px_repeat(3,minmax(104px,1fr))_minmax(108px,1fr)_80px] gap-3 px-3 py-2">
+                    <span className="whitespace-nowrap font-medium text-white">{row.week_start.slice(5)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-cyan-300">{formatRate(row.k1l_revenue_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-rose-300">{formatRate(row.k1l_true_operating_cost_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-amber-300">{formatRate(row.k1l_profit_per_engine_hour, '/hr')}</span>
+                    <span className="whitespace-nowrap text-right text-gray-300">{formatCurrency(row.k1l_profit)}</span>
+                    <span className="whitespace-nowrap text-right text-gray-400">{formatNumber(row.operating_hours, 1)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 text-sm text-gray-500">
+            Weekly engine-hour profitability appears after Geotab hours, Xcelerator revenue, and operating costs are available.
+          </div>
+        )}
+      </motion.div>
+
+      {/* Delivery Center On-Time Performance */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.407 }}
+        className="bg-gray-900/50 border border-gray-800/50 rounded-xl p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Target className="w-5 h-5 text-emerald-300" />
+              Delivery Center Pickup / Delivery On-Time
+            </h3>
+            <div className="mt-1 text-sm text-gray-400">
+              {deliveryCenterPerformance?.period_start ?? 'YTD'} to {deliveryCenterPerformance?.period_end ?? 'today'} · Xcelerator ReviewOrders actuals vs target windows · {deliveryCenterPerformance?.rules.on_time_tolerance_minutes ?? 15} min tolerance
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Source: {deliveryPerformanceSource?.table ?? 'ReviewOrders'} ·{' '}
+              <span className={deliveryPerformanceSourceClass}>
+                {(deliveryPerformanceSource?.status ?? 'pending').replace('_', ' ')}
+              </span>
+              {deliveryPerformanceSource?.message ? ` · ${deliveryPerformanceSource.message}` : ''}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Centers</div>
+              <div className="text-white">{formatNumber(deliveryPerformanceRows.length)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Pickup OTD</div>
+              <div className="text-emerald-300">{formatPercent(deliveryPerformanceSummary?.pickup_on_time_pct)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Delivery OTD</div>
+              <div className="text-cyan-300">{formatPercent(deliveryPerformanceSummary?.delivery_on_time_pct)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Missing Proof</div>
+              <div className="text-amber-300">{formatNumber(missingPerformanceProof)}</div>
+            </div>
+          </div>
+        </div>
+
+        {deliveryPerformanceRows.length > 0 ? (
+          <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_760px]">
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={deliveryPerformanceChartRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="delivery_center" stroke="#6b7280" tick={{ fontSize: 11 }} interval={0} tickFormatter={(v) => String(v).replace('K1 ', '')} />
+                <YAxis yAxisId="pct" domain={[0, 1]} stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`} />
+                <YAxis yAxisId="orders" orientation="right" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => {
+                    if (name.includes('OTD') || name.includes('Proof')) return [formatPercent(value), name]
+                    return [formatNumber(value), name]
+                  }}
+                />
+                <Legend />
+                <Bar yAxisId="pct" dataKey="pickup_on_time_pct" name="Pickup OTD" fill="#34d399" radius={[4, 4, 0, 0]} />
+                <Bar yAxisId="pct" dataKey="delivery_on_time_pct" name="Delivery OTD" fill="#22d3ee" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="orders" type="monotone" dataKey="orders" name="Orders" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-gray-800 bg-gray-950/30">
+              <div className="grid min-w-[760px] grid-cols-[minmax(170px,1.4fr)_72px_repeat(3,minmax(92px,1fr))_repeat(3,minmax(92px,1fr))] gap-3 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <span>Delivery Center</span>
+                <span className="text-right">Orders</span>
+                <span className="text-right">Pickup OTD</span>
+                <span className="text-right">P Late</span>
+                <span className="text-right">P Missing</span>
+                <span className="text-right">Delivery OTD</span>
+                <span className="text-right">D Late</span>
+                <span className="text-right">D Missing</span>
+              </div>
+              <div className="max-h-[260px] divide-y divide-gray-800 overflow-y-auto text-sm">
+                {deliveryPerformanceRows.map((row) => (
+                  <div key={row.delivery_center} className="grid min-w-[760px] grid-cols-[minmax(170px,1.4fr)_72px_repeat(3,minmax(92px,1fr))_repeat(3,minmax(92px,1fr))] gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-white">{row.delivery_center}</div>
+                      <div className="truncate text-[11px] text-gray-500">{row.entity}</div>
+                    </div>
+                    <span className="whitespace-nowrap text-right text-gray-300">{formatNumber(row.orders)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-emerald-300">{formatPercent(row.pickup_on_time_pct)}</span>
+                    <span className="whitespace-nowrap text-right text-rose-300">{formatNumber(row.pickup_late_orders)}</span>
+                    <span className="whitespace-nowrap text-right text-amber-300">{formatNumber(row.pickup_missing_orders)}</span>
+                    <span className="whitespace-nowrap text-right font-semibold text-cyan-300">{formatPercent(row.delivery_on_time_pct)}</span>
+                    <span className="whitespace-nowrap text-right text-rose-300">{formatNumber(row.delivery_late_orders)}</span>
+                    <span className="whitespace-nowrap text-right text-amber-300">{formatNumber(row.delivery_missing_orders)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 px-6 text-center text-sm text-gray-500">
+            {deliveryPerformanceSource?.message || 'Delivery-center on-time performance appears after Xcelerator ReviewOrders target and actual timestamps are available.'}
           </div>
         )}
       </motion.div>
@@ -704,25 +1298,37 @@ export default function FuelAnalytics() {
             <div className="mt-1 text-sm text-gray-400">
               {k1OperatingKpi?.as_of_date ? `Finalized through ${k1OperatingKpi.as_of_date}` : 'Finalized monthly snapshot'} · {k1OperatingKpi?.source || 'QBO + Xcelerator + AtoB + Geotab'}
             </div>
+            <div className="mt-1 text-xs text-gray-500">
+              CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack · Revenue / Mile: {k1OperatingRevenueSourceLabel}{' '}
+              <span className={k1OperatingRevenueSourceClass}>({k1OperatingRevenueSourceStatus.replace('_', ' ')})</span>
+            </div>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Final CPM</div>
-              <div className="text-emerald-400">{formatRate(k1OperatingKpi?.summary?.cost_per_mile)}</div>
+              <div className="text-emerald-400">{formatRate(k1lFinalCpm)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Revenue / Mile</div>
+              <div className="text-teal-300">{formatRate(k1lRevenuePerMile)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Profit / Mi</div>
+              <div className="text-amber-300">{formatRate(k1lProfitPerMile)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Total Cost</div>
-              <div className="text-white">{formatCurrency(k1OperatingKpi?.summary?.total_cost)}</div>
+              <div className="text-white">{formatCurrency(k1OperatingSummary?.total_cost)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-500">Miles</div>
-              <div className="text-purple-300">{formatNumber(k1OperatingKpi?.summary?.miles)}</div>
+              <div className="text-purple-300">{formatNumber(k1OperatingSummary?.miles)}</div>
             </div>
           </div>
         </div>
 
         {monthlyK1CpmRows.length > 0 ? (
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_440px]">
             <ResponsiveContainer width="100%" height={320}>
               <ComposedChart data={monthlyK1CpmRows}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -734,6 +1340,8 @@ export default function FuelAnalytics() {
                   labelStyle={{ color: '#9ca3af' }}
                   formatter={(value: number, name: string) => {
                     if (name === 'Final CPM') return [formatRate(value), name]
+                    if (name === 'Revenue / Mile') return [formatRate(value), name]
+                    if (name === 'Profit/Mi') return [formatRate(value), name]
                     if (name === 'Miles') return [formatNumber(value), name]
                     return [formatCurrency(value), name]
                   }}
@@ -741,22 +1349,28 @@ export default function FuelAnalytics() {
                 <Legend />
                 <Bar yAxisId="cost" dataKey="total_cost" name="Total Cost" fill="#10b981" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="rate" type="monotone" dataKey="cost_per_mile" name="Final CPM" stroke="#f8fafc" strokeWidth={3} dot={{ r: 4 }} />
+                <Line yAxisId="rate" type="monotone" dataKey="revenue_per_mile" name="Revenue / Mile" stroke="#34d399" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="profit_per_mile" name="Profit/Mi" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="miles" name="Miles" stroke="#a78bfa" strokeWidth={2} dot={false} hide />
               </ComposedChart>
             </ResponsiveContainer>
 
             <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-950/30">
-              <div className="grid grid-cols-4 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+              <div className="grid grid-cols-6 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
                 <span>Month</span>
                 <span className="text-right">CPM</span>
+                <span className="text-right">Revenue/Mi</span>
+                <span className="text-right">Profit/Mi</span>
                 <span className="text-right">Cost</span>
                 <span className="text-right">Miles</span>
               </div>
               <div className="max-h-[280px] divide-y divide-gray-800 overflow-y-auto text-sm">
                 {monthlyK1CpmRows.map((row) => (
-                  <div key={row.month} className="grid grid-cols-4 gap-2 px-3 py-2">
+                  <div key={row.month} className="grid grid-cols-6 gap-2 px-3 py-2">
                     <span className="font-medium text-white">{row.month}</span>
                     <span className="text-right font-semibold text-emerald-400">{formatRate(row.cost_per_mile)}</span>
+                    <span className="text-right font-semibold text-teal-300">{formatRate(row.revenue_per_mile)}</span>
+                    <span className="text-right font-semibold text-amber-300">{formatRate(row.profit_per_mile)}</span>
                     <span className="text-right text-gray-300">{formatCurrency(row.total_cost)}</span>
                     <span className="text-right text-gray-400">{formatNumber(row.miles)}</span>
                   </div>
@@ -785,7 +1399,7 @@ export default function FuelAnalytics() {
               Operating Cost Per Mile / Hour
             </h3>
             <div className="mt-1 text-sm text-gray-400">
-              {operatingCost?.period_start ?? 'YTD'} to {operatingCost?.period_end ?? 'today'} · {completeOperatingCost ? 'Complete source stack' : `Known stack only${unresolvedCostSources ? ` · pending ${unresolvedCostSources}` : ''}`}
+              {operatingCost?.period_start ?? 'YTD'} to {operatingCost?.period_end ?? 'today'} · {completeOperatingCost ? 'Complete source stack' : `Known stack only${unresolvedCostSources ? ` · pending ${unresolvedCostSources}` : ''}`} · profit/mi uses {k1lProfitPerMileLabel}
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -845,8 +1459,10 @@ export default function FuelAnalytics() {
               <Legend />
               <Bar yAxisId="cost" dataKey="fuel_cost" name="Fuel Cost" stackId="cost" fill="#10b981" />
               <Bar yAxisId="cost" dataKey="driver_pay" name="Driver Pay" stackId="cost" fill="#3b82f6" />
-              <Bar yAxisId="cost" dataKey="insurance_cost" name="Insurance" stackId="cost" fill="#a855f7" />
-              <Bar yAxisId="cost" dataKey="other_expense_cost" name="Other Expense" stackId="cost" fill="#f59e0b" />
+              <Bar yAxisId="cost" dataKey="insurance_cost" name="Insurance / Mile" stackId="cost" fill="#a855f7" />
+              <Bar yAxisId="cost" dataKey="maintenance_cost" name="Maintenance" stackId="cost" fill="#f59e0b" />
+              <Bar yAxisId="cost" dataKey="employee_cost" name="Employee" stackId="cost" fill="#facc15" />
+              <Bar yAxisId="cost" dataKey="rental_trucks_trailers_cost" name="Rental / Lease" stackId="cost" fill="#fb7185" />
               <Line yAxisId="rate" type="monotone" dataKey="known_cost_per_mile" name="Known CPM" stroke="#f8fafc" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="known_cost_per_drive_hour" name="Known Cost/Hour" stroke="#fb7185" strokeWidth={2} dot={false} />
             </ComposedChart>
@@ -1120,6 +1736,38 @@ export default function FuelAnalytics() {
           <Fuel className="w-5 h-5 text-blue-400" />
           Vehicle Fuel Efficiency (7 Days)
         </h3>
+        <div className="mb-5 grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Revenue / Truck</div>
+            <div className={`mt-1 text-2xl font-bold ${truckProductivityClass}`}>
+              {formatCurrency(productivitySummary?.revenue_per_truck)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Target {formatCurrency(truckTarget)} / wk · {formatDeltaCurrency(productivitySummary?.truck_target_delta)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Revenue / Driver</div>
+            <div className={`mt-1 text-2xl font-bold ${driverProductivityClass}`}>
+              {formatCurrency(productivitySummary?.revenue_per_driver)}
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              Target {formatCurrency(driverTarget)} / wk · {formatDeltaCurrency(productivitySummary?.driver_target_delta)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Active Trucks</div>
+            <div className="mt-1 text-2xl font-bold text-blue-300">{formatNumber(productivitySummary?.truck_count)}</div>
+            <div className="mt-1 text-xs text-gray-500">Geotab trucks with 10+ mi</div>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+            <div className="text-xs uppercase text-gray-500">Dispatch Drivers</div>
+            <div className="mt-1 text-2xl font-bold text-purple-300">{formatNumber(productivitySummary?.driver_count)}</div>
+            <div className="mt-1 text-xs text-gray-500">
+              {productivitySummary?.driver_source === 'geotab_trip_driver_fallback' ? 'Geotab fallback' : 'Xcelerator drivers'}
+            </div>
+          </div>
+        </div>
         {efficiency.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

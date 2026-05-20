@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
+import httpx
+
 from configs.xtra_lease import XtraLeaseIngestionConfig
 from geotab_client import GeotabClient
 from models import (
@@ -37,11 +39,22 @@ from models import (
 from services.alert_service import get_recent_alerts
 from services.fleet_service import LOCATIONS
 from services.monitor_service import get_monitor_alerts, get_monitor_status
+from services.qbo_financial_snapshot_service import (
+    QBO_FINANCIAL_AUTHORITY,
+    get_qbo_financial_snapshot,
+)
+from services.xcelerator_event_feed_service import (
+    load_xcelerator_event_state_rows,
+    xcelerator_event_state_configured,
+)
 from services.xtra_lease_ingestion_service import XtraLeaseProjection, get_xtra_lease_projection
 
 
 TRAILER_GROUP_IDS_DEFAULT = "GroupTrailerId"
 AR_BUCKETS = ("0-30", "31-60", "61-90", "90+")
+XCELERATOR_SOURCE_AUTHORITY = "K1 Group LLC / Xcelerator"
+XCELERATOR_EVENT_FEED_ENV = "FLEETPULSE_XCELERATOR_EVENT_FEED_URL"
+XCELERATOR_EVENT_STATE_ENV = "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH"
 
 
 def _now() -> datetime:
@@ -61,6 +74,234 @@ def _bool_env(name: str, default: bool = False) -> bool:
 
 def _csv_env(name: str, default: str = "") -> set[str]:
     return {item.strip() for item in os.getenv(name, default).split(",") if item.strip()}
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _humanize(value: Any) -> str:
+    text = str(value or "").replace("_", " ").replace("-", " ").strip()
+    return " ".join(part.capitalize() for part in text.split()) if text else ""
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _first_value(record: dict[str, Any], *names: str) -> Any:
+    sources = [
+        record,
+        record.get("metadata") if isinstance(record.get("metadata"), dict) else {},
+        record.get("source_payload") if isinstance(record.get("source_payload"), dict) else {},
+        record.get("references") if isinstance(record.get("references"), dict) else {},
+    ]
+    for source in sources:
+        for name in names:
+            value = source.get(name)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _coerce_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("events", "items", "rows", "data", "value", "records"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    tables = payload.get("tables")
+    if isinstance(tables, dict):
+        for value in tables.values():
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _xcelerator_event_feed_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    api_key = os.getenv("FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY", "").strip()
+    if api_key:
+        header_name = (
+            os.getenv("FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY_HEADER", "").strip()
+            or "X-FleetPulse-Xcelerator-Key"
+        )
+        headers[header_name] = api_key
+    return headers
+
+
+def _fetch_xcelerator_event_rows() -> tuple[list[dict[str, Any]], datetime | None]:
+    url = os.getenv(XCELERATOR_EVENT_FEED_ENV, "").strip()
+    if url:
+        timeout = _float_env("FLEETPULSE_XCELERATOR_EVENT_FEED_TIMEOUT_SECONDS", 15.0)
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(url, headers=_xcelerator_event_feed_headers())
+        response.raise_for_status()
+        payload = response.json()
+        rows = _coerce_rows(payload)
+        last_updated = _parse_datetime(
+            payload.get("last_updated")
+            or payload.get("lastUpdated")
+            or payload.get("generated_at")
+            or payload.get("generatedAt")
+        ) if isinstance(payload, dict) else None
+        if last_updated is None:
+            last_updated = _latest_xcelerator_event_timestamp(rows)
+        return rows, last_updated
+    if xcelerator_event_state_configured():
+        return load_xcelerator_event_state_rows()
+    return [], None
+
+
+def _latest_xcelerator_event_timestamp(rows: list[dict[str, Any]]) -> datetime | None:
+    row_timestamps = [
+        timestamp
+        for row in rows
+        if (
+            timestamp := _parse_datetime(
+                _first_value(
+                    row,
+                    "timestamp",
+                    "updated_at",
+                    "updatedAt",
+                    "created_at",
+                    "createdAt",
+                    "detected_at",
+                    "detectedAt",
+                )
+            )
+        )
+    ]
+    return max(row_timestamps, default=None)
+
+
+def _xcelerator_event_source_configured() -> bool:
+    return _env_present(XCELERATOR_EVENT_FEED_ENV) or xcelerator_event_state_configured()
+
+
+def _xcelerator_event_required_config() -> list[str]:
+    return [f"{XCELERATOR_EVENT_FEED_ENV} or {XCELERATOR_EVENT_STATE_ENV}"]
+
+
+def _xcelerator_review_orders_evidence() -> dict[str, Any] | None:
+    path = (
+        os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", "").strip()
+        or os.getenv("FLEETPULSE_LANE_STABILITY_ORDER_FEED_PATH", "").strip()
+    )
+    if not path:
+        return None
+    try:
+        stat = os.stat(path)
+    except FileNotFoundError:
+        return {
+            "status": ControlTowerStatus.AWAITING_FEED,
+            "message": "Xcelerator ReviewOrders evidence path is configured, but no rows have been imported yet.",
+            "last_updated": None,
+        }
+    except OSError as exc:
+        return {
+            "status": ControlTowerStatus.UNAVAILABLE,
+            "message": f"Xcelerator ReviewOrders evidence unavailable: {type(exc).__name__}",
+            "last_updated": None,
+        }
+
+    if stat.st_size <= 2:
+        return {
+            "status": ControlTowerStatus.AWAITING_FEED,
+            "message": "Xcelerator ReviewOrders evidence file is empty.",
+            "last_updated": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+        }
+
+    return {
+        "status": ControlTowerStatus.HEALTHY,
+        "message": f"Xcelerator ReviewOrders evidence file is available ({stat.st_size:,} bytes).",
+        "last_updated": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+    }
+
+
+def _xcelerator_event_severity(record: dict[str, Any]) -> AlertSeverity:
+    value = str(_first_value(record, "severity", "priority", "alert_level", "alertLevel") or "").lower()
+    status = str(_first_value(record, "status", "exception_status", "exceptionStatus") or "").lower()
+    event_type = str(_first_value(record, "event_type", "eventType", "workflow_name", "workflowName") or "").lower()
+    if value in {severity.value for severity in AlertSeverity}:
+        return AlertSeverity(value)
+    if status in {"critical", "failed", "failure", "exception"} or "exception" in event_type:
+        return AlertSeverity.HIGH
+    if status in {"late", "missed", "overdue", "open", "pending", "warning"}:
+        return AlertSeverity.MEDIUM
+    return AlertSeverity.LOW
+
+
+def _is_xcelerator_attention_record(record: dict[str, Any]) -> bool:
+    status = str(_first_value(record, "status", "exception_status", "exceptionStatus") or "").lower()
+    event_type = str(_first_value(record, "event_type", "eventType", "workflow_name", "workflowName") or "").lower()
+    if status in {"exception", "failed", "failure", "late", "missed", "overdue", "open", "pending"}:
+        return True
+    return any(token in event_type for token in ("exception", "missed", "route_check_in", "check_in"))
+
+
+def _xcelerator_attention_item(record: dict[str, Any], index: int) -> ControlTowerAttentionItem:
+    severity = _xcelerator_event_severity(record)
+    event_type = _first_value(record, "event_type", "eventType", "workflow_name", "workflowName")
+    route_id = _first_value(record, "route_id", "routeId", "route_number", "routeNumber")
+    shipment_id = _first_value(record, "shipment_id", "shipmentId", "load_id", "loadId")
+    record_id = (
+        _first_value(record, "id", "event_id", "eventId", "route_exception_id", "routeExceptionId")
+        or route_id
+        or shipment_id
+        or f"xcelerator-{index}"
+    )
+    timestamp = _parse_datetime(
+        _first_value(
+            record,
+            "timestamp",
+            "updated_at",
+            "updatedAt",
+            "created_at",
+            "createdAt",
+            "detected_at",
+            "detectedAt",
+        )
+    )
+    message = _first_value(record, "message", "summary", "description", "detail")
+    if not message:
+        target = route_id or shipment_id or "Xcelerator event"
+        message = f"{_humanize(event_type) or 'Xcelerator event'} requires review for {target}."
+    category = "Linehaul" if route_id else "Dispatch" if shipment_id else "Xcelerator"
+    action = "Escalate" if severity == AlertSeverity.CRITICAL else "Review" if severity in {AlertSeverity.HIGH, AlertSeverity.MEDIUM} else "Monitor"
+    return ControlTowerAttentionItem(
+        id=f"xcelerator:{record_id}",
+        category=category,
+        severity=severity,
+        action=action,
+        message=str(message),
+        source_authority=XCELERATOR_SOURCE_AUTHORITY,
+        timestamp=timestamp,
+    )
 
 
 def _feed(
@@ -153,20 +394,55 @@ def get_attention() -> ControlTowerAttentionResponse:
             )
         )
 
-    xcelerator_event_url_configured = _env_present("FLEETPULSE_XCELERATOR_EVENT_FEED_URL")
-    feeds.append(
-        _feed(
-            "Xcelerator route SLA feed",
-            "K1 Group LLC / Xcelerator",
-            ControlTowerStatus.WARNING if xcelerator_event_url_configured else ControlTowerStatus.AWAITING_FEED,
-            (
-                "Xcelerator event feed URL is configured, but the FleetPulse event adapter is not live yet."
-                if xcelerator_event_url_configured
-                else "Route SLA, paused communications, and workflow exceptions are not wired into this FleetPulse service yet."
-            ),
-            ["FLEETPULSE_XCELERATOR_EVENT_FEED_URL"],
+    if _xcelerator_event_source_configured():
+        try:
+            xcelerator_rows, xcelerator_last_updated = _fetch_xcelerator_event_rows()
+            attention_rows = [
+                row for row in xcelerator_rows if _is_xcelerator_attention_record(row)
+            ]
+            for index, row in enumerate(attention_rows, start=1):
+                item = _xcelerator_attention_item(row, index)
+                items_by_id[item.id] = item
+            status = (
+                ControlTowerStatus.HEALTHY
+                if xcelerator_rows
+                else ControlTowerStatus.AWAITING_FEED
+            )
+            feeds.append(
+                _feed(
+                    "Xcelerator route SLA feed",
+                    XCELERATOR_SOURCE_AUTHORITY,
+                    status,
+                    (
+                        f"Read {len(xcelerator_rows)} Xcelerator event row(s); "
+                        f"{len(attention_rows)} require attention."
+                        if xcelerator_rows
+                        else "Xcelerator event feed is reachable but returned no rows."
+                    ),
+                    _xcelerator_event_required_config(),
+                    xcelerator_last_updated,
+                )
+            )
+        except Exception as exc:
+            feeds.append(
+                _feed(
+                    "Xcelerator route SLA feed",
+                    XCELERATOR_SOURCE_AUTHORITY,
+                    ControlTowerStatus.UNAVAILABLE,
+                    f"Xcelerator event feed unavailable: {type(exc).__name__}",
+                    _xcelerator_event_required_config(),
+                )
+            )
+    else:
+        feeds.append(
+            _feed(
+                "Xcelerator route SLA feed",
+                XCELERATOR_SOURCE_AUTHORITY,
+                ControlTowerStatus.AWAITING_FEED,
+                "Route SLA, paused communications, and workflow exceptions are not wired into this FleetPulse service yet.",
+                _xcelerator_event_required_config(),
+            )
         )
-    )
 
     severity_rank = {
         AlertSeverity.CRITICAL: 4,
@@ -383,41 +659,95 @@ def get_financial() -> ControlTowerFinancialResponse:
     """Return the K1 Group read-only financial control surface."""
 
     enabled = _bool_env("FLEETPULSE_FINANCIAL_FEED_ENABLED", False)
-    xcelerator_event_url_configured = _env_present("FLEETPULSE_XCELERATOR_EVENT_FEED_URL")
-    qbo_feed_configured = _env_present("FLEETPULSE_QBO_FINANCIAL_FEED_URL")
-    status = ControlTowerStatus.AWAITING_FEED if not enabled else ControlTowerStatus.WARNING
-    message = (
-        "Financial feed is not connected to this FleetPulse service yet."
-        if not enabled
-        else (
-            "Financial feed is enabled and source URLs are configured, but the read-only adapter is not live yet."
-            if xcelerator_event_url_configured or qbo_feed_configured
-            else "Financial feed flag is enabled, but no adapter has been configured."
-        )
-    )
+    xcelerator_event_source_configured = _xcelerator_event_source_configured()
+    qbo_snapshot = get_qbo_financial_snapshot()
+    qbo_status_text = str(qbo_snapshot.get("status") or "awaiting_feed")
+    qbo_status = {
+        "healthy": ControlTowerStatus.HEALTHY,
+        "partial": ControlTowerStatus.WARNING,
+        "warning": ControlTowerStatus.WARNING,
+        "unavailable": ControlTowerStatus.UNAVAILABLE,
+    }.get(qbo_status_text, ControlTowerStatus.AWAITING_FEED)
+    xcelerator_status = ControlTowerStatus.AWAITING_FEED
+    xcelerator_message = "Financial feed is not connected to this FleetPulse service yet."
+    xcelerator_last_updated: datetime | None = None
+    xcelerator_required_config = ["FLEETPULSE_FINANCIAL_FEED_ENABLED", *_xcelerator_event_required_config()]
+    xcelerator_event_error: Exception | None = None
+    if enabled and xcelerator_event_source_configured:
+        try:
+            xcelerator_rows, xcelerator_last_updated = _fetch_xcelerator_event_rows()
+            financial_rows = [
+                row
+                for row in xcelerator_rows
+                if _first_value(
+                    row,
+                    "revenue_amount",
+                    "revenueAmount",
+                    "driver_pay_amount",
+                    "driverPayAmount",
+                    "gross_margin",
+                    "grossMargin",
+                )
+                is not None
+            ]
+            xcelerator_status = (
+                ControlTowerStatus.HEALTHY
+                if financial_rows
+                else ControlTowerStatus.WARNING
+            )
+            xcelerator_message = (
+                f"Read {len(xcelerator_rows)} Xcelerator row(s); "
+                f"{len(financial_rows)} financial row(s) are available for read-only projection."
+            )
+        except Exception as exc:
+            xcelerator_event_error = exc
+    elif enabled:
+        xcelerator_message = "Financial feed flag is enabled, but no Xcelerator event feed URL is configured."
+    if enabled and xcelerator_status != ControlTowerStatus.HEALTHY:
+        evidence = _xcelerator_review_orders_evidence()
+        if evidence:
+            xcelerator_status = evidence["status"]
+            xcelerator_last_updated = evidence["last_updated"]
+            xcelerator_required_config = [
+                "FLEETPULSE_FINANCIAL_FEED_ENABLED",
+                "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH",
+            ]
+            xcelerator_message = evidence["message"]
+            if xcelerator_event_error and xcelerator_status == ControlTowerStatus.HEALTHY:
+                xcelerator_message = (
+                    f"{xcelerator_message} Event feed URL is not a readable row feed "
+                    f"({type(xcelerator_event_error).__name__}); using persisted Xcelerator evidence."
+                )
+        elif xcelerator_event_error:
+            xcelerator_status = ControlTowerStatus.UNAVAILABLE
+            xcelerator_message = f"Xcelerator financial event feed unavailable: {type(xcelerator_event_error).__name__}"
     return ControlTowerFinancialResponse(
         generated_at=_now(),
-        accounts_receivable=[ControlTowerFinancialBucket(bucket=bucket) for bucket in AR_BUCKETS],
-        cash_flow={"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None},
+        accounts_payable=qbo_snapshot.get("accounts_payable") or {},
+        accounts_receivable=[
+            ControlTowerFinancialBucket(**bucket)
+            for bucket in (qbo_snapshot.get("accounts_receivable") or [])
+        ]
+        or [ControlTowerFinancialBucket(bucket=bucket) for bucket in AR_BUCKETS],
+        cash_flow=qbo_snapshot.get("cash_flow")
+        or {"bank_balance": None, "net_weekly": None, "weekly_income": None, "weekly_expenses": None},
         audit_queue={"pending_audits": 0, "passed_today": 0, "failed_today": 0, "fail_reasons": []},
         feeds=[
             _feed(
                 "Xcelerator financial events",
-                "K1 Group LLC / Xcelerator",
-                status,
-                message,
-                ["FLEETPULSE_FINANCIAL_FEED_ENABLED", "FLEETPULSE_XCELERATOR_EVENT_FEED_URL"],
+                XCELERATOR_SOURCE_AUTHORITY,
+                xcelerator_status,
+                xcelerator_message,
+                xcelerator_required_config,
+                xcelerator_last_updated,
             ),
             _feed(
                 "QuickBooks AR/AP snapshots",
-                "K1 Group LLC / QuickBooks",
-                ControlTowerStatus.WARNING if qbo_feed_configured else ControlTowerStatus.AWAITING_FEED,
-                (
-                    "QuickBooks financial feed URL is configured, but the read-only adapter is not live yet."
-                    if qbo_feed_configured
-                    else "QuickBooks financial snapshots are not connected to this FleetPulse service yet."
-                ),
-                ["FLEETPULSE_QBO_FINANCIAL_FEED_URL"],
+                QBO_FINANCIAL_AUTHORITY,
+                qbo_status,
+                str(qbo_snapshot.get("message") or "QuickBooks financial snapshots are not connected yet."),
+                list(qbo_snapshot.get("missing_config") or []),
+                _parse_datetime(qbo_snapshot.get("last_updated")),
             ),
         ],
     )

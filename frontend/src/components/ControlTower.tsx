@@ -2,29 +2,53 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
+  Activity,
   AlertTriangle,
   Bot,
   CheckCircle2,
   Clock,
   Code2,
+  Database,
   DollarSign,
+  GitBranch,
+  Layers3,
   MapPin,
   RadioTower,
+  TrendingUp,
   Truck,
 } from 'lucide-react'
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import {
   useControlTowerAgents,
   useControlTowerAttention,
   useControlTowerCodex,
   useControlTowerFinancial,
+  useControlTowerSeatKpis,
   useControlTowerTrailerTracking,
   useControlTowerOverview,
   useControlTowerTrailers,
+  useLaneStabilityWindow,
+  useOperatingCostWindow,
 } from '../hooks/useGeotab'
 import type {
   ControlTowerFeedStatus,
+  ControlTowerSeatKpiCoverageResponse,
+  ControlTowerSeatKpiItem,
   ControlTowerSectionSummary,
   ControlTowerStatus,
+  LaneStabilityPayload,
+  OperatingCostSnapshot,
+  OperatingCostWeeklyRow,
 } from '../types/fleet'
 
 type SectionKey = 'attention' | 'trailers' | 'financial' | 'agents' | 'codex'
@@ -66,6 +90,62 @@ function formatTime(value: string | null | undefined) {
 function money(value: number | null | undefined) {
   if (value === null || value === undefined) return 'Awaiting feed'
   return value.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+}
+
+function compactMoney(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Awaiting feed'
+  return Number(value).toLocaleString(undefined, {
+    currency: 'USD',
+    maximumFractionDigits: 1,
+    notation: 'compact',
+    style: 'currency',
+  })
+}
+
+function rate(value: number | null | undefined, suffix = '/mi') {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Awaiting feed'
+  return `$${Number(value).toFixed(2)}${suffix}`
+}
+
+function number(value: number | null | undefined, digits = 0) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Awaiting feed'
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function percent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Awaiting feed'
+  const numeric = Math.abs(Number(value)) <= 1 ? Number(value) * 100 : Number(value)
+  return `${numeric.toFixed(1)}%`
+}
+
+function dateLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  const parsed = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+function finite(value: number | null | undefined) {
+  return Number.isFinite(Number(value)) ? Number(value) : null
+}
+
+function average(values: Array<number | null | undefined>) {
+  const usable = values.map(finite).filter((value): value is number => value !== null)
+  if (!usable.length) return null
+  return usable.reduce((sum, value) => sum + value, 0) / usable.length
+}
+
+function stablePct(value: number | null | undefined) {
+  const numeric = finite(value) ?? 0
+  return Math.abs(numeric) <= 1 ? numeric * 100 : numeric
+}
+
+function weekKey(value: string) {
+  const parsed = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime())) return value
+  const day = parsed.getUTCDay()
+  parsed.setUTCDate(parsed.getUTCDate() - day)
+  return parsed.toISOString().slice(0, 10)
 }
 
 function StatusPill({ status }: { status: ControlTowerStatus }) {
@@ -137,6 +217,363 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
+interface FinancialTrendRow {
+  week_start: string
+  label: string
+  total_cost: number
+  driver_pay: number
+  fuel_cost: number
+  maintenance_cost: number
+  fleet_overhead: number
+  cost_per_mile: number | null
+  miles: number
+}
+
+interface StabilityTrendRow {
+  week_start: string
+  label: string
+  stable_cov_pct: number
+  critical_lanes: number
+  cross_route_lanes: number
+}
+
+function buildFinancialTrendRows(snapshot: OperatingCostSnapshot | null | undefined): FinancialTrendRow[] {
+  return (snapshot?.weekly ?? []).slice(-52).map((row: OperatingCostWeeklyRow) => {
+    const totalCost = finite(row.true_operating_cost) ?? finite(row.known_operating_cost) ?? 0
+    const costPerMile = finite(row.true_cost_per_mile) ?? finite(row.known_cost_per_mile)
+    const fleetOverhead = (
+      Number(row.insurance_cost || 0)
+      + Number(row.employee_cost || 0)
+      + Number(row.rental_trucks_trailers_cost || 0)
+      + Number(row.other_expense_cost || 0)
+    )
+    return {
+      week_start: row.week_start,
+      label: dateLabel(row.week_start),
+      total_cost: totalCost,
+      driver_pay: Number(row.driver_pay || 0),
+      fuel_cost: Number(row.fuel_cost || row.fuel_card_audit_cost || 0),
+      maintenance_cost: Number(row.maintenance_cost || 0),
+      fleet_overhead: Number(fleetOverhead.toFixed(2)),
+      cost_per_mile: costPerMile,
+      miles: Number(row.miles || 0),
+    }
+  })
+}
+
+function buildStabilityTrendRows(payload: LaneStabilityPayload | null | undefined): StabilityTrendRow[] {
+  const buckets = new Map<string, { count: number; stable: number; critical: number; crossRoute: number }>()
+  for (const row of payload?.rows ?? []) {
+    const key = weekKey(row.snapshot_date)
+    const bucket = buckets.get(key) ?? { count: 0, stable: 0, critical: 0, crossRoute: 0 }
+    bucket.count += 1
+    bucket.stable += stablePct(row.stable_cov_pct)
+    bucket.critical = Math.max(bucket.critical, Number(row.critical_lanes || 0))
+    bucket.crossRoute = Math.max(bucket.crossRoute, Number(row.cross_route_lanes || 0))
+    buckets.set(key, bucket)
+  }
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(-52)
+    .map(([key, bucket]) => ({
+      week_start: key,
+      label: dateLabel(key),
+      stable_cov_pct: bucket.count ? Number((bucket.stable / bucket.count).toFixed(1)) : 0,
+      critical_lanes: bucket.critical,
+      cross_route_lanes: bucket.crossRoute,
+    }))
+}
+
+function latestValue<T>(rows: T[]): T | null {
+  return rows.length ? rows[rows.length - 1] : null
+}
+
+function MetricTile({
+  label,
+  value,
+  helper,
+  tone = 'neutral',
+}: {
+  label: string
+  value: string
+  helper?: string
+  tone?: 'neutral' | 'good' | 'warning' | 'bad'
+}) {
+  const toneClass = {
+    neutral: 'text-white light:text-gray-900',
+    good: 'text-emerald-300 light:text-emerald-700',
+    warning: 'text-amber-300 light:text-amber-700',
+    bad: 'text-red-300 light:text-red-700',
+  }[tone]
+
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${toneClass}`}>{value}</div>
+      {helper && <div className="mt-1 text-xs text-gray-500 light:text-gray-600">{helper}</div>}
+    </div>
+  )
+}
+
+function FinancialOps52WeekPanel({
+  operatingCost,
+  laneStability,
+  loading,
+  error,
+}: {
+  operatingCost: OperatingCostSnapshot | null
+  laneStability: LaneStabilityPayload | null
+  loading: boolean
+  error: string | null
+}) {
+  const costRows = useMemo(() => buildFinancialTrendRows(operatingCost), [operatingCost])
+  const stabilityRows = useMemo(() => buildStabilityTrendRows(laneStability), [laneStability])
+  const latestCost = latestValue(costRows)
+  const latestStability = latestValue(stabilityRows)
+  const previousFourCost = costRows.slice(-5, -1)
+  const costAvg4 = average(previousFourCost.map(row => row.total_cost))
+  const cpmAvg4 = average(previousFourCost.map(row => row.cost_per_mile))
+  const costSpike = latestCost && costAvg4 ? latestCost.total_cost > costAvg4 * 1.15 : false
+  const cpmSpike = latestCost?.cost_per_mile && cpmAvg4 ? latestCost.cost_per_mile > cpmAvg4 * 1.1 : false
+  const laneCoverageWarning = Number(laneStability?.summary.today_stable_cov_pct ?? latestStability?.stable_cov_pct ?? 100) < 80
+  const criticalLaneWarning = Number(laneStability?.summary.critical_today ?? latestStability?.critical_lanes ?? 0) > 0
+  const unresolved = operatingCost?.unresolved_sources ?? []
+  const signals = [
+    costSpike ? 'Weekly cost spike over 4-week average' : null,
+    cpmSpike ? 'CPM spike over 4-week average' : null,
+    laneCoverageWarning ? 'Stable coverage below 80%' : null,
+    criticalLaneWarning ? 'Critical lanes need review' : null,
+    unresolved.length ? `Unresolved source: ${unresolved.join(', ')}` : null,
+  ].filter((item): item is string => Boolean(item))
+
+  return (
+    <Panel className="xl:col-span-3">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-white light:text-gray-900">
+            <Activity className="h-5 w-5 text-emerald-300" />
+            Financial Ops Cost + Lane Stability
+          </h3>
+          <p className="mt-1 text-sm text-gray-400 light:text-gray-600">
+            Last 52 weeks · read-only from Geotab, Xcelerator, QBO, AtoB, and lane stability lakehouse
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusPill status={signals.length ? 'warning' : operatingCost ? 'healthy' : 'awaiting_feed'} />
+          <span className="rounded-full border border-gray-700 px-2 py-1 text-[11px] text-gray-400 light:border-gray-200 light:text-gray-600">
+            {operatingCost?.period_start ?? 'pending'} to {operatingCost?.period_end ?? 'pending'}
+          </span>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/30 p-3 text-sm text-red-200 light:bg-red-50 light:text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricTile
+          label="52W Cost"
+          value={compactMoney(operatingCost?.summary.true_operating_cost ?? operatingCost?.summary.known_operating_cost)}
+          helper={operatingCost?.complete_cost_available ? 'Complete cost stack' : 'Known cost stack'}
+          tone={signals.length ? 'warning' : 'neutral'}
+        />
+        <MetricTile
+          label="52W CPM"
+          value={rate(operatingCost?.summary.true_cost_per_mile ?? operatingCost?.summary.known_cost_per_mile)}
+          helper={`${number(operatingCost?.summary.miles)} miles`}
+          tone={cpmSpike ? 'bad' : 'neutral'}
+        />
+        <MetricTile
+          label="Latest Week"
+          value={compactMoney(latestCost?.total_cost)}
+          helper={latestCost?.week_start ? `Week of ${dateLabel(latestCost.week_start)}` : 'Awaiting feed'}
+          tone={costSpike ? 'bad' : 'neutral'}
+        />
+        <MetricTile
+          label="Stable Coverage"
+          value={percent(laneStability?.summary.today_stable_cov_pct ?? latestStability?.stable_cov_pct)}
+          helper={`${number(laneStability?.summary.critical_today ?? latestStability?.critical_lanes)} critical lanes`}
+          tone={laneCoverageWarning || criticalLaneWarning ? 'warning' : 'good'}
+        />
+        <MetricTile
+          label="Cross-Route"
+          value={number(laneStability?.summary.cross_route_today ?? latestStability?.cross_route_lanes)}
+          helper="Lanes with 2+ truck slots"
+          tone={Number(laneStability?.summary.cross_route_today ?? latestStability?.cross_route_lanes ?? 0) > 0 ? 'warning' : 'neutral'}
+        />
+      </div>
+
+      {signals.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-2">
+          {signals.map(signal => (
+            <span key={signal} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-200 light:text-amber-700">
+              {signal}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {loading && !costRows.length ? (
+        <EmptyState label="Loading 52-week financial operating cost and lane stability..." />
+      ) : costRows.length || stabilityRows.length ? (
+        <div className="grid gap-5 2xl:grid-cols-2">
+          <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-3 light:border-gray-200 light:bg-gray-50">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-200 light:text-gray-800">
+              <TrendingUp className="h-4 w-4 text-emerald-300" />
+              Weekly Cost Stack
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={costRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="label" stroke="#9ca3af" tick={{ fontSize: 11 }} minTickGap={28} />
+                <YAxis yAxisId="cost" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Number(value) / 1000}k`} />
+                <YAxis yAxisId="rate" orientation="right" stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Number(value).toFixed(2)}`} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => [
+                    name === 'CPM' ? rate(value) : compactMoney(value),
+                    name,
+                  ]}
+                />
+                <Legend />
+                <Bar yAxisId="cost" dataKey="driver_pay" name="Driver Pay" stackId="cost" fill="#22c55e" />
+                <Bar yAxisId="cost" dataKey="fuel_cost" name="Fuel" stackId="cost" fill="#38bdf8" />
+                <Bar yAxisId="cost" dataKey="maintenance_cost" name="Maintenance" stackId="cost" fill="#f97316" />
+                <Bar yAxisId="cost" dataKey="fleet_overhead" name="Fleet/Ops Overhead" stackId="cost" fill="#a78bfa" />
+                <Line yAxisId="rate" type="monotone" dataKey="cost_per_mile" name="CPM" stroke="#f8fafc" strokeWidth={2.5} dot={false} connectNulls />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-3 light:border-gray-200 light:bg-gray-50">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-200 light:text-gray-800">
+              <GitBranch className="h-4 w-4 text-cyan-300" />
+              Lane Stability Risk
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={stabilityRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="label" stroke="#9ca3af" tick={{ fontSize: 11 }} minTickGap={28} />
+                <YAxis yAxisId="pct" domain={[0, 100]} stroke="#9ca3af" tick={{ fontSize: 11 }} tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                <YAxis yAxisId="lanes" orientation="right" stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number, name: string) => [
+                    name === 'Stable Coverage' ? percent(value) : number(value),
+                    name,
+                  ]}
+                />
+                <Legend />
+                <Bar yAxisId="lanes" dataKey="critical_lanes" name="Critical Lanes" fill="#ef4444" radius={[3, 3, 0, 0]} />
+                <Bar yAxisId="lanes" dataKey="cross_route_lanes" name="Cross-Route Lanes" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                <Line yAxisId="pct" type="monotone" dataKey="stable_cov_pct" name="Stable Coverage" stroke="#22d3ee" strokeWidth={2.5} dot={false} connectNulls />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      ) : (
+        <EmptyState label="No 52-week cost or lane-stability rows returned yet." />
+      )}
+    </Panel>
+  )
+}
+
+function SeatKpiNeedsPanel({
+  coverage,
+  loading,
+  error,
+}: {
+  coverage: ControlTowerSeatKpiCoverageResponse | null
+  loading: boolean
+  error: string | null
+}) {
+  const kpis = coverage?.kpis ?? []
+  const kpisBySeat = useMemo(() => {
+    const map = new Map<string, ControlTowerSeatKpiItem[]>()
+    kpis.forEach(item => {
+      const current = map.get(item.seat_label) ?? []
+      current.push(item)
+      map.set(item.seat_label, current)
+    })
+    return [...map.entries()]
+  }, [kpis])
+
+  return (
+    <Panel className="xl:col-span-3">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-white light:text-gray-900">
+            <Database className="h-5 w-5 text-blue-300" />
+            Seat KPI Coverage Needed
+          </h3>
+          <p className="mt-1 text-sm text-gray-400 light:text-gray-600">
+            Fixed-seat scorecards need live KPI snapshots before FleetPulse can rank seat performance.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-4">
+          <MetricTile label="Coverage" value={loading ? '...' : percent(coverage?.summary.coverage_pct)} />
+          <MetricTile label="Live" value={loading ? '...' : number(coverage?.summary.healthy)} tone="good" />
+          <MetricTile label="Partial" value={loading ? '...' : number(coverage?.summary.warning)} tone="warning" />
+          <MetricTile label="Missing" value={loading ? '...' : number(coverage?.summary.awaiting_feed)} tone="bad" />
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200 light:text-amber-700">
+          Seat KPI coverage endpoint is not available to this session: {error}
+        </div>
+      )}
+
+      {loading && !kpis.length ? (
+        <EmptyState label="Loading seat KPI coverage..." />
+      ) : kpisBySeat.length ? (
+        <div className="grid gap-3 xl:grid-cols-5">
+          {kpisBySeat.map(([seat, items]) => {
+            const missing = items.filter(item => item.status === 'awaiting_feed' || item.status === 'unavailable').length
+            return (
+              <div key={seat} className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-sm font-semibold text-white light:text-gray-900">{seat}</div>
+                  <span className="rounded-full border border-gray-700 px-2 py-0.5 text-[11px] text-gray-400 light:border-gray-200 light:text-gray-600">
+                    {missing} missing
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {items.map(item => (
+                    <div key={item.key} className="rounded-md border border-gray-800 bg-gray-900/60 p-2 light:border-gray-200 light:bg-white">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-gray-100 light:text-gray-900">{item.label}</div>
+                          <div className="mt-1 text-[11px] text-gray-500 light:text-gray-600">{item.target}</div>
+                        </div>
+                        <StatusPill status={item.status} />
+                      </div>
+                      <div className="mt-2 text-[11px] leading-4 text-gray-400 light:text-gray-700">{item.owner_action}</div>
+                      <div className="mt-2 text-[11px] text-gray-500 light:text-gray-600">{item.source_authority}</div>
+                      {item.source_route && (
+                        <div className="mt-1 truncate font-mono text-[10px] text-cyan-300 light:text-cyan-700">{item.source_route}</div>
+                      )}
+                      {item.blocker && (
+                        <div className="mt-1 truncate font-mono text-[10px] text-amber-300 light:text-amber-700">{item.blocker}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <EmptyState label="No seat KPI contracts returned yet." />
+      )}
+    </Panel>
+  )
+}
+
 export default function ControlTower() {
   const [active, setActive] = useState<SectionKey>('trailers')
   const overview = useControlTowerOverview()
@@ -144,6 +581,9 @@ export default function ControlTower() {
   const trailers = useControlTowerTrailers()
   const liveTrailers = useControlTowerTrailerTracking()
   const financial = useControlTowerFinancial()
+  const operatingCost52 = useOperatingCostWindow(364, active === 'financial')
+  const laneStability52 = useLaneStabilityWindow(364, active === 'financial')
+  const seatKpis = useControlTowerSeatKpis(active === 'financial')
   const agents = useControlTowerAgents()
   const codex = useControlTowerCodex()
 
@@ -161,13 +601,23 @@ export default function ControlTower() {
         <div className="flex items-center gap-3">
           <RadioTower className="h-6 w-6 text-cyan-300" />
           <div>
-            <h2 className="text-xl font-bold text-white light:text-gray-900">Control Tower</h2>
-            <p className="text-sm text-gray-400 light:text-gray-600">Read-only operating surfaces restored from the original Fleet Pulse build</p>
+            <h2 className="text-xl font-bold text-white light:text-gray-900">K1 Operations Hub</h2>
+            <p className="text-sm text-gray-400 light:text-gray-600">FleetPulse replacement shell for K1 Command Center front-end surfaces</p>
           </div>
         </div>
         <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200 light:text-cyan-700">
           Projection mode: read-only
         </span>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-cyan-500/25 bg-cyan-500/10 p-4 text-sm text-cyan-100 light:bg-cyan-50 light:text-cyan-900 sm:flex-row sm:items-start">
+        <Layers3 className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <p className="font-semibold">Command Center front-end replacement is enabled as a read-only migration path.</p>
+          <p className="mt-1 text-cyan-100/80 light:text-cyan-800">
+            FleetPulse displays operating status only. AP/QBO writes, FinanceOps lineage, Xcelerator dispatch state, and Geotab telemetry remain in their owning services.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -287,7 +737,7 @@ export default function ControlTower() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <Panel className="xl:col-span-2">
             <h3 className="mb-3 text-lg font-semibold text-white light:text-gray-900">Financial Ops</h3>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="rounded-lg bg-gray-800/50 p-4 light:bg-gray-50">
                 <p className="text-xs text-gray-400 light:text-gray-600">AP Pending</p>
                 <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.accounts_payable.pending_amount)}</p>
@@ -302,6 +752,11 @@ export default function ControlTower() {
                 <p className="text-xs text-gray-400 light:text-gray-600">Net Weekly</p>
                 <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.cash_flow.net_weekly)}</p>
                 <p className="mt-1 text-xs text-gray-500">{financial.data?.source_authority || 'K1 Group LLC'}</p>
+              </div>
+              <div className="rounded-lg bg-gray-800/50 p-4 light:bg-gray-50">
+                <p className="text-xs text-gray-400 light:text-gray-600">K1L Expenses</p>
+                <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{money(financial.data?.cash_flow.k1l_expense_total)}</p>
+                <p className="mt-1 text-xs text-gray-500">QBO cost evidence</p>
               </div>
             </div>
             <h4 className="mt-5 mb-2 text-sm font-semibold text-gray-200 light:text-gray-800">AR Aging</h4>
@@ -319,6 +774,17 @@ export default function ControlTower() {
             <h3 className="mb-3 text-lg font-semibold text-white light:text-gray-900">Feeds</h3>
             <FeedList feeds={financial.data?.feeds || []} />
           </Panel>
+          <FinancialOps52WeekPanel
+            operatingCost={operatingCost52.data}
+            laneStability={laneStability52.data}
+            loading={operatingCost52.loading || laneStability52.loading}
+            error={operatingCost52.error || laneStability52.error}
+          />
+          <SeatKpiNeedsPanel
+            coverage={seatKpis.data}
+            loading={seatKpis.loading}
+            error={seatKpis.error}
+          />
         </motion.div>
       )}
 

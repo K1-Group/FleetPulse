@@ -472,6 +472,40 @@ class ControlTowerFinancialResponse(BaseModel):
     feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
 
 
+class ControlTowerSeatKpiItem(BaseModel):
+    key: str
+    label: str
+    seat_id: str
+    seat_label: str
+    manager_seat_id: Optional[str] = None
+    target: str
+    source_authority: str
+    source_route: Optional[str] = None
+    status: ControlTowerStatus = ControlTowerStatus.AWAITING_FEED
+    blocker: Optional[str] = None
+    required_config: list[str] = Field(default_factory=list)
+    owner_action: str
+
+
+class ControlTowerSeatKpiCoverageSummary(BaseModel):
+    total: int = 0
+    healthy: int = 0
+    warning: int = 0
+    awaiting_feed: int = 0
+    unavailable: int = 0
+    coverage_pct: float = 0
+    seats_with_missing: int = 0
+
+
+class ControlTowerSeatKpiCoverageResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    source_authority: str = "FleetPulse KPI provider + K1 fixed-seat operating system"
+    summary: ControlTowerSeatKpiCoverageSummary = Field(default_factory=ControlTowerSeatKpiCoverageSummary)
+    kpis: list[ControlTowerSeatKpiItem] = Field(default_factory=list)
+    feeds: list[ControlTowerFeedStatus] = Field(default_factory=list)
+
+
 class ControlTowerAgentFlow(BaseModel):
     name: str
     status: ControlTowerStatus

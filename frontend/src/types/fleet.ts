@@ -353,6 +353,142 @@ export interface ControlTowerFinancialResponse {
   feeds: ControlTowerFeedStatus[]
 }
 
+export interface ControlTowerSeatKpiItem {
+  key: string
+  label: string
+  seat_id: string
+  seat_label: string
+  manager_seat_id: string | null
+  target: string
+  source_authority: string
+  source_route: string | null
+  status: ControlTowerStatus
+  blocker: string | null
+  required_config: string[]
+  owner_action: string
+}
+
+export interface ControlTowerSeatKpiCoverageSummary {
+  total: number
+  healthy: number
+  warning: number
+  awaiting_feed: number
+  unavailable: number
+  coverage_pct: number
+  seats_with_missing: number
+}
+
+export interface ControlTowerSeatKpiCoverageResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  summary: ControlTowerSeatKpiCoverageSummary
+  kpis: ControlTowerSeatKpiItem[]
+  feeds: ControlTowerFeedStatus[]
+}
+
+export interface OperatingCostSource {
+  status: string
+  source_authority?: string
+  message?: string
+  row_count?: number | null
+}
+
+export interface OperatingCostWeeklyRow {
+  week_start: string
+  week_end: string
+  period_start: string
+  period_end: string
+  miles: number
+  drive_hours: number
+  idle_hours: number
+  operating_hours: number
+  trips: number
+  fuel_cost: number
+  fuel_card_audit_cost: number
+  driver_pay: number
+  maintenance_cost: number
+  insurance_cost: number
+  posted_insurance_cost: number
+  employee_cost: number
+  rental_trucks_trailers_cost: number
+  other_expense_cost: number
+  known_operating_cost: number
+  true_operating_cost: number | null
+  known_cost_per_mile: number | null
+  true_cost_per_mile: number | null
+  known_cost_per_operating_hour: number | null
+  true_cost_per_operating_hour: number | null
+}
+
+export interface OperatingCostSummary {
+  miles: number
+  drive_hours: number
+  idle_hours: number
+  operating_hours: number
+  trips: number
+  fuel_cost: number
+  fuel_card_audit_cost: number
+  driver_pay: number
+  maintenance_cost: number
+  insurance_cost: number
+  posted_insurance_cost: number
+  insurance_cost_per_mile: number | null
+  employee_cost: number
+  rental_trucks_trailers_cost: number
+  other_expense_cost: number
+  known_operating_cost: number
+  true_operating_cost: number | null
+  known_cost_per_mile: number | null
+  true_cost_per_mile: number | null
+  known_cost_per_operating_hour: number | null
+  true_cost_per_operating_hour: number | null
+}
+
+export interface OperatingCostSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: 'read_only'
+  grain: 'weekly'
+  complete_cost_available: boolean
+  unresolved_sources: string[]
+  sources: Record<string, OperatingCostSource>
+  summary: OperatingCostSummary
+  weekly: OperatingCostWeeklyRow[]
+  row_counts: Record<string, number>
+}
+
+export interface LaneStabilityRow {
+  snapshot_date: string
+  stable_cov_pct: number
+  critical_lanes: number
+  cross_route_lanes: number
+  total_orders: number
+  scored_lanes: number
+  stable_lanes: number
+  total_revenue: number
+  delta_cov_pp: number
+}
+
+export interface LaneStabilitySummary {
+  today_stable_cov_pct: number
+  wow_delta_pp: number
+  critical_today: number
+  cross_route_today: number
+  revenue_wtd: number
+}
+
+export interface LaneStabilityPayload {
+  window: 42 | 91 | 182 | 364
+  generated_at: string
+  rows: LaneStabilityRow[]
+  summary: LaneStabilitySummary
+  source_authority?: string
+  projection_mode?: 'read_only'
+}
+
 export interface ControlTowerAgentFlow {
   name: string
   status: ControlTowerStatus

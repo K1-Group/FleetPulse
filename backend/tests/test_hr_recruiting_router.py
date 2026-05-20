@@ -119,6 +119,43 @@ def test_hr_recruiting_worklist_endpoint_returns_read_only_dataset(monkeypatch) 
     assert "ssn" not in str(payload).lower()
 
 
+def test_hr_recruiting_status_exposes_state_path_readiness(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HR_RECRUITING_STATE_PATH", str(tmp_path / "hr-recruiting.json"))
+    response = _client(monkeypatch).get("/api/hr-recruiting/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    assert payload["state_path_configured"] is True
+    assert "HR_RECRUITING_IMPORT_API_KEY" not in response.text
+
+
+def test_hr_recruiting_import_endpoint_is_key_protected(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HR_RECRUITING_STATE_PATH", str(tmp_path / "hr-recruiting.json"))
+    monkeypatch.setenv("HR_RECRUITING_IMPORT_API_KEY", "expected")
+    response = _client(monkeypatch).post(
+        "/api/hr-recruiting/import",
+        json={
+            "filename": "hr.csv",
+            "content": "source_email_id,applicant,worklist,status,first_assigned_at\nmsg-1,Private Applicant,Recruiter Review,Assigned,2026-05-14",
+        },
+    )
+
+    assert response.status_code == 401
+
+    ok = _client(monkeypatch).post(
+        "/api/hr-recruiting/import",
+        headers={"X-FleetPulse-HR-Key": "expected"},
+        json={
+            "filename": "hr.csv",
+            "content": "source_email_id,applicant,worklist,status,first_assigned_at\nmsg-1,Private Applicant,Recruiter Review,Assigned,2026-05-14",
+        },
+    )
+
+    assert ok.status_code == 200
+    assert ok.json()["row_count"] == 1
+
+
 def test_hr_recruiting_powerbi_tables_include_export_metadata(monkeypatch) -> None:
     client = _client(monkeypatch)
 

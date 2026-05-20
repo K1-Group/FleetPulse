@@ -31,6 +31,7 @@ if "mygeotab" not in sys.modules:
 
 from _cache import clear_cached_prefix  # noqa: E402
 from routers import fuel  # noqa: E402
+from services import k1l_operating_kpi_service as k1l_service  # noqa: E402
 
 
 def _client() -> TestClient:
@@ -246,6 +247,7 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
         """
         {
           "asOfDate": "2026-05-14",
+          "source": "QBO K1 Logistics P&L + Xcelerator driver pay + AtoB fuel + Geotab miles + Xcelerator CEO Power BI revenue snapshot",
           "months": [
             {
               "month": "2026-01",
@@ -254,7 +256,8 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
               "fuel": 151524.27,
               "fleetMaintenance": 55734.77,
               "payroll": 89232.46,
-              "otherOps": 101258.57
+              "otherOps": 101258.57,
+              "revenue": 1200000
             }
           ]
         }
@@ -270,7 +273,177 @@ def test_k1l_operating_kpi_endpoint_returns_configured_final_cpm(monkeypatch):
     assert payload["entity"] == "K1 Logistics Inc"
     assert payload["summary"]["total_cost"] == 743858.57
     assert payload["summary"]["cost_per_mile"] == 2.365
+    assert payload["summary"]["revenue"] == 1200000.0
+    assert payload["summary"]["revenue_per_mile"] == 3.815
+    assert payload["summary"]["profit_per_mile"] == 1.45
+    assert payload["monthly"][0]["gross_profit"] == 456141.43
     assert payload["monthly"][0]["added_p_and_l_ops"] == 190491.03
+    assert payload["revenue_source"] == "monthly_json"
+
+
+def test_k1l_operating_kpi_prefers_xcelerator_ceo_powerbi_revenue(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN", "test-token")
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "source": "QBO K1 Logistics P&L + Xcelerator driver pay + AtoB fuel + Geotab miles + Xcelerator CEO Power BI revenue snapshot",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57
+            }
+          ]
+        }
+        """,
+    )
+
+    def fake_execute_dax_query(config, query):
+        assert "xcelerator_review_orders" in query
+        assert "MonthStart" in query
+        return [
+            {
+                "[MonthStart]": "2026-01-01T00:00:00",
+                "xcelerator_review_orders[delivery_center]": "K1 Logistics Inc",
+                "[GrandTotal]": 1200000,
+                "[Orders]": 7,
+            },
+            {
+                "[MonthStart]": "2026-01-01T00:00:00",
+                "xcelerator_review_orders[delivery_center]": "K1 Group LLC",
+                "[GrandTotal]": 999999,
+                "[Orders]": 3,
+            },
+        ]
+
+    monkeypatch.setattr(k1l_service, "execute_dax_query", fake_execute_dax_query)
+
+    response = _client().get("/api/fuel/k1l-operating-kpi?date=2026-05-14")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revenue_source"] == "xcelerator_ceo_powerbi"
+    assert payload["revenue_source_status"]["status"] == "healthy"
+    assert payload["revenue_source_status"]["row_count"] == 7
+    assert payload["summary"]["revenue"] == 1200000.0
+    assert payload["summary"]["revenue_per_mile"] == 3.815
+    assert payload["summary"]["profit_per_mile"] == 1.45
+
+
+def test_k1l_operating_kpi_uses_fabric_warehouse_sql_revenue(monkeypatch):
+    monkeypatch.setenv("K1L_OPERATING_COST_REVENUE_SOURCE", k1l_service.WAREHOUSE_SQL_REVENUE_SOURCE)
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_SERVER", "warehouse.example.com")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_DATABASE", "K1-BI-WH")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_TENANT_ID", "tenant")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_ID", "client")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_SECRET", "secret")
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "source": "QBO K1 Logistics P&L + Xcelerator driver pay + AtoB fuel + Geotab miles + Xcelerator CEO Power BI revenue snapshot",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57
+            }
+          ]
+        }
+        """,
+    )
+
+    queries = []
+
+    def fake_execute_sql_query(config, query):
+        queries.append(query)
+        assert config.server == "warehouse.example.com"
+        if "sys.objects" in query and "sys.columns" in query:
+            return [
+                {
+                    "table_schema": "gold",
+                    "table_name": "xcelerator_review_orders",
+                    "object_type": "USER_TABLE",
+                }
+            ]
+        assert "[gold].[xcelerator_review_orders]" in query
+        assert "2026-01-01" in query
+        return [
+            {
+                "month_start": "2026-01-01",
+                "delivery_center": "K1 Logistics Inc",
+                "revenue": 1200000,
+                "orders": 7,
+            },
+            {
+                "month_start": "2026-01-01",
+                "delivery_center": "K1 Group LLC",
+                "revenue": 999999,
+                "orders": 3,
+            },
+        ]
+
+    monkeypatch.setattr(k1l_service, "execute_sql_query", fake_execute_sql_query)
+
+    response = _client().get("/api/fuel/k1l-operating-kpi?date=2026-05-14")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revenue_source"] == k1l_service.WAREHOUSE_SQL_REVENUE_SOURCE
+    assert payload["revenue_source_status"]["status"] == "healthy"
+    assert payload["revenue_source_status"]["row_count"] == 7
+    assert payload["revenue_source_status"]["table"] == "gold.xcelerator_review_orders"
+    assert "Fabric Warehouse SQL revenue" in payload["source"]
+    assert "CEO Power BI revenue snapshot" not in payload["source"]
+    assert payload["summary"]["revenue"] == 1200000.0
+    assert payload["summary"]["revenue_per_mile"] == 3.815
+    assert payload["summary"]["profit_per_mile"] == 1.45
+    assert len(queries) == 2
+
+
+def test_k1l_operating_kpi_falls_back_to_monthly_json_when_warehouse_unavailable(monkeypatch):
+    monkeypatch.setenv("K1L_OPERATING_COST_REVENUE_SOURCE", k1l_service.WAREHOUSE_SQL_REVENUE_SOURCE)
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("FLEETPULSE_GRAPH_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57,
+              "revenue": 1200000
+            }
+          ]
+        }
+        """,
+    )
+
+    response = _client().get("/api/fuel/k1l-operating-kpi?date=2026-05-14")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["revenue_source"] == "monthly_json"
+    assert payload["revenue_source_status"]["status"] == "not_configured"
+    assert payload["summary"]["revenue"] == 1200000.0
 
 
 def test_xcelerator_review_orders_import_endpoint_summarizes_driver_pay(monkeypatch, tmp_path):

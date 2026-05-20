@@ -20,6 +20,146 @@ from services.qbo_expense_import_service import QboExpenseStateStore, import_qbo
 from integrations.xcelerator.review_orders_feed import ReviewOrdersFeedConfig  # noqa: E402
 
 
+def test_geotab_weekly_metrics_uses_bulk_dated_rows(monkeypatch):
+    calls = []
+
+    async def bulk_vehicle_kpis(start, end, *, top=5000):
+        calls.append((start, end, top))
+        return [
+            {
+                "LocalDate": "2026-05-04",
+                "Distance_Km": 160.934,
+                "TotalDriveTime_Hours": 5,
+                "TotalIdleTime_Hours": 1,
+                "TotalTrips": 2,
+            },
+            {
+                "LocalDate": "2026-05-11",
+                "Distance_Km": 80.467,
+                "TotalDriveTime_Hours": 2,
+                "TotalIdleTime_Hours": 0.5,
+                "TotalTrips": 1,
+            },
+        ]
+
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", bulk_vehicle_kpis)
+
+    metrics, source = asyncio.run(
+        service._geotab_weekly_metrics(
+            [
+                (date(2026, 5, 4), date(2026, 5, 10)),
+                (date(2026, 5, 11), date(2026, 5, 17)),
+            ]
+        )
+    )
+
+    assert len(calls) == 1
+    assert calls[0][2] == 50000
+    assert source["status"] == "healthy"
+    assert source["row_count"] == 2
+    assert metrics["2026-05-04"]["miles"] == 100.0
+    assert metrics["2026-05-11"]["operating_hours"] == 2.5
+
+
+def test_geotab_weekly_metrics_prefers_fabric_warehouse_projection(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_OPERATING_COST_GEOTAB_BULK", "true")
+    calls = []
+
+    async def fail_vehicle_kpis(start, end, *, top=5000):
+        raise AssertionError("OData fallback should not be used when warehouse rows exist")
+
+    def fake_execute_sql_query(config, query):
+        calls.append(query)
+        if "sys.columns" in query:
+            return [
+                {"column_name": "LocalDate"},
+                {"column_name": "Distance_Miles"},
+                {"column_name": "TotalDriveTime_Hours"},
+                {"column_name": "TotalIdleTime_Hours"},
+                {"column_name": "Trip_Count"},
+            ]
+        if "sys.objects" in query:
+            return [{"table_schema": "dbo", "table_name": "ntta_geotab_daily_report"}]
+        assert "[dbo].[ntta_geotab_daily_report]" in query
+        return [
+            {
+                "week_start": date(2026, 5, 4),
+                "miles": 100,
+                "drive_hours": 5,
+                "idle_hours": 1,
+                "trips": 4,
+                "source_rows": 2,
+            }
+        ]
+
+    monkeypatch.setattr(service, "_fetch_vehicle_kpi_rows", fail_vehicle_kpis)
+    monkeypatch.setattr(service, "execute_sql_query", fake_execute_sql_query)
+
+    metrics, source = asyncio.run(
+        service._geotab_weekly_metrics(
+            [(date(2026, 5, 4), date(2026, 5, 10))],
+            warehouse_config=service.FabricWarehouseSqlConfig(
+                server="server",
+                database="database",
+                tenant_id="tenant",
+                client_id="client",
+                client_secret="secret",
+            ),
+        )
+    )
+
+    assert len(calls) == 3
+    assert source["status"] == "healthy"
+    assert source["path"] == "fabric_warehouse_sql"
+    assert source["table"] == "dbo.ntta_geotab_daily_report"
+    assert source["row_count"] == 2
+    assert metrics["2026-05-04"]["miles"] == 100
+    assert metrics["2026-05-04"]["operating_hours"] == 6
+
+
+def test_xcelerator_driver_pay_prefers_fabric_warehouse_sql(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_TENANT_ID", "tenant")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_ID", "client")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", str(tmp_path / "slow-state.json"))
+
+    def fail_imported_driver_pay(start, end):
+        raise AssertionError("Manual ReviewOrders state should not be read when Warehouse SQL is healthy")
+
+    def fake_execute_sql_query(config, query):
+        if "FROM sys.objects" in query:
+            return [{"table_schema": "dbo", "table_name": "xcelerator_review_orders"}]
+        if "FROM sys.columns" in query:
+            return [
+                {"column_name": "pickup_target_from"},
+                {"column_name": "driver_pay_amount"},
+                {"column_name": "delivery_center"},
+            ]
+        assert "LOWER(delivery_center) LIKE '%k1 logistics%'" in query
+        return [
+            {
+                "week_start": "2026-05-04",
+                "driver_pay": 250.0,
+                "row_count": 2,
+                "date_min": "2026-05-04",
+                "date_max": "2026-05-05",
+            }
+        ]
+
+    monkeypatch.setattr(service, "get_xcelerator_review_orders_weekly_driver_pay", fail_imported_driver_pay)
+    monkeypatch.setattr(service, "execute_sql_query", fake_execute_sql_query)
+
+    weekly, source = service._xcelerator_driver_pay_by_week(
+        date(2026, 5, 4),
+        date(2026, 5, 5),
+    )
+
+    assert weekly == {"2026-05-04": 250.0}
+    assert source["status"] == "healthy"
+    assert source["path"] == "fabric_warehouse_sql"
+    assert source["table"] == "dbo.xcelerator_review_orders"
+
+
 def test_geotab_weekly_metrics_retries_transient_fetch_errors(monkeypatch):
     calls = {"count": 0}
 
@@ -103,7 +243,9 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
                 "2026-05-05,Repairs and Maintenance,75.00",
                 "2026-05-05,Carrier & Factoring Company,900.00",
                 "2026-05-05,Contractors,100.00",
-                "2026-05-05,Fuel Expense,999.00",
+                "2026-05-05,Fuel Expense,125.00",
+                "2026-05-05,Payroll expenses,80.00",
+                "2026-05-05,Trucks/Trailers Lease,40.00",
             ]
         ),
         encoding="utf-8",
@@ -121,13 +263,19 @@ def test_operating_cost_snapshot_joins_true_source_components(monkeypatch, tmp_p
     )
 
     assert snapshot["complete_cost_available"] is True
-    assert snapshot["summary"]["fuel_cost"] == 100.0
+    assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
+    assert snapshot["summary"]["fuel_cost"] == 125.0
     assert snapshot["summary"]["driver_pay"] == 250.0
-    assert snapshot["summary"]["insurance_cost"] == 50.0
-    assert snapshot["summary"]["other_expense_cost"] == 75.0
-    assert snapshot["summary"]["true_operating_cost"] == 475.0
-    assert snapshot["summary"]["true_cost_per_mile"] == 4.75
-    assert snapshot["summary"]["true_cost_per_drive_hour"] == 95.0
+    assert snapshot["summary"]["maintenance_cost"] == 75.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
+    assert snapshot["summary"]["insurance_cost_per_mile"] == 0.27
+    assert snapshot["summary"]["employee_cost"] == 80.0
+    assert snapshot["summary"]["rental_trucks_trailers_cost"] == 40.0
+    assert snapshot["summary"]["other_expense_cost"] == 195.0
+    assert snapshot["summary"]["true_operating_cost"] == 597.0
+    assert snapshot["summary"]["true_cost_per_mile"] == 5.97
+    assert snapshot["summary"]["true_cost_per_drive_hour"] == 119.4
 
 
 def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tmp_path):
@@ -158,7 +306,6 @@ def test_operating_cost_snapshot_marks_missing_qbo_as_incomplete(monkeypatch, tm
     )
 
     assert snapshot["complete_cost_available"] is False
-    assert "fuel" in snapshot["unresolved_sources"]
     assert "driver_pay" in snapshot["unresolved_sources"]
     assert "qbo_expenses" in snapshot["unresolved_sources"]
     assert snapshot["summary"]["true_cost_per_mile"] is None
@@ -247,7 +394,10 @@ def test_operating_cost_snapshot_marks_partial_driver_pay_as_incomplete(monkeypa
     assert snapshot["complete_cost_available"] is False
     assert snapshot["sources"]["driver_pay"]["status"] == "partial"
     assert "driver_pay" in snapshot["unresolved_sources"]
-    assert snapshot["summary"]["known_operating_cost"] == 400.0
+    assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
+    assert snapshot["summary"]["known_operating_cost"] == 277.0
     assert snapshot["summary"]["true_cost_per_mile"] is None
 
 
@@ -316,6 +466,9 @@ def test_operating_cost_snapshot_reads_imported_qbo_expense_state(monkeypatch, t
 
     assert snapshot["sources"]["qbo_expenses"]["status"] == "healthy"
     assert snapshot["sources"]["qbo_expenses"]["row_count"] == 3
-    assert snapshot["summary"]["insurance_cost"] == 50.0
+    assert snapshot["summary"]["posted_insurance_cost"] == 50.0
+    assert snapshot["summary"]["insurance_cost"] == 27.0
+    assert snapshot["summary"]["maintenance_cost"] == 75.0
+    assert snapshot["summary"]["fuel_cost"] == 999.0
     assert snapshot["summary"]["other_expense_cost"] == 75.0
-    assert snapshot["summary"]["known_operating_cost"] == 225.0
+    assert snapshot["summary"]["known_operating_cost"] == 1101.0

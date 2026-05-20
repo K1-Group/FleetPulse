@@ -182,12 +182,77 @@ as the short-term bridge for that file-backed source, then repoint the semantic
 model to the shared `atob` folder so FleetPulse, SharePoint, and Power BI read
 from the same governed location.
 
+#### Lane Stability Lakehouse API
+```env
+LAKEHOUSE_SQL_SERVER=
+LAKEHOUSE_SQL_DB=
+LAKEHOUSE_SP_TENANT=
+LAKEHOUSE_SP_CLIENT_ID=
+LAKEHOUSE_SP_CLIENT_SECRET=
+LAKEHOUSE_SQL_TIMEOUT_SECONDS=15
+LAKEHOUSE_LANE_STABILITY_TABLE=dbo.lane_stability_daily_kpi
+LAKEHOUSE_LANE_STABILITY_SERVICE_COLUMN=
+```
+
+The Stability tab reads `GET /api/lane-stability?window=42|91|182|364`.
+FleetPulse queries Fabric table `dbo.lane_stability_daily_kpi` as a read-only
+analytics projection, caches responses for 15 minutes, and keeps Power BI as a
+read-only reporting layer. Store production values as Key Vault references in
+App Service settings; do not commit service principal secrets. Set
+`LAKEHOUSE_LANE_STABILITY_SERVICE_COLUMN` only if the lakehouse table exposes a
+service column that should back the optional `service` query filter. If the
+`LAKEHOUSE_*` connection settings are omitted, the API reuses the existing
+`FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*` / `FLEETPULSE_GRAPH_*` read-only Fabric
+credentials.
+
+#### K1 Group Consolidated P&L
+The Finance tab combines existing read-only sources:
+
+- `GET /api/fuel/entity-margin` for Xcelerator/Fabric sales and driver pay
+  across K1 Logistics Inc and K1 Group LLC delivery centers.
+- `GET /api/fuel/operating-cost` through the entity-margin service for K1
+  Logistics QuickBooks maintenance, fuel, insurance, employee, rental truck,
+  and trailer costs.
+- `GET /api/control-tower/financial` for QuickBooks AP/AR pressure.
+
+No separate write credentials are required. The dashboard reads the same
+Xcelerator/Fabric and QBO app settings used by Control Tower and Fuel analytics.
+The Control Tower Financial tab also reads `GET /api/fuel/operating-cost?days=364`
+and `GET /api/lane-stability?window=364` to show a 52-week financial operating
+cost trend beside lane-stability risk signals.
+
+Scheduled-feed wiring is available for the first missing financial-ops blockers:
+
+```env
+FLEETPULSE_FINANCIAL_FEED_ENABLED=true
+FLEETPULSE_XCELERATOR_EVENT_FEED_URL=
+FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY=
+FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY_HEADER=X-FleetPulse-Xcelerator-Key
+FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
+FLEETPULSE_XCELERATOR_EVENT_IMPORT_API_KEY=
+FLEETPULSE_XCELERATOR_EVENT_RETAINED_RECORDS=50000
+FLEETPULSE_QBO_FINANCIAL_FEED_URL=
+FLEETPULSE_QBO_FINANCIAL_FEED_PATH=
+FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
+FLEETPULSE_QBO_FINANCIAL_IMPORT_API_KEY=
+```
+
+Use `POST /api/fuel/qbo/financial/import` for a daily QBO AP/AR/K1L expense
+snapshot and `POST /api/control-tower/xcelerator/events/import` for daily
+Xcelerator exception/financial events. Both routes are API-key protected when
+the matching `*_IMPORT_API_KEY` value is configured, and both store read-only
+evidence files only. If Zapier or Power Automate writes directly to blob/file
+storage instead, point `FLEETPULSE_QBO_FINANCIAL_FEED_URL` or
+`FLEETPULSE_XCELERATOR_EVENT_FEED_URL` at that governed JSON feed.
+
 #### Operating Cost Per Mile / Hour
 ```env
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
 FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
+FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES=5000000
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
+FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_QBO_EXPENSE_STATE_PATH=/home/data/fleetpulse_qbo_expenses.json
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
 FLEETPULSE_QBO_EXPENSE_FEED_API_KEY=
@@ -195,9 +260,11 @@ FLEETPULSE_QBO_EXPENSE_FEED_API_KEY_HEADER=X-FleetPulse-QBO-Key
 FLEETPULSE_QBO_EXPENSE_IMPORT_API_KEY=
 FLEETPULSE_QBO_EXPENSE_RETAINED_RECORDS=50000
 FLEETPULSE_QBO_INSURANCE_ACCOUNT_PATTERNS=insurance
-FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts receivable,atob,carrier,cogs,contractor,cost of goods sold,diesel,driver pay,driver settlement,factoring,freight in,fuel,income,payroll,revenue,sales,wages
+FLEETPULSE_K1L_INSURANCE_COST_PER_MILE=0.27
+FLEETPULSE_QBO_EXCLUDED_ACCOUNT_PATTERNS=accounts payable,accounts receivable,brokerage commission,carrier,commissions & fees,contractor,driver pay,driver settlement,factoring,income,revenue,sales
 FLEETPULSE_OPERATING_COST_GEOTAB_CONCURRENCY=4
 FLEETPULSE_OPERATING_COST_GEOTAB_RETRIES=2
+K1L_OPERATING_COST_REVENUE_SOURCE=xcelerator_ceo_powerbi
 FLEETPULSE_XCELERATOR_CEO_POWERBI_WORKSPACE_ID=b801f80d-5303-4121-abd1-1163639ef58b
 FLEETPULSE_XCELERATOR_CEO_POWERBI_REPORT_ID=6dbafd45-ff63-4bb1-a790-87d528efdf74
 FLEETPULSE_XCELERATOR_CEO_POWERBI_SEMANTIC_MODEL_ID=891e7334-af84-4889-ba7f-ae89864777c0
@@ -207,11 +274,28 @@ FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_ID=
 FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_SECRET=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_URL=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
+FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=false
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
 cost-per-mile and cost-per-hour rows. The calculation uses Geotab miles/hours,
-AtoB fuel/DEF cost, Xcelerator driver pay, and QBO insurance/other expenses.
+Xcelerator driver pay, K1 Logistics QuickBooks maintenance/fuel/employee/rental
+costs, and the configured K1L insurance allocation rate. `FLEETPULSE_K1L_INSURANCE_COST_PER_MILE`
+defaults to `0.27`, so weekly CPM carries insurance by miles instead of waiting
+for one lumpy posted insurance bill date. AtoB remains available as fuel-card
+audit evidence but is not double-counted when QBO fuel rows are live. Rental and
+lease matching includes Ryder, Bruckner, Idealease/Idlease, XTRA Lease, and
+Camarena rows when those names appear on the vendor/memo/description fields.
+FleetPulse prefers the live Fabric Warehouse SQL `xcelerator_review_orders`
+projection for Xcelerator driver pay and entity margin when configured. Set
+`FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` only for a controlled
+manual ReviewOrders export fallback.
+Local ReviewOrders evidence files are cached by file modified time and size, so
+finance and lane panels can reuse the same imported rows without blocking each
+other on repeated state-file reads. Very large local state files are blocked
+from synchronous dashboard reads by
+`FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES` so stale audit files
+cannot freeze live panels.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data
@@ -221,15 +305,20 @@ Downloaded Xcelerator ReviewOrders CSV/JSON exports can be loaded with
 read-only driver-pay evidence and marks the source partial when the imported
 date span does not cover the requested reporting window.
 Downloaded QBO transaction-detail expense CSV/JSON exports can be loaded with
-`POST /api/fuel/qbo/expenses/import`; FleetPulse stores insurance and other
-operating expenses as read-only QBO evidence, excludes known fuel/driver-pay/COGS
-accounts to prevent double counting, and uses import coverage dates when
+`POST /api/fuel/qbo/expenses/import`; FleetPulse stores K1 Logistics operating
+expenses as read-only QBO evidence, excludes Xcelerator-owned driver pay and
+revenue accounts to prevent double counting, and uses import coverage dates when
 provided to avoid certifying partial finance feeds as complete.
+
+`GET /api/fuel/k1l-operating-kpi` returns the K1 Logistics Inc monthly CPM
+snapshot and exposes `revenue_per_mile` as Revenue / Mile in the dashboard. The
+cost denominator remains Geotab miles, while the revenue numerator comes from
+the configured read-only Xcelerator revenue projection.
 
 `GET /api/fuel/entity-margin?start=YYYY-MM-DD&end=YYYY-MM-DD` adds the dashboard
 split requested for K1 operations review. K1 Logistics Inc CPM uses only orders
 assigned to the `K1 Logistics Inc` delivery center for revenue and driver pay,
-with Geotab miles, AtoB fuel, and optional QBO overhead applied to the K1L cost
+with Geotab miles and K1 Logistics QBO cost buckets applied to the K1L cost
 stack. K1 Group LLC is shown as gross-margin tracking only with no CPM field.
 The dashboard policy targets are 72% gross margin for K1 Logistics Inc and 20%
 for K1 Group LLC. The preferred Xcelerator source is the `Xcelerator CEO
@@ -250,6 +339,42 @@ the nearest scoped Geotab tractor within `FLEETPULSE_TRAILER_MATCH_RADIUS_METERS
 is shown as a candidate tractor/driver, not as an authoritative dispatch
 assignment. Xcelerator should remain the final dispatch/load owner when that
 assignment feed is connected.
+
+#### K1 Operations Hub Migration
+
+FleetPulse is the planned replacement shell for legacy K1 Command Center
+front-end surfaces. This is a read-only UI migration: FleetPulse may display AP
+lifecycle, FinanceOps health, QBO status, Xcelerator reference, and Power BI
+cards, but those backend services remain separate owners. See
+[`docs/architecture/k1-operations-hub-migration.md`](docs/architecture/k1-operations-hub-migration.md)
+for the replacement matrix and production gates.
+Tower > Financial includes a 52-week action view for K1 Logistics operating cost,
+CPM spikes, lane stable coverage, critical lanes, and cross-route lanes. The
+same panel lists seat-KPI coverage still needed for the fixed-seat operating
+system, with FleetPulse remaining the KPI provider and the workforce ledger
+remaining the seat authority.
+`GET /api/control-tower/seat-kpis` backs the missing-KPI surface. It maps each
+manager-seat KPI to its source authority, current FleetPulse route if one
+exists, readiness status, missing app setting names, and the next owner action.
+
+#### HR Recruiting Feed Wiring
+```env
+HR_WORKLIST_SLA_HOURS=24,48,72
+HR_RECRUITING_SOURCE=zapier_table
+HR_RECRUITING_SNAPSHOT_URL=
+HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
+HR_RECRUITING_IMPORT_API_KEY=
+SHAREPOINT_HR_REPORTING_LOG_URL=
+```
+
+`POST /api/hr-recruiting/import` replaces the scheduled HR recruiting snapshot
+with approved Zapier/Outlook evidence. FleetPulse stores the source rows as a
+read-only state file, then `GET /api/hr-recruiting/worklist` and the Power BI
+HR exports suppress applicant PII from every dashboard payload. Zapier or Power
+Automate should run this daily from the approved TenStreet Outlook/Zapier source
+and pass `X-FleetPulse-HR-Key` when `HR_RECRUITING_IMPORT_API_KEY` is configured.
+See [`docs/fleetpulse-scheduled-feed-wiring.md`](docs/fleetpulse-scheduled-feed-wiring.md)
+for the QBO, Xcelerator, and HR Zapier/Power Automate job contracts.
 
 ### Backend
 ```bash
@@ -414,15 +539,23 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `GET /api/fuel/atob/sharepoint/status` | Readiness for the BI-connected AtoB SharePoint folder |
 | `POST /api/fuel/atob/sharepoint/sync` | Sync downloaded AtoB report files from SharePoint |
 | `POST /api/fuel/qbo/expenses/import` | Import downloaded QBO expense report as read-only finance references |
-| `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO insurance and other expense summary |
-| `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, AtoB, Xcelerator, and QBO |
+| `GET /api/fuel/qbo/expenses/summary?days=370` | Imported QBO K1L cost-bucket expense summary |
+| `GET /api/fuel/qbo/financial/status` | Scheduled QBO AP/AR/K1L expense snapshot readiness |
+| `POST /api/fuel/qbo/financial/import` | Replace scheduled QBO AP/AR/K1L expense snapshot as read-only evidence |
+| `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, Xcelerator, and QBO K1L costs |
 | `GET /api/fuel/entity-margin` | K1L CPM plus K1L/K1G gross-margin target rollups by delivery center |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |
+| `GET /api/hr-recruiting/status` | HR recruiting feed readiness without applicant PII |
+| `GET /api/hr-recruiting/worklist` | Read-only HR recruiting worklist analytics with PII suppressed |
+| `POST /api/hr-recruiting/import` | Replace scheduled HR recruiting snapshot from approved Zapier/Outlook evidence |
 | **🚚 Control Tower Endpoints** |
 | `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
+| `GET /api/control-tower/xcelerator/events/status` | Scheduled Xcelerator event-feed readiness |
+| `POST /api/control-tower/xcelerator/events/import` | Import scheduled Xcelerator financial/exception events as read-only evidence |
+| `GET /api/control-tower/seat-kpis` | Fixed-seat KPI coverage: live, partial, and missing source contracts |
 | **🧠 AI Endpoints** |
 | `POST /api/ai/chat` | **Claude AI-powered chat** (with conversation history) |
 | `POST /api/ai/chat/stream` | **Streaming AI responses** (Server-Sent Events) |

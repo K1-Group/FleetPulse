@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users } from 'lucide-react'
+import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import FleetAnalytics from './components/FleetAnalytics'
 import FleetChat from './components/FleetChat'
@@ -26,18 +26,22 @@ import ControlTower from './components/ControlTower'
 import OperatingSystem from './components/OperatingSystem'
 import HrRecruitingWorklist from './components/HrRecruitingWorklist'
 import DashboardValidationSummary from './components/DashboardValidationSummary'
+import StabilityDashboard from './components/StabilityDashboard'
+import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
 
-type AppTab = 'dashboard' | 'control-tower' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
+type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
 const appTabs: AppTab[] = [
   'dashboard',
   'control-tower',
+  'finance',
   'operating-system',
   'hr-recruiting',
   'maintenance',
   'coaching',
   'replay',
+  'stability',
   'reports',
   'geofences',
   'fuel',
@@ -141,6 +145,17 @@ export default function App() {
               <span className="hidden sm:inline">Tower</span>
             </button>
             <button
+              onClick={() => selectTab('finance')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === 'finance'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
+              }`}
+            >
+              <DollarSign className="w-4 h-4" />
+              <span className="hidden sm:inline">Finance</span>
+            </button>
+            <button
               onClick={() => selectTab('operating-system')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
                 activeTab === 'operating-system'
@@ -194,6 +209,17 @@ export default function App() {
             >
               <Route className="w-4 h-4" />
               <span className="hidden sm:inline">Routes</span>
+            </button>
+            <button
+              onClick={() => selectTab('stability')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
+                activeTab === 'stability'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
+              }`}
+            >
+              <LineChart className="w-4 h-4" />
+              <span className="hidden sm:inline">Stability</span>
             </button>
             <button
               onClick={() => selectTab('fuel')}
@@ -391,6 +417,10 @@ export default function App() {
           <ControlTower />
         )}
 
+        {activeTab === 'finance' && (
+          <FinancialPerformanceDashboard />
+        )}
+
         {activeTab === 'operating-system' && (
           <OperatingSystem validation={dashboardValidation.data} />
         )}
@@ -407,6 +437,7 @@ export default function App() {
           <RouteReplay onClose={() => selectTab('dashboard')} />
         )}
 
+        {activeTab === 'stability' && <StabilityDashboard />}
         {activeTab === 'reports' && <FleetReports />}
         {activeTab === 'geofences' && <GeofenceManager />}
         {activeTab === 'fuel' && <FuelAnalytics />}

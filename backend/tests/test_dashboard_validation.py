@@ -31,6 +31,7 @@ if "mygeotab" not in sys.modules:
 from models import FleetOverview  # noqa: E402
 from routers import dashboard  # noqa: E402
 from services import dashboard_validation_service as validation_service  # noqa: E402
+from services import k1l_operating_kpi_service as k1l_service  # noqa: E402
 
 
 def _client() -> TestClient:
@@ -60,9 +61,82 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     monkeypatch.setenv("GEOTAB_DATABASE", "k1logistics")
     monkeypatch.setenv("GEOTAB_USERNAME", "k1logistics/operator@example.com")
     monkeypatch.setenv("GEOTAB_PASSWORD", "secret")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN", "test-token")
     monkeypatch.setenv("FLEETPULSE_DASHBOARD_VALIDATION_LIVE_PROBE", "true")
     monkeypatch.setenv("FLEETPULSE_OPERATING_SYSTEM_REQUIRE_API_KEY", "true")
     monkeypatch.delenv("FLEETPULSE_OPERATING_SYSTEM_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "K1L_OPERATING_COST_MONTHLY_JSON",
+        """
+        {
+          "asOfDate": "2026-05-14",
+          "months": [
+            {
+              "month": "2026-01",
+              "miles": 314555.8,
+              "driverPay": 346108.5,
+              "fuel": 151524.27,
+              "fleetMaintenance": 55734.77,
+              "payroll": 89232.46,
+              "otherOps": 101258.57
+            }
+          ]
+        }
+        """,
+    )
+    monkeypatch.setattr(
+        k1l_service,
+        "execute_dax_query",
+        lambda config, query: [
+            {
+                "[MonthStart]": "2026-01-01T00:00:00",
+                "xcelerator_review_orders[delivery_center]": "K1 Logistics Inc",
+                "[GrandTotal]": 1200000,
+                "[Orders]": 7,
+            }
+        ],
+    )
+    _patch_non_kpi_sources(
+        monkeypatch,
+        FleetOverview(
+            total_vehicles=2,
+            active=1,
+            idle=1,
+            scoped_device_count=2,
+            raw_status_count=2,
+            source_mode="live_filtered",
+        ),
+    )
+
+    response = _client().get("/api/dashboard/validation")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    assert payload["summary"]["verified"] == 8
+    assert payload["metric_summary"]["verified"] == 20
+    assert payload["sections"]["k1l_final_cpm"]["status"] == "verified"
+    assert payload["metrics"]["k1l_final_cpm"]["verified"] is True
+    assert payload["metrics"]["k1l_revenue_per_mile"]["verified"] is True
+    assert payload["metrics"]["k1l_profit_per_mile"]["verified"] is True
+    assert payload["sections"]["fleet_overview"]["status"] == "verified"
+    assert payload["metrics"]["total_vehicles"]["status"] == "verified"
+    assert payload["sections"]["data_connector"]["status"] == "verified"
+    assert payload["sections"]["operating_system"]["status"] == "failed"
+    assert payload["sections"]["alerts"]["status"] == "pending_no_data"
+    assert payload["sections"]["agentic_monitor"]["status"] == "pending_no_audit"
+    assert payload["summary"]["pending_no_data"] == 1
+    assert payload["summary"]["pending_no_audit"] == 2
+    assert any(row["blocked_by"] == "no_audit" for row in payload["pending_ledger"])
+
+
+def test_dashboard_validation_does_not_verify_rpm_without_powerbi_revenue(monkeypatch):
+    monkeypatch.setenv("GEOTAB_DATABASE", "k1logistics")
+    monkeypatch.setenv("GEOTAB_USERNAME", "k1logistics/operator@example.com")
+    monkeypatch.setenv("GEOTAB_PASSWORD", "secret")
+    monkeypatch.setenv("FLEETPULSE_DASHBOARD_VALIDATION_LIVE_PROBE", "true")
+    monkeypatch.setenv("FLEETPULSE_OPERATING_SYSTEM_REQUIRE_API_KEY", "false")
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv(
         "K1L_OPERATING_COST_MONTHLY_JSON",
         """
@@ -98,20 +172,13 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["projection_mode"] == "read_only"
-    assert payload["summary"]["verified"] == 8
-    assert payload["metric_summary"]["verified"] == 16
-    assert payload["sections"]["k1l_final_cpm"]["status"] == "verified"
-    assert payload["metrics"]["k1l_final_cpm"]["verified"] is True
-    assert payload["sections"]["fleet_overview"]["status"] == "verified"
-    assert payload["metrics"]["total_vehicles"]["status"] == "verified"
-    assert payload["sections"]["data_connector"]["status"] == "verified"
-    assert payload["sections"]["operating_system"]["status"] == "failed"
-    assert payload["sections"]["alerts"]["status"] == "pending_no_data"
-    assert payload["sections"]["agentic_monitor"]["status"] == "pending_no_audit"
-    assert payload["summary"]["pending_no_data"] == 1
-    assert payload["summary"]["pending_no_audit"] == 2
-    assert any(row["blocked_by"] == "no_audit" for row in payload["pending_ledger"])
+    k1l = payload["sections"]["k1l_final_cpm"]
+    assert k1l["status"] == "pending"
+    assert k1l["blocked_by"] == "revenue_unverified"
+    assert "Xcelerator revenue projection is healthy" in k1l["message"]
+    assert payload["metrics"]["k1l_final_cpm"]["status"] == "verified"
+    assert payload["metrics"]["k1l_revenue_per_mile"]["status"] == "pending"
+    assert payload["metrics"]["k1l_profit_per_mile"]["status"] == "pending"
 
 
 def test_dashboard_validation_does_not_verify_failed_or_missing_sources(monkeypatch):

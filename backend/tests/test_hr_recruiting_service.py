@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,8 @@ sys.path.insert(0, str(BACKEND_DIR))
 from services.hr_recruiting_service import (  # noqa: E402
     HrRecruitingConfig,
     build_hr_recruiting_dataset,
+    get_hr_recruiting_dataset,
+    import_hr_recruiting_snapshot,
 )
 
 
@@ -145,3 +148,54 @@ def test_empty_hr_recruiting_dataset_is_explicit_and_safe() -> None:
     assert dataset["status_counts"] == []
     assert dataset["trend"] == []
     assert dataset["source_message"] == "Configure HR_RECRUITING_SNAPSHOT_URL."
+
+
+def test_imported_hr_recruiting_state_feeds_dataset_without_pii(tmp_path) -> None:
+    state_path = tmp_path / "hr-recruiting.json"
+    result = import_hr_recruiting_snapshot(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "source_email_id": "outlook-message-1",
+                        "applicant": "Private Applicant",
+                        "worklist": "Recruiter Review",
+                        "status": "Assigned",
+                        "first_assigned_at": "2026-05-14T10:00:00Z",
+                        "current_worklist_entered_at": "2026-05-15T00:00:00Z",
+                        "email": "private@example.com",
+                    }
+                ]
+            }
+        ),
+        filename="hr-recruiting.json",
+        path=state_path,
+    )
+
+    assert result["status"] == "ok"
+    assert result["row_count"] == 1
+    dataset = asyncio.run(
+        get_hr_recruiting_dataset(
+            now=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+            config=HrRecruitingConfig(snapshot_path=str(state_path)),
+        )
+    )
+
+    assert dataset["source_status"] == "ok"
+    assert dataset["summary"]["active_leads"] == 1
+    serialized = json.dumps(dataset)
+    assert "private@example.com" not in serialized
+    assert "Private Applicant" not in serialized
+
+
+def test_hr_recruiting_import_dry_run_does_not_write(tmp_path) -> None:
+    state_path = tmp_path / "hr-recruiting.json"
+    result = import_hr_recruiting_snapshot(
+        "source_email_id,applicant,worklist,status,first_assigned_at\nmsg-1,Private Applicant,Recruiter Review,Assigned,2026-05-14",
+        filename="hr.csv",
+        dry_run=True,
+        path=state_path,
+    )
+
+    assert result["status"] == "ok"
+    assert not state_path.exists()

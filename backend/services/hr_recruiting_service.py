@@ -10,9 +10,13 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+import csv
 import hashlib
+import io
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -121,6 +125,7 @@ class HrRecruitingConfig:
     source: str = "zapier_table"
     sla_hours: tuple[int, ...] = DEFAULT_SLA_HOURS
     snapshot_url: str = ""
+    snapshot_path: str = ""
     sharepoint_reporting_log_url: str = ""
     timeout_seconds: float = 20.0
 
@@ -132,19 +137,24 @@ class HrRecruitingConfig:
             source=os.getenv("HR_RECRUITING_SOURCE", "zapier_table").strip() or "zapier_table",
             sla_hours=_sla_hours_from_env(),
             snapshot_url=os.getenv("HR_RECRUITING_SNAPSHOT_URL", "").strip(),
+            snapshot_path=(
+                os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
+                or os.getenv("HR_RECRUITING_SNAPSHOT_PATH", "").strip()
+            ),
             sharepoint_reporting_log_url=os.getenv("SHAREPOINT_HR_REPORTING_LOG_URL", "").strip(),
             timeout_seconds=_float_env("HR_RECRUITING_TIMEOUT_SECONDS", 20.0),
         )
 
     @property
     def source_configured(self) -> bool:
-        return bool(self.snapshot_url)
+        return bool(self.snapshot_url or self.snapshot_path)
 
     def safe_status(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "table_id": self.table_id,
             "snapshot_configured": bool(self.snapshot_url),
+            "state_path_configured": bool(self.snapshot_path),
             "sharepoint_reporting_log_configured": bool(self.sharepoint_reporting_log_url),
             "sla_hours": list(self.sla_hours),
             "source_authority": SOURCE_AUTHORITY,
@@ -333,6 +343,25 @@ def _extract_records(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _extract_records_from_content(content: str, *, filename: str | None = None) -> list[dict[str, Any]]:
+    stripped = content.lstrip("\ufeff").strip()
+    if not stripped:
+        return []
+    suffix = Path(str(filename or "")).suffix.casefold()
+    if suffix == ".json" or stripped[:1] in {"[", "{"}:
+        return _extract_records(json.loads(stripped))
+    sample = stripped[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+    except csv.Error:
+        dialect = csv.excel_tab if "\t" in sample else csv.excel
+    return [
+        dict(row)
+        for row in csv.DictReader(io.StringIO(stripped), dialect=dialect)
+        if any(str(value or "").strip() for value in row.values())
+    ]
+
+
 def _normalize_lead(row: dict[str, Any]) -> tuple[RecruitingLead | None, str | None]:
     first_assigned_at = _parse_datetime(_find_value(row, FIRST_ASSIGNED_ALIASES))
     if first_assigned_at is None:
@@ -381,31 +410,71 @@ async def _load_source_records(config: HrRecruitingConfig) -> SourceLoadResult:
         return SourceLoadResult(
             records=[],
             status="snapshot_not_configured",
-            message="Configure HR_RECRUITING_SNAPSHOT_URL with an approved Zapier/Outlook JSON snapshot.",
+            message="Configure HR_RECRUITING_SNAPSHOT_URL or HR_RECRUITING_STATE_PATH with an approved Zapier/Outlook JSON snapshot.",
         )
 
-    try:
-        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-            response = await client.get(config.snapshot_url)
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "hr_recruiting_snapshot_http_error",
+    if config.snapshot_url:
+        try:
+            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+                response = await client.get(config.snapshot_url)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "hr_recruiting_snapshot_http_error",
+                extra={
+                    "hr_source": config.source,
+                    "hr_table_id": config.table_id,
+                    "status_code": exc.response.status_code,
+                },
+            )
+            return SourceLoadResult(
+                records=[],
+                status="source_error",
+                message=f"Snapshot endpoint returned HTTP {exc.response.status_code}.",
+            )
+        except Exception as exc:  # noqa: BLE001 - status payload should stay available.
+            logger.warning(
+                "hr_recruiting_snapshot_load_failed",
+                extra={
+                    "hr_source": config.source,
+                    "hr_table_id": config.table_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return SourceLoadResult(
+                records=[],
+                status="source_error",
+                message=f"Snapshot load failed: {type(exc).__name__}.",
+            )
+
+        records = _extract_records(payload)
+        logger.info(
+            "hr_recruiting_snapshot_loaded",
             extra={
                 "hr_source": config.source,
                 "hr_table_id": config.table_id,
-                "status_code": exc.response.status_code,
+                "source_rows": len(records),
             },
         )
         return SourceLoadResult(
-            records=[],
-            status="source_error",
-            message=f"Snapshot endpoint returned HTTP {exc.response.status_code}.",
+            records=records,
+            status="ok" if records else "empty",
+            message=None if records else "Snapshot was reachable but returned no applicant rows.",
         )
+
+    try:
+        path = Path(config.snapshot_path)
+        if not path.exists():
+            return SourceLoadResult(
+                records=[],
+                status="snapshot_not_configured",
+                message="HR recruiting state path is configured, but no snapshot has been imported yet.",
+            )
+        records = _extract_records_from_content(path.read_text(encoding="utf-8-sig"), filename=path.name)
     except Exception as exc:  # noqa: BLE001 - status payload should stay available.
         logger.warning(
-            "hr_recruiting_snapshot_load_failed",
+            "hr_recruiting_state_load_failed",
             extra={
                 "hr_source": config.source,
                 "hr_table_id": config.table_id,
@@ -415,23 +484,90 @@ async def _load_source_records(config: HrRecruitingConfig) -> SourceLoadResult:
         return SourceLoadResult(
             records=[],
             status="source_error",
-            message=f"Snapshot load failed: {type(exc).__name__}.",
+            message=f"Snapshot state load failed: {type(exc).__name__}.",
         )
 
-    records = _extract_records(payload)
-    logger.info(
-        "hr_recruiting_snapshot_loaded",
-        extra={
-            "hr_source": config.source,
-            "hr_table_id": config.table_id,
-            "source_rows": len(records),
-        },
-    )
     return SourceLoadResult(
         records=records,
         status="ok" if records else "empty",
-        message=None if records else "Snapshot was reachable but returned no applicant rows.",
+        message=None if records else "Snapshot state file is present but contains no applicant rows.",
     )
+
+
+def import_hr_recruiting_snapshot(
+    content: str,
+    *,
+    filename: str | None = None,
+    dry_run: bool = False,
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Replace the scheduled HR recruiting snapshot as read-only evidence."""
+
+    target_path = Path(path) if path else Path(
+        os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
+        or os.getenv("HR_RECRUITING_SNAPSHOT_PATH", "").strip()
+        or "/home/data/fleetpulse_hr_recruiting.json"
+    )
+    try:
+        records = _extract_records_from_content(content, filename=filename)
+    except Exception as exc:
+        return {
+            "status": "invalid",
+            "source_authority": SOURCE_AUTHORITY,
+            "projection_mode": "read_only",
+            "dry_run": dry_run,
+            "row_count": 0,
+            "invalid_count": 1,
+            "errors": [str(exc)],
+            "state_path": str(target_path),
+        }
+
+    invalid_count = sum(
+        1
+        for row in records
+        if _normalize_lead(_flatten_record(row))[0] is None
+    )
+    if not records:
+        return {
+            "status": "invalid",
+            "source_authority": SOURCE_AUTHORITY,
+            "projection_mode": "read_only",
+            "dry_run": dry_run,
+            "row_count": 0,
+            "invalid_count": 1,
+            "errors": ["hr_recruiting_snapshot_contains_no_rows"],
+            "state_path": str(target_path),
+        }
+
+    payload = {
+        "version": 1,
+        "source_authority": SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "last_imported_at": _now_utc().isoformat(),
+        "rows": records,
+    }
+    if not dry_run:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
+        tmp_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        tmp_path.replace(target_path)
+
+    return {
+        "status": "ok" if invalid_count < len(records) else "invalid",
+        "source_authority": SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "dry_run": dry_run,
+        "row_count": len(records),
+        "invalid_count": invalid_count,
+        "errors": [],
+        "state_path": str(target_path),
+    }
+
+
+def validate_hr_recruiting_import_api_key(provided: str | None) -> None:
+    expected = os.getenv("HR_RECRUITING_IMPORT_API_KEY", "").strip()
+    if expected and provided != expected:
+        raise PermissionError("Invalid HR recruiting import API key")
 
 
 def build_hr_recruiting_dataset(

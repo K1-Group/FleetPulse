@@ -11,11 +11,16 @@ The projection keeps source ownership intact:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from integrations.fabric_warehouse.sql_client import (
+    FabricWarehouseSqlConfig,
+    execute_sql_query,
+)
 from integrations.powerbi.execute_queries import (
     PowerBIExecuteQueriesConfig,
     execute_dax_query,
@@ -35,6 +40,9 @@ XCELERATOR_ENTITY_AUTHORITY = "K1 Group LLC / Xcelerator delivery-center revenue
 ENTITY_MARGIN_AUTHORITY = (
     "Geotab miles/hours + AtoB fuel + QBO expenses + Xcelerator delivery-center revenue/pay"
 )
+WAREHOUSE_SQL_ENTITY_SOURCE_TYPE = "fabric_warehouse_sql"
+POWERBI_ENTITY_SOURCE_TYPE = "powerbi_semantic_model"
+AGGREGATED_WEEKLY_SOURCE_TYPES = {POWERBI_ENTITY_SOURCE_TYPE, WAREHOUSE_SQL_ENTITY_SOURCE_TYPE}
 
 
 @dataclass(frozen=True)
@@ -43,6 +51,7 @@ class EntityMarginConfig:
 
     powerbi: PowerBIExecuteQueriesConfig
     review_orders_feed: ReviewOrdersFeedConfig
+    warehouse_sql: FabricWarehouseSqlConfig
 
     @classmethod
     def from_env(cls) -> "EntityMarginConfig":
@@ -52,6 +61,7 @@ class EntityMarginConfig:
         return cls(
             powerbi=PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI"),
             review_orders_feed=entity_feed,
+            warehouse_sql=FabricWarehouseSqlConfig.from_env(),
         )
 
 
@@ -252,6 +262,8 @@ def _empty_entity_week(start: date, end: date) -> dict[str, Any]:
         "k1g_orders": 0,
         "k1g_grand_total": 0.0,
         "k1g_driver_pay": 0.0,
+        "idle_hours": 0.0,
+        "operating_hours": 0.0,
     }
 
 
@@ -299,34 +311,119 @@ def _fallback_feed_message(powerbi_error: str) -> str:
     return f"Power BI semantic model unavailable; used ReviewOrders feed fallback. {powerbi_error}"
 
 
-def _load_xcelerator_entity_rows(
+def _quote_sql_identifier(value: str) -> str:
+    return f"[{value.replace(']', ']]')}]"
+
+
+def _build_warehouse_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+JOIN sys.columns AS columns
+    ON columns.object_id = objects.object_id
+WHERE objects.type IN ('U', 'V', 'ET')
+GROUP BY schemas.name, objects.name, objects.type_desc
+HAVING
+    SUM(CASE WHEN LOWER(columns.name) = 'delivery_center' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'pickup_target_from' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'grand_total_amount' THEN 1 ELSE 0 END) > 0
+    AND SUM(CASE WHEN LOWER(columns.name) = 'driver_pay_amount' THEN 1 ELSE 0 END) > 0
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'xcelerator_review_orders' THEN 0 ELSE 1 END,
+    CASE WHEN LOWER(objects.name) LIKE '%xcelerator%review%orders%' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
+def _build_warehouse_entity_weekly_sql(start: date, end: date, table_schema: str, table_name: str) -> str:
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    return f"""
+WITH normalized AS (
+    SELECT
+        delivery_center,
+        TRY_CONVERT(date, pickup_target_from) AS pickup_date,
+        TRY_CONVERT(decimal(18, 2), grand_total_amount) AS grand_total_amount,
+        TRY_CONVERT(decimal(18, 2), driver_pay_amount) AS driver_pay_amount
+    FROM {table_ref}
+    WHERE TRY_CONVERT(date, pickup_target_from) >= '{start.isoformat()}'
+        AND TRY_CONVERT(date, pickup_target_from) <= '{end.isoformat()}'
+        AND delivery_center IS NOT NULL
+)
+SELECT
+    CAST(DATEADD(day, -(DATEDIFF(day, 0, pickup_date) % 7), pickup_date) AS date) AS WeekStart,
+    delivery_center,
+    SUM(grand_total_amount) AS GrandTotal,
+    SUM(driver_pay_amount) AS DriverPay,
+    COUNT(*) AS Orders
+FROM normalized
+WHERE pickup_date IS NOT NULL
+GROUP BY CAST(DATEADD(day, -(DATEDIFF(day, 0, pickup_date) % 7), pickup_date) AS date), delivery_center
+ORDER BY WeekStart, delivery_center
+""".strip()
+
+
+def _load_warehouse_entity_rows(
     start: date,
     end: date,
     *,
-    config: EntityMarginConfig,
+    config: FabricWarehouseSqlConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
-    powerbi_error = ""
-    if config.powerbi.configured:
-        try:
-            rows = _load_powerbi_entity_rows(start, end, config=config.powerbi)
-            return rows, _source(
-                "healthy" if rows else "awaiting_feed",
-                XCELERATOR_ENTITY_AUTHORITY,
-                message="" if rows else "Xcelerator CEO Dashboard semantic model returned no rows.",
-                row_count=len(rows),
-            ), "powerbi_semantic_model"
-        except Exception as exc:
-            powerbi_error = f"{type(exc).__name__}: {exc}"
+    if not config.configured:
+        return [], _source(
+            "not_configured",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message="Fabric Warehouse SQL auth is not configured for Xcelerator entity margin.",
+        ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
 
-    if not config.review_orders_feed.configured:
+    table_rows = execute_sql_query(config, _build_warehouse_table_discovery_sql())
+    if not table_rows:
         return [], _source(
             "awaiting_feed",
             XCELERATOR_ENTITY_AUTHORITY,
-            message=powerbi_error or "Xcelerator entity margin feed is not configured.",
+            message=(
+                "Fabric Warehouse connected, but no visible table/view had the "
+                "required Xcelerator entity-margin columns."
+            ),
+        ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+    table_schema = str(_find_value(table_rows[0], ("table_schema", "TABLE_SCHEMA")) or "dbo")
+    table_name = str(_find_value(table_rows[0], ("table_name", "TABLE_NAME")) or "xcelerator_review_orders")
+    rows = execute_sql_query(config, _build_warehouse_entity_weekly_sql(start, end, table_schema, table_name))
+    source = _source(
+        "healthy" if rows else "awaiting_feed",
+        XCELERATOR_ENTITY_AUTHORITY,
+        message="" if rows else "Fabric Warehouse returned no Xcelerator entity-margin rows.",
+        row_count=len(rows),
+    )
+    source["table"] = f"{table_schema}.{table_name}"
+    return rows, source, WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+
+def _prefer_review_orders_feed() -> bool:
+    value = os.getenv("FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED", "false")
+    return value.strip().casefold() not in {"0", "false", "no", "off"}
+
+
+def _load_review_orders_entity_rows(
+    *,
+    config: ReviewOrdersFeedConfig,
+    fallback_message: str = "",
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if not config.configured:
+        return [], _source(
+            "awaiting_feed",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message=fallback_message or "Xcelerator entity margin feed is not configured.",
         ), "unconfigured"
 
     try:
-        rows = load_review_orders_rows(config.review_orders_feed)
+        rows = load_review_orders_rows(config)
     except Exception as exc:
         return [], _source(
             "unavailable",
@@ -337,11 +434,61 @@ def _load_xcelerator_entity_rows(
     return rows, _source(
         "healthy" if rows else "awaiting_feed",
         XCELERATOR_ENTITY_AUTHORITY,
-        message=_fallback_feed_message(powerbi_error)
-        if rows
-        else "Xcelerator entity margin feed is configured, but no rows are available.",
+        message=(
+            fallback_message
+            if rows and fallback_message
+            else (
+                ""
+                if rows
+                else "Xcelerator entity margin feed is configured, but no rows are available."
+            )
+        ),
         row_count=len(rows),
     ), "review_orders_feed"
+
+
+def _load_xcelerator_entity_rows(
+    start: date,
+    end: date,
+    *,
+    config: EntityMarginConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if _prefer_review_orders_feed() and config.review_orders_feed.configured:
+        rows, source, source_type = _load_review_orders_entity_rows(config=config.review_orders_feed)
+        if rows or source.get("status") != "awaiting_feed":
+            return rows, source, source_type
+
+    warehouse_error = ""
+    if config.warehouse_sql.configured:
+        try:
+            rows, source, source_type = _load_warehouse_entity_rows(start, end, config=config.warehouse_sql)
+            return rows, source, source_type
+        except Exception as exc:
+            warehouse_error = f"Fabric Warehouse SQL unavailable: {type(exc).__name__}: {exc}"
+            if not config.review_orders_feed.configured:
+                return [], _source(
+                    "unavailable",
+                    XCELERATOR_ENTITY_AUTHORITY,
+                    message=warehouse_error,
+                ), WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
+
+    powerbi_error = ""
+    if not config.warehouse_sql.configured and config.powerbi.configured:
+        try:
+            rows = _load_powerbi_entity_rows(start, end, config=config.powerbi)
+            return rows, _source(
+                "healthy" if rows else "awaiting_feed",
+                XCELERATOR_ENTITY_AUTHORITY,
+                message="" if rows else "Xcelerator CEO Dashboard semantic model returned no rows.",
+                row_count=len(rows),
+            ), POWERBI_ENTITY_SOURCE_TYPE
+        except Exception as exc:
+            powerbi_error = f"{type(exc).__name__}: {exc}"
+
+    return _load_review_orders_entity_rows(
+        config=config.review_orders_feed,
+        fallback_message=warehouse_error or _fallback_feed_message(powerbi_error),
+    )
 
 
 def _xcelerator_entity_weekly(
@@ -363,7 +510,7 @@ def _xcelerator_entity_weekly(
         row_day = _row_day(row)
         if row_day is None:
             continue
-        if source_type == "powerbi_semantic_model":
+        if source_type in AGGREGATED_WEEKLY_SOURCE_TYPES:
             week_start = _week_start(row_day)
             if week_start > end or week_start + timedelta(days=6) < start:
                 continue
@@ -403,7 +550,7 @@ def _xcelerator_entity_weekly(
     elif (
         source["status"] == "healthy"
         and included_dates
-        and source_type != "powerbi_semantic_model"
+        and source_type not in AGGREGATED_WEEKLY_SOURCE_TYPES
     ):
         source_status = "healthy"
         source_message = source.get("message") or ""
@@ -424,35 +571,63 @@ def _xcelerator_entity_weekly(
 
 
 def _finish_entity_week(row: dict[str, Any]) -> dict[str, Any]:
+    k1l_revenue = float(row["k1l_grand_total"])
+    miles = float(row["miles"])
+    drive_hours = float(row["drive_hours"])
+    operating_hours = float(row.get("operating_hours") or drive_hours)
     k1l_fuel_driver_cost = float(row["fuel_cost"]) + float(row["k1l_driver_pay"])
     k1l_true_cost = k1l_fuel_driver_cost + float(row["insurance_cost"]) + float(row["other_expense_cost"])
-    k1l_actual_margin_before_fuel = float(row["k1l_grand_total"]) - float(row["k1l_driver_pay"])
+    qbo_k1l_operating_cost = (
+        float(row["fuel_cost"])
+        + float(row.get("maintenance_cost") or 0)
+        + float(row["insurance_cost"])
+        + float(row.get("employee_cost") or 0)
+        + float(row.get("rental_trucks_trailers_cost") or 0)
+    )
+    qbo_expenses_available = bool(row["qbo_expenses_available"])
+    k1l_profit = k1l_revenue - k1l_true_cost if qbo_expenses_available else None
+    k1l_actual_margin_before_fuel = k1l_revenue - float(row["k1l_driver_pay"])
     k1l_actual_margin_after_fuel = k1l_actual_margin_before_fuel - float(row["fuel_cost"])
     k1g_actual_margin_before_overhead = float(row["k1g_grand_total"]) - float(row["k1g_driver_pay"])
 
     row.update(
         {
-            "k1l_target_gross_margin": _money(float(row["k1l_grand_total"]) * K1L_MARGIN_TARGET_PCT),
+            "k1l_target_gross_margin": _money(k1l_revenue * K1L_MARGIN_TARGET_PCT),
             "k1l_actual_gross_margin_before_fuel": _money(k1l_actual_margin_before_fuel),
             "k1l_actual_gross_margin_pct_before_fuel": _ratio(
                 k1l_actual_margin_before_fuel,
-                float(row["k1l_grand_total"]),
+                k1l_revenue,
             ),
             "k1l_actual_gross_margin_after_fuel": _money(k1l_actual_margin_after_fuel),
             "k1l_actual_gross_margin_pct_after_fuel": _ratio(
                 k1l_actual_margin_after_fuel,
-                float(row["k1l_grand_total"]),
+                k1l_revenue,
             ),
-            "k1l_revenue_per_mile": _ratio(float(row["k1l_grand_total"]), float(row["miles"])),
-            "k1l_driver_pay_cpm": _ratio(float(row["k1l_driver_pay"]), float(row["miles"])),
-            "k1l_fuel_cpm": _ratio(float(row["fuel_cost"]), float(row["miles"])),
-            "k1l_fuel_plus_driver_cpm": _ratio(k1l_fuel_driver_cost, float(row["miles"])),
+            "k1l_revenue_per_mile": _ratio(k1l_revenue, miles),
+            "k1l_revenue_per_drive_hour": _ratio(k1l_revenue, drive_hours),
+            "k1l_revenue_per_engine_hour": _ratio(k1l_revenue, operating_hours),
+            "k1l_driver_pay_cpm": _ratio(float(row["k1l_driver_pay"]), miles),
+            "k1l_fuel_cpm": _ratio(float(row["fuel_cost"]), miles),
+            "k1l_fuel_plus_driver_cpm": _ratio(k1l_fuel_driver_cost, miles),
+            "k1l_qbo_operating_cost": _money(qbo_k1l_operating_cost)
+            if qbo_expenses_available
+            else None,
             "k1l_true_operating_cpm": _ratio(k1l_true_cost, float(row["miles"]))
-            if row["qbo_expenses_available"]
+            if qbo_expenses_available
+            else None,
+            "k1l_true_operating_cost_per_drive_hour": _ratio(k1l_true_cost, drive_hours)
+            if qbo_expenses_available
+            else None,
+            "k1l_true_operating_cost_per_engine_hour": _ratio(k1l_true_cost, operating_hours)
+            if qbo_expenses_available
             else None,
             "k1l_true_operating_cost": _money(k1l_true_cost)
-            if row["qbo_expenses_available"]
+            if qbo_expenses_available
             else None,
+            "k1l_profit": _money(k1l_profit) if k1l_profit is not None else None,
+            "k1l_profit_per_mile": _ratio(k1l_profit, miles) if k1l_profit is not None else None,
+            "k1l_profit_per_drive_hour": _ratio(k1l_profit, drive_hours) if k1l_profit is not None else None,
+            "k1l_profit_per_engine_hour": _ratio(k1l_profit, operating_hours) if k1l_profit is not None else None,
             "k1g_target_gross_margin": _money(float(row["k1g_grand_total"]) * K1G_MARGIN_TARGET_PCT),
             "k1g_actual_gross_margin_before_overhead": _money(
                 k1g_actual_margin_before_overhead
@@ -470,8 +645,15 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
     totals = {
         "miles": sum(float(row["miles"]) for row in weekly),
         "drive_hours": sum(float(row["drive_hours"]) for row in weekly),
+        "idle_hours": sum(float(row.get("idle_hours") or 0) for row in weekly),
+        "operating_hours": sum(float(row.get("operating_hours") or row["drive_hours"]) for row in weekly),
         "fuel_cost": sum(float(row["fuel_cost"]) for row in weekly),
+        "fuel_card_audit_cost": sum(float(row.get("fuel_card_audit_cost") or 0) for row in weekly),
+        "maintenance_cost": sum(float(row.get("maintenance_cost") or 0) for row in weekly),
         "insurance_cost": sum(float(row["insurance_cost"]) for row in weekly),
+        "posted_insurance_cost": sum(float(row.get("posted_insurance_cost") or 0) for row in weekly),
+        "employee_cost": sum(float(row.get("employee_cost") or 0) for row in weekly),
+        "rental_trucks_trailers_cost": sum(float(row.get("rental_trucks_trailers_cost") or 0) for row in weekly),
         "other_expense_cost": sum(float(row["other_expense_cost"]) for row in weekly),
         "k1l_orders": sum(int(row["k1l_orders"]) for row in weekly),
         "k1l_grand_total": sum(float(row["k1l_grand_total"]) for row in weekly),
@@ -484,8 +666,16 @@ def _summary_from_weekly(weekly: list[dict[str, Any]]) -> dict[str, Any]:
     row = {
         "miles": round(totals["miles"], 2),
         "drive_hours": round(totals["drive_hours"], 2),
+        "idle_hours": round(totals["idle_hours"], 2),
+        "operating_hours": round(totals["operating_hours"], 2),
         "fuel_cost": _money(totals["fuel_cost"]),
+        "fuel_card_audit_cost": _money(totals["fuel_card_audit_cost"]),
+        "maintenance_cost": _money(totals["maintenance_cost"]),
         "insurance_cost": _money(totals["insurance_cost"]),
+        "posted_insurance_cost": _money(totals["posted_insurance_cost"]),
+        "insurance_cost_per_mile": _ratio(totals["insurance_cost"], totals["miles"]),
+        "employee_cost": _money(totals["employee_cost"]),
+        "rental_trucks_trailers_cost": _money(totals["rental_trucks_trailers_cost"]),
         "other_expense_cost": _money(totals["other_expense_cost"]),
         "k1l_orders": totals["k1l_orders"],
         "k1l_grand_total": _money(totals["k1l_grand_total"]),
@@ -511,7 +701,12 @@ async def get_entity_margin_snapshot(
     config = config or EntityMarginConfig.from_env()
 
     operating_snapshot, entity_result = await asyncio.gather(
-        get_operating_cost_snapshot(days=days, start=period_start, end=period_end),
+        get_operating_cost_snapshot(
+            days=days,
+            start=period_start,
+            end=period_end,
+            include_driver_pay=False,
+        ),
         asyncio.to_thread(_xcelerator_entity_weekly, period_start, period_end, config=config),
     )
     entity_weekly, xcelerator_source, excluded_centers, xcelerator_source_type = entity_result
@@ -531,8 +726,26 @@ async def get_entity_margin_snapshot(
             **entity_row,
             "miles": round(float(operating_row.get("miles") or 0), 2),
             "drive_hours": round(float(operating_row.get("drive_hours") or 0), 2),
+            "idle_hours": round(float(operating_row.get("idle_hours") or 0), 2),
+            "operating_hours": round(
+                float(
+                    operating_row.get("operating_hours")
+                    or (
+                        float(operating_row.get("drive_hours") or 0)
+                        + float(operating_row.get("idle_hours") or 0)
+                    )
+                ),
+                2,
+            ),
             "fuel_cost": _money(float(operating_row.get("fuel_cost") or 0)),
+            "fuel_card_audit_cost": _money(float(operating_row.get("fuel_card_audit_cost") or 0)),
+            "maintenance_cost": _money(float(operating_row.get("maintenance_cost") or 0)),
             "insurance_cost": _money(float(operating_row.get("insurance_cost") or 0)),
+            "posted_insurance_cost": _money(float(operating_row.get("posted_insurance_cost") or 0)),
+            "insurance_cost_per_mile": operating_row.get("insurance_cost_per_mile"),
+            "insurance_cost_method": operating_row.get("insurance_cost_method"),
+            "employee_cost": _money(float(operating_row.get("employee_cost") or 0)),
+            "rental_trucks_trailers_cost": _money(float(operating_row.get("rental_trucks_trailers_cost") or 0)),
             "other_expense_cost": _money(float(operating_row.get("other_expense_cost") or 0)),
             "qbo_expenses_available": qbo_expenses_available,
         }
@@ -541,6 +754,7 @@ async def get_entity_margin_snapshot(
     sources = {
         "telemetry": operating_snapshot.get("sources", {}).get("telemetry", {}),
         "fuel": operating_snapshot.get("sources", {}).get("fuel", {}),
+        "insurance": operating_snapshot.get("sources", {}).get("insurance", {}),
         "xcelerator_entity": xcelerator_source,
         "qbo_expenses": qbo_source,
     }
