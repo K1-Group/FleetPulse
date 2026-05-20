@@ -172,6 +172,11 @@ def test_seat_kpi_coverage_reports_missing_source_contracts(monkeypatch):
         "GEOTAB_PASSWORD",
         "GEOTAB_DATABASE",
         "FLEETPULSE_MONITOR_ENABLED",
+        "FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH",
+        "FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH",
+        "FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH",
+        "FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_STATE_PATH",
+        "FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_STATE_PATH",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -185,7 +190,7 @@ def test_seat_kpi_coverage_reports_missing_source_contracts(monkeypatch):
     billing_gap = next(item for item in payload["kpis"] if item["key"] == "billing_exception_aging")
     assert billing_gap["seat_id"] == "finance_controller"
     assert billing_gap["status"] == "awaiting_feed"
-    assert billing_gap["source_route"] is None
+    assert billing_gap["source_route"] == "/api/control-tower/seat-kpis/feeds/billing_exceptions/status"
     assert "billing_packet_exception_feed_missing" == billing_gap["blocker"]
 
 
@@ -206,6 +211,57 @@ def test_seat_kpi_coverage_marks_configured_routes_as_available(monkeypatch):
     assert by_key["ap_aging"]["status"] == "warning"
     assert by_key["truck_availability"]["status"] == "healthy"
     assert "secret" not in response.text
+
+
+def test_seat_kpi_feed_status_and_import_are_key_protected(monkeypatch, tmp_path):
+    state_path = tmp_path / "billing-exceptions.json"
+    monkeypatch.setenv("FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH", str(state_path))
+    monkeypatch.setenv("FLEETPULSE_BILLING_EXCEPTIONS_IMPORT_API_KEY", "expected")
+
+    status = _client().get("/api/control-tower/seat-kpis/feeds/billing_exceptions/status")
+    assert status.status_code == 200
+    assert status.json()["status"] == "awaiting_feed"
+    assert status.json()["state_path_configured"] is True
+
+    denied = _client().post(
+        "/api/control-tower/seat-kpis/feeds/billing_exceptions/import",
+        json={
+            "filename": "billing.json",
+            "content": '{"rows":[{"exception_id":"BE-1","status":"Open","created_at":"2026-05-18T10:00:00Z"}]}',
+        },
+    )
+    assert denied.status_code == 401
+
+    ok = _client().post(
+        "/api/control-tower/seat-kpis/feeds/billing_exceptions/import",
+        headers={"X-FleetPulse-Seat-KPI-Key": "expected"},
+        json={
+            "filename": "billing.json",
+            "content": '{"rows":[{"exception_id":"BE-1","status":"Open","created_at":"2026-05-18T10:00:00Z"}]}',
+        },
+    )
+    assert ok.status_code == 200
+    assert ok.json()["imported_count"] == 1
+    assert "expected" not in ok.text
+
+
+def test_seat_kpi_coverage_uses_scheduled_feed_rows(monkeypatch, tmp_path):
+    state_path = tmp_path / "billing-exceptions.json"
+    monkeypatch.setenv("FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH", str(state_path))
+    _client().post(
+        "/api/control-tower/seat-kpis/feeds/billing_exceptions/import",
+        json={
+            "filename": "billing.json",
+            "content": '{"rows":[{"exception_id":"BE-2","status":"Open","created_at":"2026-05-18T10:00:00Z"}]}',
+        },
+    )
+
+    response = _client().get("/api/control-tower/seat-kpis")
+
+    assert response.status_code == 200
+    by_key = {item["key"]: item for item in response.json()["kpis"]}
+    assert by_key["billing_exception_aging"]["status"] == "warning"
+    assert by_key["billing_exception_aging"]["source_route"].endswith("/billing_exceptions/status")
 
 
 def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monkeypatch):

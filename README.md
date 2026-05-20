@@ -235,6 +235,17 @@ FLEETPULSE_QBO_FINANCIAL_FEED_URL=
 FLEETPULSE_QBO_FINANCIAL_FEED_PATH=
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_QBO_FINANCIAL_IMPORT_API_KEY=
+FLEETPULSE_SEAT_KPI_IMPORT_API_KEY=
+FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH=/home/data/fleetpulse_billing_exceptions.json
+FLEETPULSE_BILLING_EXCEPTIONS_IMPORT_API_KEY=
+FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH=/home/data/fleetpulse_weekly_close_variance.json
+FLEETPULSE_WEEKLY_CLOSE_VARIANCE_IMPORT_API_KEY=
+FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH=/home/data/fleetpulse_dispatch_timestamps.json
+FLEETPULSE_DISPATCH_TIMESTAMPS_IMPORT_API_KEY=
+FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_STATE_PATH=/home/data/fleetpulse_sharepoint_seat_assignments.json
+FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_IMPORT_API_KEY=
+FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_STATE_PATH=/home/data/fleetpulse_sharepoint_training_history.json
+FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_IMPORT_API_KEY=
 ```
 
 Use `POST /api/fuel/qbo/financial/import` for a daily QBO AP/AR/K1L expense
@@ -244,6 +255,14 @@ the matching `*_IMPORT_API_KEY` value is configured, and both store read-only
 evidence files only. If Zapier or Power Automate writes directly to blob/file
 storage instead, point `FLEETPULSE_QBO_FINANCIAL_FEED_URL` or
 `FLEETPULSE_XCELERATOR_EVENT_FEED_URL` at that governed JSON feed.
+
+The remaining fixed-seat KPI blockers use the generic scheduled feed route
+`POST /api/control-tower/seat-kpis/feeds/{feed_key}/import` and status route
+`GET /api/control-tower/seat-kpis/feeds/{feed_key}/status`. Current feed keys:
+`billing_exceptions`, `weekly_close_variance`, `dispatch_timestamps`,
+`sharepoint_seat_assignments`, and `sharepoint_training_history`. Use the
+specific import key for each feed, or `FLEETPULSE_SEAT_KPI_IMPORT_API_KEY` as a
+shared scheduler key stored in Key Vault.
 
 #### Operating Cost Per Mile / Hour
 ```env
@@ -374,7 +393,7 @@ HR exports suppress applicant PII from every dashboard payload. Zapier or Power
 Automate should run this daily from the approved TenStreet Outlook/Zapier source
 and pass `X-FleetPulse-HR-Key` when `HR_RECRUITING_IMPORT_API_KEY` is configured.
 See [`docs/fleetpulse-scheduled-feed-wiring.md`](docs/fleetpulse-scheduled-feed-wiring.md)
-for the QBO, Xcelerator, and HR Zapier/Power Automate job contracts.
+for the QBO, Xcelerator, seat KPI, and HR Zapier/Power Automate job contracts.
 
 ### Backend
 ```bash

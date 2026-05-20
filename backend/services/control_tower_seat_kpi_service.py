@@ -19,6 +19,7 @@ from models import (
     ControlTowerStatus,
 )
 from services.operating_system_service import get_seats
+from services.seat_kpi_feed_service import feed_state_path_env, get_seat_kpi_feed_status
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class SeatKpiContract:
     base_status: ControlTowerStatus = ControlTowerStatus.AWAITING_FEED
     required_config: tuple[str, ...] = ()
     blocker: str | None = None
+    feed_key: str | None = None
 
 
 def _now() -> datetime:
@@ -142,10 +144,12 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         seat_id="operations_manager",
         target=">= 96%",
         source_authority="K1 Group LLC / Xcelerator dispatch lifecycle",
-        source_route=None,
+        source_route="/api/control-tower/seat-kpis/feeds/dispatch_timestamps/status",
+        base_status=ControlTowerStatus.WARNING,
+        feed_key="dispatch_timestamps",
         blocker="dispatch_timestamp_feed_missing",
-        required_config=("XCELERATOR_API_BASE_URL",),
-        owner_action="Add ready-to-dispatch, assigned, accepted, and late-dispatch timestamps.",
+        required_config=("FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH",),
+        owner_action="Schedule ready-to-dispatch, assigned, accepted, and late-dispatch timestamps.",
     ),
     SeatKpiContract(
         key="pickup_delivery_otd",
@@ -200,10 +204,12 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         seat_id="finance_controller",
         target="<= 5% over 48h",
         source_authority="K1 Group LLC / Xcelerator + SharePoint billing packets",
-        source_route=None,
+        source_route="/api/control-tower/seat-kpis/feeds/billing_exceptions/status",
+        base_status=ControlTowerStatus.WARNING,
+        feed_key="billing_exceptions",
         blocker="billing_packet_exception_feed_missing",
-        required_config=("XCELERATOR_API_BASE_URL", "SHAREPOINT_SITE_ID"),
-        owner_action="Publish delivered-not-invoice-ready queue with POD/billing packet blockers.",
+        required_config=("FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH",),
+        owner_action="Schedule delivered-not-invoice-ready queue with POD/billing packet blockers.",
     ),
     SeatKpiContract(
         key="driver_pay_exceptions",
@@ -223,10 +229,12 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         seat_id="finance_controller",
         target="closed within tolerance",
         source_authority="K1 Group LLC / QuickBooks + SharePoint close ledger",
-        source_route=None,
+        source_route="/api/control-tower/seat-kpis/feeds/weekly_close_variance/status",
+        base_status=ControlTowerStatus.WARNING,
+        feed_key="weekly_close_variance",
         blocker="weekly_close_ledger_missing",
-        required_config=("FLEETPULSE_QBO_FINANCIAL_FEED_URL|FLEETPULSE_QBO_FINANCIAL_STATE_PATH", "SHAREPOINT_SITE_ID"),
-        owner_action="Create SharePoint weekly close ledger with QBO reconciliation variance.",
+        required_config=("FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH",),
+        owner_action="Schedule SharePoint weekly close ledger with QBO reconciliation variance.",
     ),
     SeatKpiContract(
         key="truck_availability",
@@ -293,9 +301,10 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         seat_id="people_systems_manager",
         target=">= 95%",
         source_authority="K1 Workforce Intelligence / SharePoint Seat_Assignments",
-        source_route="/api/operating-system/task-kpi-matrix",
+        source_route="/api/control-tower/seat-kpis/feeds/sharepoint_seat_assignments/status",
         base_status=ControlTowerStatus.WARNING,
-        required_config=("SHAREPOINT_SITE_ID",),
+        feed_key="sharepoint_seat_assignments",
+        required_config=("FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_STATE_PATH",),
         blocker="sharepoint_seat_assignments_feed_missing",
         owner_action="Sync SharePoint Seat_Assignments as the seat authority.",
     ),
@@ -305,9 +314,11 @@ CATALOG: tuple[SeatKpiContract, ...] = (
         seat_id="people_systems_manager",
         target="100%",
         source_authority="K1 Workforce Intelligence / SharePoint Training_History",
-        source_route=None,
+        source_route="/api/control-tower/seat-kpis/feeds/sharepoint_training_history/status",
+        base_status=ControlTowerStatus.WARNING,
+        feed_key="sharepoint_training_history",
         blocker="training_history_feed_missing",
-        required_config=("SHAREPOINT_SITE_ID",),
+        required_config=("FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_STATE_PATH",),
         owner_action="Publish Training_History completion by employee and seat.",
     ),
     SeatKpiContract(
@@ -361,6 +372,20 @@ CATALOG: tuple[SeatKpiContract, ...] = (
 
 def _status_for(contract: SeatKpiContract) -> tuple[ControlTowerStatus, str | None, list[str]]:
     missing = _missing_config(contract.required_config)
+    if contract.feed_key:
+        try:
+            feed_status = get_seat_kpi_feed_status(contract.feed_key)
+        except KeyError:
+            return ControlTowerStatus.UNAVAILABLE, "seat_kpi_feed_registry_missing", [contract.feed_key]
+        if missing or not feed_status.get("state_path_configured"):
+            return (
+                ControlTowerStatus.AWAITING_FEED,
+                contract.blocker or "required_config_missing",
+                missing or [feed_state_path_env(contract.feed_key)],
+            )
+        if feed_status.get("status") != "healthy":
+            return ControlTowerStatus.AWAITING_FEED, contract.blocker or "scheduled_feed_awaiting_rows", []
+        return contract.base_status, contract.blocker if contract.base_status != ControlTowerStatus.HEALTHY else None, []
     if contract.source_route is None:
         return ControlTowerStatus.AWAITING_FEED, contract.blocker or "fleetpulse_route_not_implemented", missing
     if missing:

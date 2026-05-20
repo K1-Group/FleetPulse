@@ -31,6 +31,7 @@ jobs:
             backend/tests/test_lakehouse_lane_stability_service.py \
             backend/tests/test_lane_stability_router.py \
             backend/tests/test_qbo_financial_snapshot_service.py \
+            backend/tests/test_seat_kpi_feed_service.py \
             backend/tests/test_control_tower_router.py \
             backend/tests/test_hr_recruiting_service.py \
             backend/tests/test_hr_recruiting_router.py

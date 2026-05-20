@@ -21,6 +21,11 @@ AZURE_KEY_VAULT_NAME=kv-k1-fleetpulse
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
 HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
+FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH=/home/data/fleetpulse_billing_exceptions.json
+FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH=/home/data/fleetpulse_weekly_close_variance.json
+FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH=/home/data/fleetpulse_dispatch_timestamps.json
+FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_STATE_PATH=/home/data/fleetpulse_sharepoint_seat_assignments.json
+FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_STATE_PATH=/home/data/fleetpulse_sharepoint_training_history.json
 ```
 
 The script creates these Key Vault secrets if values are not supplied by env:
@@ -29,6 +34,11 @@ The script creates these Key Vault secrets if values are not supplied by env:
 FLEETPULSE-QBO-FINANCIAL-IMPORT-API-KEY
 FLEETPULSE-XCELERATOR-EVENT-IMPORT-API-KEY
 HR-RECRUITING-IMPORT-API-KEY
+FLEETPULSE-BILLING-EXCEPTIONS-IMPORT-API-KEY
+FLEETPULSE-WEEKLY-CLOSE-VARIANCE-IMPORT-API-KEY
+FLEETPULSE-DISPATCH-TIMESTAMPS-IMPORT-API-KEY
+FLEETPULSE-SHAREPOINT-SEAT-ASSIGNMENTS-IMPORT-API-KEY
+FLEETPULSE-SHAREPOINT-TRAINING-HISTORY-IMPORT-API-KEY
 ```
 
 ## Zapier Jobs
@@ -117,6 +127,36 @@ Required HR row fields:
 FleetPulse stores the source rows, but every HR dashboard and Power BI payload
 suppresses applicant PII.
 
+### Seat KPI Source Feeds
+
+Use these for the remaining fixed-seat KPI blockers shown in Tower > Financial.
+Each feed is read-only evidence and is idempotently stored by FleetPulse.
+
+Common route shape:
+
+- Status: `GET https://k1-fleetpulse.azurewebsites.net/api/control-tower/seat-kpis/feeds/{feed_key}/status`
+- Import: `POST https://k1-fleetpulse.azurewebsites.net/api/control-tower/seat-kpis/feeds/{feed_key}/import`
+- Header: `X-FleetPulse-Seat-KPI-Key: <matching Key Vault secret value>`
+
+Feed keys and minimum useful fields:
+
+| Feed key | Source authority | Minimum fields |
+| --- | --- | --- |
+| `billing_exceptions` | Xcelerator + SharePoint billing packets | `exception_id` or `order_id`, `status`, `created_at` |
+| `weekly_close_variance` | QBO + SharePoint weekly close ledger | `week_start`, `variance_amount`, `status` |
+| `dispatch_timestamps` | Xcelerator dispatch lifecycle | `load_id` or `order_id`, one of `ready_at`, `assigned_at`, `accepted_at`, `dispatched_at` |
+| `sharepoint_seat_assignments` | SharePoint `Seat_Assignments` | `seat_id`, `employee_id` or `user_principal_name`, `status` |
+| `sharepoint_training_history` | SharePoint `Training_History` | `employee_id` or `user_principal_name`, `training_id` or `course`, `status` or `completed_at` |
+
+Example body:
+
+```json
+{
+  "filename": "billing-exceptions-daily.json",
+  "content": "{\"rows\":[{\"exception_id\":\"BE-100\",\"order_id\":\"ORD-100\",\"status\":\"Open\",\"created_at\":\"2026-05-20T11:15:00Z\",\"blocker\":\"Missing POD\"}]}"
+}
+```
+
 ## Power Automate Equivalent
 
 For each feed, create a scheduled cloud flow:
@@ -137,6 +177,7 @@ After deploy and the first successful POST:
 curl -sS https://k1-fleetpulse.azurewebsites.net/api/fuel/qbo/financial/status
 curl -sS https://k1-fleetpulse.azurewebsites.net/api/control-tower/xcelerator/events/status
 curl -sS https://k1-fleetpulse.azurewebsites.net/api/hr-recruiting/status
+curl -sS https://k1-fleetpulse.azurewebsites.net/api/control-tower/seat-kpis/feeds/status
 ```
 
 Expected result: each response is read-only, exposes readiness metadata, and

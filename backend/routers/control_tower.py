@@ -16,6 +16,12 @@ from models import (
 )
 from services import control_tower_service
 from services.control_tower_seat_kpi_service import get_seat_kpi_coverage
+from services.seat_kpi_feed_service import (
+    get_seat_kpi_feed_status,
+    import_seat_kpi_feed,
+    list_seat_kpi_feed_statuses,
+    validate_seat_kpi_feed_import_api_key,
+)
 from services.trailer_tracking_service import get_live_trailer_tracking
 from services.xcelerator_event_feed_service import (
     import_xcelerator_events,
@@ -32,6 +38,12 @@ router = APIRouter()
 
 
 class XceleratorEventImportRequest(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    content: str = Field(min_length=1)
+    dry_run: bool = False
+
+
+class SeatKpiFeedImportRequest(BaseModel):
     filename: str | None = Field(default=None, max_length=255)
     content: str = Field(min_length=1)
     dry_run: bool = False
@@ -108,6 +120,42 @@ def import_xcelerator_event_feed(
 @router.get("/seat-kpis", response_model=ControlTowerSeatKpiCoverageResponse)
 def seat_kpis():
     return get_seat_kpi_coverage()
+
+
+@router.get("/seat-kpis/feeds/status")
+def seat_kpi_feed_statuses() -> dict:
+    return list_seat_kpi_feed_statuses()
+
+
+@router.get("/seat-kpis/feeds/{feed_key}/status")
+def seat_kpi_feed_status(feed_key: str) -> dict:
+    try:
+        return get_seat_kpi_feed_status(feed_key)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/seat-kpis/feeds/{feed_key}/import")
+def import_seat_kpi_feed_snapshot(
+    feed_key: str,
+    request: SeatKpiFeedImportRequest,
+    x_fleetpulse_seat_kpi_key: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    """Import scheduled source rows for missing seat KPI coverage."""
+
+    try:
+        validate_seat_kpi_feed_import_api_key(feed_key, x_fleetpulse_seat_kpi_key or x_api_key)
+        return import_seat_kpi_feed(
+            feed_key,
+            request.content,
+            filename=request.filename,
+            dry_run=request.dry_run,
+        ).as_dict()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @router.get("/agents", response_model=ControlTowerAgentsResponse)
