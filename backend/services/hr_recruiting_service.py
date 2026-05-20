@@ -27,6 +27,48 @@ DEFAULT_TABLE_ID = "01KR00WV4YHCB6BMYDE1EG7HEM"
 DEFAULT_SLA_HOURS = (24, 48, 72)
 SOURCE_AUTHORITY = "Zapier Table + approved TenStreet Outlook emails"
 SOURCE_SYSTEM = "TenStreet Outlook/Zapier"
+HARD_TARGETS: dict[str, dict[str, Any]] = {
+    "new_hires_7d": {
+        "label": "New Hires",
+        "target": 5,
+        "operator": ">=",
+        "unit": "hires",
+        "cadence": "7d",
+        "display_target": ">= 5/week",
+    },
+    "active_qualified_pipeline": {
+        "label": "Active Qualified Pipeline",
+        "target": 10,
+        "operator": ">=",
+        "unit": "applicants",
+        "cadence": "current",
+        "display_target": ">= 10 applicants",
+    },
+    "first_touch_24h_pct": {
+        "label": "First Touch Speed",
+        "target": 0.95,
+        "operator": ">=",
+        "unit": "pct",
+        "cadence": "current",
+        "display_target": ">= 95% within 24h",
+    },
+    "stale_untouched_48h": {
+        "label": "Stale Applicants",
+        "target": 0,
+        "operator": "<=",
+        "unit": "applicants",
+        "cadence": "current",
+        "display_target": "0 untouched >48h",
+    },
+    "orientation_show_rate": {
+        "label": "Orientation Show Rate",
+        "target": 0.50,
+        "operator": ">=",
+        "unit": "pct",
+        "cadence": "current",
+        "display_target": ">= 50%",
+    },
+}
 COMPLETED_STATUSES = {
     "complete",
     "completed",
@@ -37,6 +79,14 @@ COMPLETED_STATUSES = {
     "rejected",
     "declined",
     "withdrawn",
+}
+HIRED_STATUSES = {
+    "hired",
+    "hire",
+    "newhire",
+    "newhired",
+    "driverhired",
+    "onboarded",
 }
 
 SOURCE_EMAIL_ALIASES = (
@@ -115,6 +165,66 @@ COMPLETED_AT_ALIASES = (
     "finished_at",
     "Finished At",
 )
+FIRST_CONTACTED_AT_ALIASES = (
+    "first_contacted_at",
+    "First Contacted At",
+    "first_contact_at",
+    "First Contact At",
+    "first_touch_at",
+    "First Touch At",
+    "contacted_at",
+    "Contacted At",
+    "called_at",
+    "Called At",
+)
+HIRED_AT_ALIASES = (
+    "hired_at",
+    "Hired At",
+    "hire_date",
+    "Hire Date",
+    "new_hire_at",
+    "New Hire At",
+    "driver_hired_at",
+    "Driver Hired At",
+)
+QUALIFIED_ALIASES = (
+    "qualified",
+    "Qualified",
+    "is_qualified",
+    "Is Qualified",
+    "qualified_pipeline",
+    "Qualified Pipeline",
+    "active_qualified_pipeline",
+    "Active Qualified Pipeline",
+    "driver_qualified",
+    "Driver Qualified",
+)
+ORIENTATION_SCHEDULED_ALIASES = (
+    "orientation_scheduled",
+    "Orientation Scheduled",
+    "orientation_scheduled_at",
+    "Orientation Scheduled At",
+    "orientation_date",
+    "Orientation Date",
+    "orientation_at",
+    "Orientation At",
+)
+ORIENTATION_SHOWED_ALIASES = (
+    "orientation_showed",
+    "Orientation Showed",
+    "orientation_attended",
+    "Orientation Attended",
+    "orientation_completed",
+    "Orientation Completed",
+    "showed_orientation",
+    "Showed Orientation",
+)
+ORIENTATION_STATUS_ALIASES = (
+    "orientation_status",
+    "Orientation Status",
+    "orientation_result",
+    "Orientation Result",
+)
 
 
 @dataclass(frozen=True)
@@ -157,6 +267,7 @@ class HrRecruitingConfig:
             "state_path_configured": bool(self.snapshot_path),
             "sharepoint_reporting_log_configured": bool(self.sharepoint_reporting_log_url),
             "sla_hours": list(self.sla_hours),
+            "hard_targets": _public_hard_targets(),
             "source_authority": SOURCE_AUTHORITY,
             "projection_mode": "read_only",
             "pii_suppressed": True,
@@ -171,6 +282,12 @@ class RecruitingLead:
     first_assigned_at: datetime
     current_worklist_entered_at: datetime
     completed_at: datetime | None
+    first_contacted_at: datetime | None
+    hired_at: datetime | None
+    qualified: bool
+    qualification_evidence_present: bool
+    orientation_scheduled: bool
+    orientation_showed: bool
     source_email_id_present: bool
 
 
@@ -226,6 +343,14 @@ def _find_value(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
     return None
 
 
+def _find_existing_value(row: dict[str, Any], aliases: tuple[str, ...]) -> tuple[bool, Any]:
+    normalized_aliases = {_normalize_key(alias) for alias in aliases}
+    for key, value in row.items():
+        if _normalize_key(str(key)) in normalized_aliases:
+            return True, value
+    return False, None
+
+
 def _text(value: Any, default: str = "") -> str:
     if value is None:
         return default
@@ -246,6 +371,109 @@ def _status_key(status: str) -> str:
 
 def _is_completed(lead: RecruitingLead) -> bool:
     return bool(lead.completed_at) or _status_key(lead.status) in COMPLETED_STATUSES
+
+
+def _is_hired(lead: RecruitingLead) -> bool:
+    return bool(lead.hired_at) or _status_key(lead.status) in HIRED_STATUSES
+
+
+def _parse_boolish(value: Any, *, true_values: set[str] | None = None, false_values: set[str] | None = None) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = _normalize_key(str(value))
+    if not normalized:
+        return None
+    truthy = {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "complete",
+        "completed",
+        "attended",
+        "showed",
+        "shown",
+        "qualified",
+        "eligible",
+        "approved",
+        "cleared",
+        "ready",
+        *(true_values or set()),
+    }
+    falsey = {
+        "0",
+        "false",
+        "no",
+        "n",
+        "none",
+        "na",
+        "notqualified",
+        "unqualified",
+        "disqualified",
+        "ineligible",
+        "noshow",
+        "missed",
+        "cancelled",
+        "canceled",
+        *(false_values or set()),
+    }
+    if normalized in truthy:
+        return True
+    if normalized in falsey:
+        return False
+    return None
+
+
+def _parse_qualification(row: dict[str, Any], *, status: str, worklist: str) -> tuple[bool, bool]:
+    present, raw = _find_existing_value(row, QUALIFIED_ALIASES)
+    parsed = _parse_boolish(raw) if present else None
+    if parsed is not None:
+        return True, parsed
+
+    status_worklist_key = _normalize_key(f"{status} {worklist}")
+    negative_terms = ("notqualified", "unqualified", "disqualified", "ineligible")
+    positive_terms = ("qualified", "eligible", "approved", "cleared")
+    if any(term in status_worklist_key for term in negative_terms):
+        return True, False
+    if any(term in status_worklist_key for term in positive_terms):
+        return True, True
+    return present, False
+
+
+def _parse_orientation(row: dict[str, Any], *, status: str, worklist: str) -> tuple[bool, bool]:
+    scheduled_present, scheduled_raw = _find_existing_value(row, ORIENTATION_SCHEDULED_ALIASES)
+    showed_present, showed_raw = _find_existing_value(row, ORIENTATION_SHOWED_ALIASES)
+    orientation_status_present, orientation_status_raw = _find_existing_value(row, ORIENTATION_STATUS_ALIASES)
+
+    scheduled = False
+    if scheduled_present:
+        scheduled_bool = _parse_boolish(scheduled_raw)
+        scheduled = scheduled_bool if scheduled_bool is not None else bool(_text(scheduled_raw))
+    showed = False
+    if showed_present:
+        showed = bool(_parse_boolish(showed_raw))
+
+    orientation_key = _normalize_key(str(orientation_status_raw or ""))
+    if orientation_status_present and orientation_key:
+        scheduled = True
+        if any(term in orientation_key for term in ("noshow", "missed", "cancelled", "canceled")):
+            showed = False
+        elif any(term in orientation_key for term in ("showed", "shown", "attended", "complete", "completed")):
+            showed = True
+
+    status_worklist_key = _normalize_key(f"{status} {worklist}")
+    if "orientation" in status_worklist_key:
+        scheduled = True
+        if any(term in status_worklist_key for term in ("noshow", "missed")):
+            showed = False
+        elif any(term in status_worklist_key for term in ("showed", "attended", "complete", "completed")):
+            showed = True
+
+    return scheduled, showed
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -370,9 +598,13 @@ def _normalize_lead(row: dict[str, Any]) -> tuple[RecruitingLead | None, str | N
     current_worklist_entered_at = (
         _parse_datetime(_find_value(row, WORKLIST_ENTERED_ALIASES)) or first_assigned_at
     )
-    completed_at = _parse_datetime(_find_value(row, COMPLETED_AT_ALIASES))
+    first_contacted_at = _parse_datetime(_find_value(row, FIRST_CONTACTED_AT_ALIASES))
+    hired_at = _parse_datetime(_find_value(row, HIRED_AT_ALIASES))
+    completed_at = _parse_datetime(_find_value(row, COMPLETED_AT_ALIASES)) or hired_at
     worklist = _text(_find_value(row, WORKLIST_ALIASES), "Unassigned")
     status = _status_label(_find_value(row, STATUS_ALIASES), completed_at)
+    qualification_evidence_present, qualified = _parse_qualification(row, status=status, worklist=worklist)
+    orientation_scheduled, orientation_showed = _parse_orientation(row, status=status, worklist=worklist)
 
     source_email_id = _text(_find_value(row, SOURCE_EMAIL_ALIASES))
     if source_email_id:
@@ -391,6 +623,12 @@ def _normalize_lead(row: dict[str, Any]) -> tuple[RecruitingLead | None, str | N
             first_assigned_at=first_assigned_at,
             current_worklist_entered_at=current_worklist_entered_at,
             completed_at=completed_at,
+            first_contacted_at=first_contacted_at,
+            hired_at=hired_at,
+            qualified=qualified,
+            qualification_evidence_present=qualification_evidence_present,
+            orientation_scheduled=orientation_scheduled,
+            orientation_showed=orientation_showed,
             source_email_id_present=source_email_id_present,
         ),
         None,
@@ -402,6 +640,14 @@ def _prefer_new_lead(existing: RecruitingLead, candidate: RecruitingLead) -> boo
         return True
     if existing.completed_at and not candidate.completed_at:
         return False
+    if not existing.hired_at and candidate.hired_at:
+        return True
+    if not existing.first_contacted_at and candidate.first_contacted_at:
+        return True
+    if not existing.orientation_showed and candidate.orientation_showed:
+        return True
+    if not existing.qualification_evidence_present and candidate.qualification_evidence_present:
+        return True
     return candidate.current_worklist_entered_at > existing.current_worklist_entered_at
 
 
@@ -570,6 +816,56 @@ def validate_hr_recruiting_import_api_key(provided: str | None) -> None:
         raise PermissionError("Invalid HR recruiting import API key")
 
 
+def _public_hard_targets() -> dict[str, dict[str, Any]]:
+    return {
+        key: {
+            "label": spec["label"],
+            "target": spec["target"],
+            "operator": spec["operator"],
+            "unit": spec["unit"],
+            "cadence": spec["cadence"],
+            "display_target": spec["display_target"],
+        }
+        for key, spec in HARD_TARGETS.items()
+    }
+
+
+def _target_met(actual: float, operator: str, target: float) -> bool:
+    if operator == ">=":
+        return actual >= target
+    if operator == "<=":
+        return actual <= target
+    return actual == target
+
+
+def _build_hard_target_results(
+    actuals: dict[str, int | float | None],
+    *,
+    evidence_available: dict[str, bool],
+) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    for key, spec in HARD_TARGETS.items():
+        actual = actuals.get(key)
+        can_evaluate = evidence_available.get(key, actual is not None) and actual is not None
+        status = (
+            "awaiting_feed"
+            if not can_evaluate
+            else "healthy" if _target_met(float(actual), str(spec["operator"]), float(spec["target"])) else "warning"
+        )
+        results[key] = {
+            "key": key,
+            "label": spec["label"],
+            "actual": actual,
+            "target": spec["target"],
+            "operator": spec["operator"],
+            "unit": spec["unit"],
+            "cadence": spec["cadence"],
+            "display_target": spec["display_target"],
+            "status": status,
+        }
+    return results
+
+
 def build_hr_recruiting_dataset(
     records: list[dict[str, Any]],
     *,
@@ -604,6 +900,47 @@ def build_hr_recruiting_dataset(
     leads = list(deduped.values())
     active_leads = [lead for lead in leads if not _is_completed(lead)]
     completed_leads = [lead for lead in leads if lead.completed_at is not None]
+    new_hire_start = today - timedelta(days=6)
+    new_hires_7d = sum(
+        1
+        for lead in completed_leads
+        if _is_hired(lead)
+        and lead.completed_at
+        and new_hire_start <= lead.completed_at.date() <= today
+    )
+    active_qualified_pipeline = sum(
+        1 for lead in active_leads if lead.qualification_evidence_present and lead.qualified
+    )
+    first_touch_eligible = [
+        lead
+        for lead in leads
+        if lead.first_contacted_at is not None or _hours_between(lead.first_assigned_at, as_of) >= 24
+    ]
+    first_touch_within_24h = sum(
+        1
+        for lead in first_touch_eligible
+        if lead.first_contacted_at is not None
+        and _hours_between(lead.first_assigned_at, lead.first_contacted_at) <= 24
+    )
+    first_touch_24h_pct = (
+        round(first_touch_within_24h / len(first_touch_eligible), 4)
+        if first_touch_eligible
+        else None
+    )
+    stale_untouched_48h = sum(
+        1
+        for lead in active_leads
+        if lead.first_contacted_at is None and _hours_between(lead.first_assigned_at, as_of) > 48
+    )
+    orientation_scheduled_count = sum(1 for lead in leads if lead.orientation_scheduled)
+    orientation_show_count = sum(
+        1 for lead in leads if lead.orientation_scheduled and lead.orientation_showed
+    )
+    orientation_show_rate = (
+        round(orientation_show_count / orientation_scheduled_count, 4)
+        if orientation_scheduled_count
+        else None
+    )
 
     summary = {
         "active_leads": len(active_leads),
@@ -615,6 +952,15 @@ def build_hr_recruiting_dataset(
             if _hours_between(lead.current_worklist_entered_at, as_of) >= primary_stale_hours
         ),
         "completed_today": sum(1 for lead in completed_leads if lead.completed_at and lead.completed_at.date() == today),
+        "new_hires_7d": new_hires_7d,
+        "active_qualified_pipeline": active_qualified_pipeline,
+        "first_touch_24h_pct": first_touch_24h_pct,
+        "first_touch_eligible_count": len(first_touch_eligible),
+        "first_touch_within_24h_count": first_touch_within_24h,
+        "stale_untouched_48h": stale_untouched_48h,
+        "orientation_scheduled_count": orientation_scheduled_count,
+        "orientation_show_count": orientation_show_count,
+        "orientation_show_rate": orientation_show_rate,
     }
 
     by_worklist = _build_by_worklist(active_leads, leads, as_of, visible_thresholds)
@@ -625,6 +971,36 @@ def build_hr_recruiting_dataset(
     ]
     trend = _build_trend(leads, active_leads, as_of, primary_stale_hours)
     derived_source_status = source_status if records or source_status != "ok" else "empty"
+    can_evaluate_targets = derived_source_status in {"ok", "empty"}
+    hard_targets = _build_hard_target_results(
+        {
+            "new_hires_7d": new_hires_7d,
+            "active_qualified_pipeline": active_qualified_pipeline,
+            "first_touch_24h_pct": first_touch_24h_pct,
+            "stale_untouched_48h": stale_untouched_48h,
+            "orientation_show_rate": orientation_show_rate,
+        },
+        evidence_available={
+            "new_hires_7d": can_evaluate_targets,
+            "active_qualified_pipeline": can_evaluate_targets and (
+                derived_source_status == "empty" or any(lead.qualification_evidence_present for lead in leads)
+            ),
+            "first_touch_24h_pct": can_evaluate_targets and len(first_touch_eligible) > 0,
+            "stale_untouched_48h": can_evaluate_targets,
+            "orientation_show_rate": can_evaluate_targets and orientation_scheduled_count > 0,
+        },
+    )
+    hard_target_misses = [
+        key for key, target in hard_targets.items() if target["status"] == "warning"
+    ]
+    hard_target_pending = [
+        key for key, target in hard_targets.items() if target["status"] == "awaiting_feed"
+    ]
+    hard_target_status = (
+        "awaiting_feed"
+        if hard_target_pending and not hard_target_misses
+        else "healthy" if not hard_target_misses and not hard_target_pending else "warning"
+    )
 
     dataset = {
         "generated_at": as_of.isoformat(),
@@ -637,6 +1013,10 @@ def build_hr_recruiting_dataset(
         "source_message": source_message,
         "pii_suppressed": True,
         "sla_hours": list(config.sla_hours),
+        "hard_targets": hard_targets,
+        "hard_target_status": hard_target_status,
+        "hard_target_misses": hard_target_misses,
+        "hard_target_pending": hard_target_pending,
         "summary": summary,
         "by_worklist": by_worklist,
         "daily": daily,

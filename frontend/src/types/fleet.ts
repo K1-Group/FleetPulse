@@ -605,6 +605,29 @@ export interface HrRecruitingSummary {
   avg_process_age_hours: number
   stale_leads: number
   completed_today: number
+  new_hires_7d: number
+  active_qualified_pipeline: number
+  first_touch_24h_pct: number | null
+  first_touch_eligible_count: number
+  first_touch_within_24h_count: number
+  stale_untouched_48h: number
+  orientation_scheduled_count: number
+  orientation_show_count: number
+  orientation_show_rate: number | null
+}
+
+export type HrRecruitingHardTargetStatus = 'healthy' | 'warning' | 'awaiting_feed'
+
+export interface HrRecruitingHardTarget {
+  key: string
+  label: string
+  actual: number | null
+  target: number
+  operator: '>=' | '<=' | '=' | string
+  unit: string
+  cadence: string
+  display_target: string
+  status: HrRecruitingHardTargetStatus
 }
 
 export interface HrRecruitingWorklistRow {
@@ -651,6 +674,10 @@ export interface HrRecruitingDataset {
   source_message: string | null
   pii_suppressed: boolean
   sla_hours: number[]
+  hard_targets: Record<string, HrRecruitingHardTarget>
+  hard_target_status: HrRecruitingHardTargetStatus
+  hard_target_misses: string[]
+  hard_target_pending: string[]
   summary: HrRecruitingSummary
   by_worklist: HrRecruitingWorklistRow[]
   daily: HrRecruitingDailyRow[]
