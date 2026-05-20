@@ -217,6 +217,9 @@ The Finance tab combines existing read-only sources:
 
 No separate write credentials are required. The dashboard reads the same
 Xcelerator/Fabric and QBO app settings used by Control Tower and Fuel analytics.
+The Control Tower Financial tab also reads `GET /api/fuel/operating-cost?days=364`
+and `GET /api/lane-stability?window=364` to show a 52-week financial operating
+cost trend beside lane-stability risk signals.
 
 #### Operating Cost Per Mile / Hour
 ```env
@@ -320,6 +323,11 @@ lifecycle, FinanceOps health, QBO status, Xcelerator reference, and Power BI
 cards, but those backend services remain separate owners. See
 [`docs/architecture/k1-operations-hub-migration.md`](docs/architecture/k1-operations-hub-migration.md)
 for the replacement matrix and production gates.
+Tower > Financial includes a 52-week action view for K1 Logistics operating cost,
+CPM spikes, lane stable coverage, critical lanes, and cross-route lanes. The
+same panel lists seat-KPI coverage still needed for the fixed-seat operating
+system, with FleetPulse remaining the KPI provider and the workforce ledger
+remaining the seat authority.
 
 ### Backend
 ```bash
