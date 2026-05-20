@@ -397,6 +397,10 @@ read-only state file, then `GET /api/hr-recruiting/worklist` and the Power BI
 HR exports suppress applicant PII from every dashboard payload. Zapier or Power
 Automate should run this daily from the approved TenStreet Outlook/Zapier source
 and pass `X-FleetPulse-HR-Key` when `HR_RECRUITING_IMPORT_API_KEY` is configured.
+The first hard recruiting targets are fixed in the read-only projection: new
+hires >= 5 per rolling 7 days, active qualified pipeline >= 10 applicants,
+first-touch speed >= 95% within 24 hours, stale applicants = 0 untouched over
+48 hours, and orientation show rate >= 50%.
 See [`docs/fleetpulse-scheduled-feed-wiring.md`](docs/fleetpulse-scheduled-feed-wiring.md)
 for the QBO, Xcelerator, seat KPI, and HR Zapier/Power Automate job contracts.
 

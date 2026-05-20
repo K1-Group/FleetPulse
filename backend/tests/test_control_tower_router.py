@@ -192,6 +192,9 @@ def test_seat_kpi_coverage_reports_missing_source_contracts(monkeypatch):
     assert billing_gap["status"] == "awaiting_feed"
     assert billing_gap["source_route"] == "/api/control-tower/seat-kpis/feeds/billing_exceptions/status"
     assert "billing_packet_exception_feed_missing" == billing_gap["blocker"]
+    hr_gap = next(item for item in payload["kpis"] if item["key"] == "hr_recruiting_worklist_sla")
+    assert "10 qualified applicants" in hr_gap["target"]
+    assert "95% first touch <=24h" in hr_gap["target"]
 
 
 def test_seat_kpi_coverage_marks_configured_routes_as_available(monkeypatch):

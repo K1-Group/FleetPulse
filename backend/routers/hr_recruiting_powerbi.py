@@ -45,7 +45,13 @@ async def powerbi_hr_recruiting_summary() -> list[dict[str, Any]]:
     snapshot = await get_hr_recruiting_dataset()
     return [
         _with_hr_recruiting_meta(
-            {**_hr_period(snapshot), **snapshot["summary"]},
+            {
+                **_hr_period(snapshot),
+                **snapshot["summary"],
+                "hard_target_status": snapshot.get("hard_target_status"),
+                "hard_target_misses": ",".join(snapshot.get("hard_target_misses", [])),
+                "hard_target_pending": ",".join(snapshot.get("hard_target_pending", [])),
+            },
             "hr_recruiting_summary",
         )
     ]

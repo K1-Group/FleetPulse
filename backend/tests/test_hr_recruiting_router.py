@@ -50,7 +50,81 @@ def _dataset() -> dict:
             "avg_process_age_hours": 50.0,
             "stale_leads": 1,
             "completed_today": 1,
+            "new_hires_7d": 1,
+            "active_qualified_pipeline": 2,
+            "first_touch_24h_pct": 0.6667,
+            "first_touch_eligible_count": 3,
+            "first_touch_within_24h_count": 2,
+            "stale_untouched_48h": 1,
+            "orientation_scheduled_count": 1,
+            "orientation_show_count": 1,
+            "orientation_show_rate": 1.0,
         },
+        "hard_targets": {
+            "new_hires_7d": {
+                "key": "new_hires_7d",
+                "label": "New Hires",
+                "actual": 1,
+                "target": 5,
+                "operator": ">=",
+                "unit": "hires",
+                "cadence": "7d",
+                "display_target": ">= 5/week",
+                "status": "warning",
+            },
+            "active_qualified_pipeline": {
+                "key": "active_qualified_pipeline",
+                "label": "Active Qualified Pipeline",
+                "actual": 2,
+                "target": 10,
+                "operator": ">=",
+                "unit": "applicants",
+                "cadence": "current",
+                "display_target": ">= 10 applicants",
+                "status": "warning",
+            },
+            "first_touch_24h_pct": {
+                "key": "first_touch_24h_pct",
+                "label": "First Touch Speed",
+                "actual": 0.6667,
+                "target": 0.95,
+                "operator": ">=",
+                "unit": "pct",
+                "cadence": "current",
+                "display_target": ">= 95% within 24h",
+                "status": "warning",
+            },
+            "stale_untouched_48h": {
+                "key": "stale_untouched_48h",
+                "label": "Stale Applicants",
+                "actual": 1,
+                "target": 0,
+                "operator": "<=",
+                "unit": "applicants",
+                "cadence": "current",
+                "display_target": "0 untouched >48h",
+                "status": "warning",
+            },
+            "orientation_show_rate": {
+                "key": "orientation_show_rate",
+                "label": "Orientation Show Rate",
+                "actual": 1.0,
+                "target": 0.5,
+                "operator": ">=",
+                "unit": "pct",
+                "cadence": "current",
+                "display_target": ">= 50%",
+                "status": "healthy",
+            },
+        },
+        "hard_target_status": "warning",
+        "hard_target_misses": [
+            "new_hires_7d",
+            "active_qualified_pipeline",
+            "first_touch_24h_pct",
+            "stale_untouched_48h",
+        ],
+        "hard_target_pending": [],
         "by_worklist": [
             {
                 "worklist": "Recruiter Review",
@@ -114,6 +188,8 @@ def test_hr_recruiting_worklist_endpoint_returns_read_only_dataset(monkeypatch) 
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
     assert payload["summary"]["active_leads"] == 2
+    assert payload["hard_targets"]["new_hires_7d"]["display_target"] == ">= 5/week"
+    assert payload["hard_targets"]["first_touch_24h_pct"]["target"] == 0.95
     assert payload["pii_suppressed"] is True
     assert "phone" not in str(payload).lower()
     assert "ssn" not in str(payload).lower()
@@ -176,5 +252,6 @@ def test_hr_recruiting_powerbi_snapshot_has_required_tables(monkeypatch) -> None
     payload = response.json()
     assert payload["connection_name"] == "hr_recruiting_snapshot"
     assert payload["summary"]["completed_today"] == 1
+    assert payload["hard_target_status"] == "warning"
     assert payload["by_worklist"][0]["stale_24h"] == 0
     assert payload["status_counts"][0]["status"] == "Assigned"

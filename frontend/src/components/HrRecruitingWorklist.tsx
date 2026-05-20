@@ -24,6 +24,7 @@ import {
 import { useHrRecruitingWorklist } from '../hooks/useGeotab'
 import type {
   HrRecruitingDailyRow,
+  HrRecruitingHardTarget,
   HrRecruitingStatusCount,
   HrRecruitingSummary,
   HrRecruitingTrendRow,
@@ -36,9 +37,76 @@ const ZERO_SUMMARY: HrRecruitingSummary = {
   avg_process_age_hours: 0,
   stale_leads: 0,
   completed_today: 0,
+  new_hires_7d: 0,
+  active_qualified_pipeline: 0,
+  first_touch_24h_pct: null,
+  first_touch_eligible_count: 0,
+  first_touch_within_24h_count: 0,
+  stale_untouched_48h: 0,
+  orientation_scheduled_count: 0,
+  orientation_show_count: 0,
+  orientation_show_rate: null,
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US')
+
+const FALLBACK_HARD_TARGETS: Record<string, HrRecruitingHardTarget> = {
+  new_hires_7d: {
+    key: 'new_hires_7d',
+    label: 'New Hires',
+    actual: 0,
+    target: 5,
+    operator: '>=',
+    unit: 'hires',
+    cadence: '7d',
+    display_target: '>= 5/week',
+    status: 'awaiting_feed',
+  },
+  active_qualified_pipeline: {
+    key: 'active_qualified_pipeline',
+    label: 'Active Qualified Pipeline',
+    actual: 0,
+    target: 10,
+    operator: '>=',
+    unit: 'applicants',
+    cadence: 'current',
+    display_target: '>= 10 applicants',
+    status: 'awaiting_feed',
+  },
+  first_touch_24h_pct: {
+    key: 'first_touch_24h_pct',
+    label: 'First Touch Speed',
+    actual: null,
+    target: 0.95,
+    operator: '>=',
+    unit: 'pct',
+    cadence: 'current',
+    display_target: '>= 95% within 24h',
+    status: 'awaiting_feed',
+  },
+  stale_untouched_48h: {
+    key: 'stale_untouched_48h',
+    label: 'Stale Applicants',
+    actual: 0,
+    target: 0,
+    operator: '<=',
+    unit: 'applicants',
+    cadence: 'current',
+    display_target: '0 untouched >48h',
+    status: 'awaiting_feed',
+  },
+  orientation_show_rate: {
+    key: 'orientation_show_rate',
+    label: 'Orientation Show Rate',
+    actual: null,
+    target: 0.5,
+    operator: '>=',
+    unit: 'pct',
+    cadence: 'current',
+    display_target: '>= 50%',
+    status: 'awaiting_feed',
+  },
+}
 
 function formatCount(value: number | null | undefined) {
   return numberFormatter.format(Number(value || 0))
@@ -46,6 +114,34 @@ function formatCount(value: number | null | undefined) {
 
 function formatHours(value: number | null | undefined) {
   return `${Number(value || 0).toFixed(1)}h`
+}
+
+function formatPercentValue(value: number | null | undefined) {
+  if (value === null || value === undefined) return '--'
+  return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+function targetOrFallback(targets: Record<string, HrRecruitingHardTarget> | undefined, key: string, actual: number | null) {
+  const target = targets?.[key] || FALLBACK_HARD_TARGETS[key]
+  return { ...target, actual: target?.actual ?? actual }
+}
+
+function targetValue(target: HrRecruitingHardTarget) {
+  if (target.unit === 'pct') return formatPercentValue(target.actual)
+  if (target.actual === null || target.actual === undefined) return '--'
+  return formatCount(target.actual)
+}
+
+function statusLabel(status: HrRecruitingHardTarget['status']) {
+  if (status === 'healthy') return 'On target'
+  if (status === 'warning') return 'Off target'
+  return 'Awaiting feed'
+}
+
+function statusClasses(status: HrRecruitingHardTarget['status']) {
+  if (status === 'healthy') return 'border-emerald-500/40 text-emerald-200 light:text-emerald-700'
+  if (status === 'warning') return 'border-amber-500/40 text-amber-200 light:text-amber-700'
+  return 'border-gray-700 text-gray-400 light:border-gray-300 light:text-gray-600'
 }
 
 function compactDate(value: string) {
@@ -76,16 +172,18 @@ function KpiCard({
   value,
   detail,
   tone,
+  status,
 }: {
   icon: ReactNode
   label: string
   value: string
   detail: string
   tone: string
+  status?: HrRecruitingHardTarget['status']
 }) {
   return (
     <motion.div
-      className="rounded-xl border border-gray-800/70 bg-gray-900/65 p-4 shadow-lg light:border-gray-200 light:bg-white"
+      className={`rounded-xl border bg-gray-900/65 p-4 shadow-lg light:bg-white ${status ? statusClasses(status) : 'border-gray-800/70 light:border-gray-200'}`}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
@@ -94,7 +192,14 @@ function KpiCard({
         <div className={`rounded-lg p-2 ${tone}`}>{icon}</div>
         <p className="text-2xl font-bold text-white light:text-gray-900">{value}</p>
       </div>
-      <p className="mt-3 text-sm font-medium text-gray-200 light:text-gray-800">{label}</p>
+      <div className="mt-3 flex items-start justify-between gap-2">
+        <p className="text-sm font-medium text-gray-200 light:text-gray-800">{label}</p>
+        {status && (
+          <span className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium ${statusClasses(status)}`}>
+            {statusLabel(status)}
+          </span>
+        )}
+      </div>
       <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{detail}</p>
     </motion.div>
   )
@@ -291,6 +396,13 @@ export default function HrRecruitingWorklist() {
   const trend = data?.trend || []
   const statusCounts = data?.status_counts || []
   const daily = data?.daily || []
+  const hardTargets = [
+    targetOrFallback(data?.hard_targets, 'new_hires_7d', summary.new_hires_7d),
+    targetOrFallback(data?.hard_targets, 'active_qualified_pipeline', summary.active_qualified_pipeline),
+    targetOrFallback(data?.hard_targets, 'first_touch_24h_pct', summary.first_touch_24h_pct),
+    targetOrFallback(data?.hard_targets, 'stale_untouched_48h', summary.stale_untouched_48h),
+    targetOrFallback(data?.hard_targets, 'orientation_show_rate', summary.orientation_show_rate),
+  ]
   const sourceMessage = data?.source_message || 'Configure the approved Zapier/Outlook HR snapshot to populate this monitor.'
   const empty = !loading && !error && data && data.row_counts.deduped_leads === 0
 
@@ -344,11 +456,11 @@ export default function HrRecruitingWorklist() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard icon={<Users className="h-5 w-5 text-cyan-200" />} label="Active Leads" value={formatCount(summary.active_leads)} detail="Currently open worklist items" tone="bg-cyan-500/15" />
-        <KpiCard icon={<TrendingUp className="h-5 w-5 text-emerald-200" />} label="New Today" value={formatCount(summary.new_leads_today)} detail="First assignments today" tone="bg-emerald-500/15" />
-        <KpiCard icon={<Clock className="h-5 w-5 text-blue-200" />} label="Avg Process Age" value={formatHours(summary.avg_process_age_hours)} detail="Open lead age from first assignment" tone="bg-blue-500/15" />
-        <KpiCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Stale Leads" value={formatCount(summary.stale_leads)} detail="Open items over SLA threshold" tone="bg-amber-500/15" />
-        <KpiCard icon={<ShieldCheck className="h-5 w-5 text-violet-200" />} label="Completed Today" value={formatCount(summary.completed_today)} detail="Completed with process time" tone="bg-violet-500/15" />
+        <KpiCard icon={<Users className="h-5 w-5 text-cyan-200" />} label={hardTargets[0].label} value={targetValue(hardTargets[0])} detail={`Target ${hardTargets[0].display_target}`} tone="bg-cyan-500/15" status={hardTargets[0].status} />
+        <KpiCard icon={<TrendingUp className="h-5 w-5 text-emerald-200" />} label={hardTargets[1].label} value={targetValue(hardTargets[1])} detail={`Target ${hardTargets[1].display_target}`} tone="bg-emerald-500/15" status={hardTargets[1].status} />
+        <KpiCard icon={<Clock className="h-5 w-5 text-blue-200" />} label={hardTargets[2].label} value={targetValue(hardTargets[2])} detail={`Target ${hardTargets[2].display_target}`} tone="bg-blue-500/15" status={hardTargets[2].status} />
+        <KpiCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label={hardTargets[3].label} value={targetValue(hardTargets[3])} detail={`Target ${hardTargets[3].display_target}`} tone="bg-amber-500/15" status={hardTargets[3].status} />
+        <KpiCard icon={<ShieldCheck className="h-5 w-5 text-violet-200" />} label={hardTargets[4].label} value={targetValue(hardTargets[4])} detail={`Target ${hardTargets[4].display_target}`} tone="bg-violet-500/15" status={hardTargets[4].status} />
       </div>
 
       {empty && <EmptyPanel message={sourceMessage} />}

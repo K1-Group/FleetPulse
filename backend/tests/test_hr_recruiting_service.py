@@ -37,6 +37,8 @@ def test_hr_recruiting_dataset_calculates_age_stale_and_process_time() -> None:
             "status": "Assigned",
             "first_assigned_at": "2026-05-14T10:00:00Z",
             "current_worklist_entered_at": "2026-05-15T00:00:00Z",
+            "first_contacted_at": "2026-05-14T12:00:00Z",
+            "qualified": "yes",
             "phone": "555-0100",
             "email": "private.one@example.com",
             "ssn": "123-45-6789",
@@ -48,11 +50,13 @@ def test_hr_recruiting_dataset_calculates_age_stale_and_process_time() -> None:
             "status": "Assigned",
             "first_assigned_at": "2026-05-14T10:00:00Z",
             "current_worklist_entered_at": "2026-05-15T00:00:00Z",
+            "first_contacted_at": "2026-05-14T12:00:00Z",
+            "qualified": "yes",
         },
         {
             "applicant": "Private Applicant Two",
             "worklist": "Safety Review",
-            "status": "In Progress",
+            "status": "Qualified",
             "first_assigned_at": "2026-05-12T10:00:00Z",
             "current_worklist_entered_at": "2026-05-12T12:00:00Z",
         },
@@ -63,7 +67,11 @@ def test_hr_recruiting_dataset_calculates_age_stale_and_process_time() -> None:
             "status": "Completed",
             "first_assigned_at": "2026-05-15T08:00:00Z",
             "current_worklist_entered_at": "2026-05-15T08:00:00Z",
+            "first_contacted_at": "2026-05-15T09:00:00Z",
             "completed_at": "2026-05-15T11:00:00Z",
+            "hired_at": "2026-05-15T11:00:00Z",
+            "orientation_scheduled_at": "2026-05-15T10:00:00Z",
+            "orientation_showed": "yes",
         },
     ]
 
@@ -79,7 +87,23 @@ def test_hr_recruiting_dataset_calculates_age_stale_and_process_time() -> None:
         "avg_process_age_hours": 50.0,
         "stale_leads": 1,
         "completed_today": 1,
+        "new_hires_7d": 1,
+        "active_qualified_pipeline": 2,
+        "first_touch_24h_pct": 0.6667,
+        "first_touch_eligible_count": 3,
+        "first_touch_within_24h_count": 2,
+        "stale_untouched_48h": 1,
+        "orientation_scheduled_count": 1,
+        "orientation_show_count": 1,
+        "orientation_show_rate": 1.0,
     }
+    assert dataset["hard_target_status"] == "warning"
+    assert dataset["hard_targets"]["active_qualified_pipeline"]["target"] == 10
+    assert dataset["hard_targets"]["active_qualified_pipeline"]["status"] == "warning"
+    assert dataset["hard_targets"]["new_hires_7d"]["display_target"] == ">= 5/week"
+    assert dataset["hard_targets"]["first_touch_24h_pct"]["display_target"] == ">= 95% within 24h"
+    assert dataset["hard_targets"]["orientation_show_rate"]["status"] == "healthy"
+    assert "stale_untouched_48h" in dataset["hard_target_misses"]
 
     by_worklist = {row["worklist"]: row for row in dataset["by_worklist"]}
     assert by_worklist["Recruiter Review"]["avg_age_hours"] == 12.0
@@ -143,6 +167,8 @@ def test_empty_hr_recruiting_dataset_is_explicit_and_safe() -> None:
 
     assert dataset["source_status"] == "snapshot_not_configured"
     assert dataset["summary"]["active_leads"] == 0
+    assert dataset["hard_target_status"] == "awaiting_feed"
+    assert dataset["hard_targets"]["active_qualified_pipeline"]["status"] == "awaiting_feed"
     assert dataset["by_worklist"] == []
     assert dataset["daily"] == []
     assert dataset["status_counts"] == []
