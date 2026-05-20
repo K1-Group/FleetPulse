@@ -135,6 +135,21 @@ function average(values: Array<number | null | undefined>) {
   return usable.reduce((sum, value) => sum + value, 0) / usable.length
 }
 
+function kpiMetricSummary(item: ControlTowerSeatKpiItem) {
+  const summary = item.metric_summary ?? {}
+  const parts: string[] = []
+  if (finite(Number(summary.row_count)) !== null) parts.push(`${number(Number(summary.row_count))} rows`)
+  if (finite(Number(summary.open_count)) !== null) parts.push(`${number(Number(summary.open_count))} open`)
+  if (finite(Number(summary.over_48h_count)) !== null) parts.push(`${number(Number(summary.over_48h_count))} over 48h`)
+  if (finite(Number(summary.late_dispatch_count)) !== null) parts.push(`${number(Number(summary.late_dispatch_count))} late dispatch`)
+  if (finite(Number(summary.missing_dispatch_timestamp_count)) !== null) parts.push(`${number(Number(summary.missing_dispatch_timestamp_count))} missing dispatch stamps`)
+  if (finite(Number(summary.total_abs_variance)) !== null) parts.push(`${money(Number(summary.total_abs_variance))} variance`)
+  if (finite(Number(summary.filled_seat_count)) !== null) parts.push(`${number(Number(summary.filled_seat_count))} seats filled`)
+  if (finite(Number(summary.completed_count)) !== null) parts.push(`${number(Number(summary.completed_count))} completed`)
+  if (finite(Number(summary.incomplete_count)) !== null) parts.push(`${number(Number(summary.incomplete_count))} incomplete`)
+  return parts.slice(0, 3).join(' · ')
+}
+
 function stablePct(value: number | null | undefined) {
   const numeric = finite(value) ?? 0
   return Math.abs(numeric) <= 1 ? numeric * 100 : numeric
@@ -557,6 +572,11 @@ function SeatKpiNeedsPanel({
                         <StatusPill status={item.status} />
                       </div>
                       <div className="mt-2 text-[11px] leading-4 text-gray-400 light:text-gray-700">{item.owner_action}</div>
+                      {kpiMetricSummary(item) && (
+                        <div className="mt-2 rounded border border-gray-800 bg-gray-950/50 px-2 py-1 text-[10px] text-blue-200 light:border-gray-200 light:bg-gray-100 light:text-blue-800">
+                          {kpiMetricSummary(item)}
+                        </div>
+                      )}
                       <div className="mt-2 text-[11px] text-gray-500 light:text-gray-600">{item.source_authority}</div>
                       {item.source_route && (
                         <div className="mt-1 truncate font-mono text-[10px] text-cyan-300 light:text-cyan-700">{item.source_route}</div>

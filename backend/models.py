@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -485,6 +485,7 @@ class ControlTowerSeatKpiItem(BaseModel):
     blocker: Optional[str] = None
     required_config: list[str] = Field(default_factory=list)
     owner_action: str
+    metric_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class ControlTowerSeatKpiCoverageSummary(BaseModel):

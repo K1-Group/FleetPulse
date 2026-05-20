@@ -366,6 +366,7 @@ export interface ControlTowerSeatKpiItem {
   blocker: string | null
   required_config: string[]
   owner_action: string
+  metric_summary: Record<string, string | number | boolean | null>
 }
 
 export interface ControlTowerSeatKpiCoverageSummary {

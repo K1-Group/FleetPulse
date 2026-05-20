@@ -16,6 +16,7 @@ from models import (
 )
 from services import control_tower_service
 from services.control_tower_seat_kpi_service import get_seat_kpi_coverage
+from services.scheduled_feed_contract_service import get_scheduled_feed_contracts
 from services.seat_kpi_feed_service import (
     get_seat_kpi_feed_status,
     import_seat_kpi_feed,
@@ -120,6 +121,11 @@ def import_xcelerator_event_feed(
 @router.get("/seat-kpis", response_model=ControlTowerSeatKpiCoverageResponse)
 def seat_kpis():
     return get_seat_kpi_coverage()
+
+
+@router.get("/scheduled-feeds/contracts")
+def scheduled_feed_contracts() -> dict:
+    return get_scheduled_feed_contracts()
 
 
 @router.get("/seat-kpis/feeds/status")
