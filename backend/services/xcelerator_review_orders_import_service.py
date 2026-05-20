@@ -25,6 +25,19 @@ XCELERATOR_REVIEW_ORDERS_AUTHORITY = "K1 Group LLC / Xcelerator ReviewOrders exp
 XCELERATOR_REVIEW_ORDERS_NAMESPACE = "xcelerator_review_orders_v1"
 _STATE_LOCK = threading.RLock()
 _ROWS_CACHE: dict[str, tuple[int, int, list[dict[str, Any]]]] = {}
+DEFAULT_MAX_SYNC_STATE_BYTES = 5_000_000
+
+
+class XceleratorReviewOrdersStateTooLarge(RuntimeError):
+    """Raised when the local ReviewOrders state file is too large for sync reads."""
+
+    def __init__(self, path: Path, size: int, max_size: int):
+        self.path = path
+        self.size = size
+        self.max_size = max_size
+        super().__init__(
+            f"xcelerator_review_orders_state_too_large:{size}:{max_size}:{path}"
+        )
 
 
 @dataclass(frozen=True)
@@ -92,6 +105,12 @@ class XceleratorReviewOrdersStateStore:
     def rows(self) -> list[dict[str, Any]]:
         with _STATE_LOCK:
             signature = _path_signature(self.path) if self.path.exists() else None
+            if signature and _large_state_reads_blocked(signature[1]):
+                raise XceleratorReviewOrdersStateTooLarge(
+                    self.path,
+                    signature[1],
+                    _max_sync_state_bytes_from_env(),
+                )
             if self.path.exists():
                 cache_key = str(self.path.resolve())
                 cached = _ROWS_CACHE.get(cache_key)
@@ -207,10 +226,35 @@ def get_xcelerator_review_orders_summary(
     *,
     store: XceleratorReviewOrdersStateStore | None = None,
 ) -> dict[str, Any]:
-    rows = (store or XceleratorReviewOrdersStateStore()).rows()
+    try:
+        rows = (store or XceleratorReviewOrdersStateStore()).rows()
+    except XceleratorReviewOrdersStateTooLarge as exc:
+        return {
+            "source_authority": XCELERATOR_REVIEW_ORDERS_AUTHORITY,
+            "projection_mode": "read_only",
+            "period_days": days,
+            "status": "unavailable",
+            "message": (
+                "ReviewOrders state file is too large for synchronous dashboard "
+                "reads; use the live Fabric Warehouse SQL Xcelerator path or "
+                "raise FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES."
+            ),
+            "state_path": str(exc.path),
+            "state_size_bytes": exc.size,
+            "max_sync_state_bytes": exc.max_size,
+            "row_count": 0,
+            "dated_row_count": 0,
+            "order_count": 0,
+            "date_min": None,
+            "date_max": None,
+            "driver_pay_total": 0.0,
+            "revenue_total": 0.0,
+        }
     return {
         "source_authority": XCELERATOR_REVIEW_ORDERS_AUTHORITY,
         "projection_mode": "read_only",
+        "status": "healthy",
+        "message": "",
         "period_days": days,
         **summarize_review_orders(rows, days=days),
     }
@@ -275,6 +319,29 @@ def _retained_record_limit_from_env() -> int:
         return max(int(os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_RETAINED_RECORDS", "50000")), 1)
     except ValueError:
         return 50000
+
+
+def _max_sync_state_bytes_from_env() -> int:
+    try:
+        return max(
+            int(
+                os.getenv(
+                    "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES",
+                    str(DEFAULT_MAX_SYNC_STATE_BYTES),
+                )
+            ),
+            1,
+        )
+    except ValueError:
+        return DEFAULT_MAX_SYNC_STATE_BYTES
+
+
+def _large_state_reads_blocked(size: int) -> bool:
+    allow_large = os.getenv(
+        "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_ALLOW_LARGE_STATE_READ",
+        "",
+    ).strip().casefold() in {"1", "true", "yes", "on"}
+    return not allow_large and size > _max_sync_state_bytes_from_env()
 
 
 def _week_key(day: date) -> str:

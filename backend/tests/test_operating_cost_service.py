@@ -117,6 +117,49 @@ def test_geotab_weekly_metrics_prefers_fabric_warehouse_projection(monkeypatch):
     assert metrics["2026-05-04"]["operating_hours"] == 6
 
 
+def test_xcelerator_driver_pay_prefers_fabric_warehouse_sql(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_TENANT_ID", "tenant")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_ID", "client")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", str(tmp_path / "slow-state.json"))
+
+    def fail_imported_driver_pay(start, end):
+        raise AssertionError("Manual ReviewOrders state should not be read when Warehouse SQL is healthy")
+
+    def fake_execute_sql_query(config, query):
+        if "FROM sys.objects" in query:
+            return [{"table_schema": "dbo", "table_name": "xcelerator_review_orders"}]
+        if "FROM sys.columns" in query:
+            return [
+                {"column_name": "pickup_target_from"},
+                {"column_name": "driver_pay_amount"},
+                {"column_name": "delivery_center"},
+            ]
+        assert "LOWER(delivery_center) LIKE '%k1 logistics%'" in query
+        return [
+            {
+                "week_start": "2026-05-04",
+                "driver_pay": 250.0,
+                "row_count": 2,
+                "date_min": "2026-05-04",
+                "date_max": "2026-05-05",
+            }
+        ]
+
+    monkeypatch.setattr(service, "get_xcelerator_review_orders_weekly_driver_pay", fail_imported_driver_pay)
+    monkeypatch.setattr(service, "execute_sql_query", fake_execute_sql_query)
+
+    weekly, source = service._xcelerator_driver_pay_by_week(
+        date(2026, 5, 4),
+        date(2026, 5, 5),
+    )
+
+    assert weekly == {"2026-05-04": 250.0}
+    assert source["status"] == "healthy"
+    assert source["path"] == "fabric_warehouse_sql"
+    assert source["table"] == "dbo.xcelerator_review_orders"
+
+
 def test_geotab_weekly_metrics_retries_transient_fetch_errors(monkeypatch):
     calls = {"count": 0}
 

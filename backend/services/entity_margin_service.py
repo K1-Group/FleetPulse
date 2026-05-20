@@ -406,7 +406,7 @@ def _load_warehouse_entity_rows(
 
 
 def _prefer_review_orders_feed() -> bool:
-    value = os.getenv("FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED", "true")
+    value = os.getenv("FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED", "false")
     return value.strip().casefold() not in {"0", "false", "no", "off"}
 
 

@@ -17,6 +17,7 @@ from integrations.xcelerator.review_orders_feed import (  # noqa: E402
 from services.xcelerator_review_orders_import_service import (  # noqa: E402
     XceleratorReviewOrdersStateStore,
     clear_xcelerator_review_orders_cache,
+    get_xcelerator_review_orders_summary,
 )
 
 
@@ -82,3 +83,21 @@ def test_review_orders_state_store_caches_rows_by_file_signature(monkeypatch, tm
     )
     assert store.rows()[0]["OrderTrackingID"] == "2"
     assert read_count == 2
+
+
+def test_review_orders_summary_fails_fast_when_state_file_is_too_large(monkeypatch, tmp_path):
+    path = tmp_path / "review-orders-state.json"
+    path.write_text(
+        json.dumps({"rows": [{"OrderTrackingID": "1", "PFrom Date": "2026-01-01"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES", "1")
+    clear_xcelerator_review_orders_cache()
+
+    summary = get_xcelerator_review_orders_summary(
+        store=XceleratorReviewOrdersStateStore(path=path),
+    )
+
+    assert summary["status"] == "unavailable"
+    assert summary["state_size_bytes"] > summary["max_sync_state_bytes"]
+    assert summary["row_count"] == 0

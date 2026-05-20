@@ -223,6 +223,7 @@ def test_entity_margin_snapshot_prefers_fabric_warehouse_sql(monkeypatch):
 
 def test_entity_margin_snapshot_prefers_review_orders_feed_when_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(service, "get_operating_cost_snapshot", _fake_operating_cost_snapshot)
+    monkeypatch.setenv("FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED", "true")
 
     def fail_execute_sql_query(config, query):
         raise AssertionError("Warehouse SQL should not be used when ReviewOrders feed preference is enabled")

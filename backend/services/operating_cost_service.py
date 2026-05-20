@@ -35,6 +35,7 @@ from services.lane_stability_service import (
 )
 from services.qbo_financial_snapshot_service import QBO_K1L_COST_BUCKETS, load_qbo_k1l_expense_rows
 from services.xcelerator_review_orders_import_service import (
+    XceleratorReviewOrdersStateTooLarge,
     get_xcelerator_review_orders_weekly_driver_pay,
 )
 
@@ -43,6 +44,7 @@ GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab Data Connector"
 GEOTAB_FABRIC_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 ATOB_AUTHORITY = "AtoB manual fuel expense export"
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator"
+XCELERATOR_FABRIC_AUTHORITY = "K1 Group LLC / Xcelerator Fabric Warehouse SQL"
 QBO_AUTHORITY = "K1 Logistics Inc / QuickBooks Online"
 OPERATING_COST_AUTHORITY = (
     "Geotab miles/hours + Xcelerator sales/driver pay + QBO K1 Logistics cost stack"
@@ -371,6 +373,27 @@ ORDER BY
 """.strip()
 
 
+def _build_xcelerator_review_orders_table_discovery_sql() -> str:
+    return """
+SELECT TOP (10)
+    schemas.name AS table_schema,
+    objects.name AS table_name,
+    objects.type_desc AS object_type
+FROM sys.objects AS objects
+JOIN sys.schemas AS schemas
+    ON schemas.schema_id = objects.schema_id
+WHERE objects.type IN ('U', 'V', 'ET')
+    AND (
+        LOWER(objects.name) = 'xcelerator_review_orders'
+        OR LOWER(objects.name) LIKE '%xcelerator%review%orders%'
+    )
+ORDER BY
+    CASE WHEN LOWER(objects.name) = 'xcelerator_review_orders' THEN 0 ELSE 1 END,
+    schemas.name,
+    objects.name
+""".strip()
+
+
 def _build_table_columns_sql(table_schema: str, table_name: str) -> str:
     return f"""
 SELECT columns.name AS column_name
@@ -533,6 +556,61 @@ SELECT
 FROM normalized
 WHERE activity_date IS NOT NULL
 GROUP BY CAST(DATEADD(day, -(DATEDIFF(day, 0, activity_date) % 7), activity_date) AS date)
+ORDER BY week_start
+""".strip()
+
+
+def _build_xcelerator_driver_pay_warehouse_weekly_sql(
+    start: date,
+    end: date,
+    *,
+    table_schema: str,
+    table_name: str,
+    date_column: str,
+    driver_pay_column: str,
+    delivery_center_column: str | None,
+) -> str:
+    table_ref = f"{_quote_sql_identifier(table_schema)}.{_quote_sql_identifier(table_name)}"
+    date_expr = f"TRY_CONVERT(date, {_quote_sql_identifier(date_column)})"
+    driver_pay_expr = f"COALESCE(TRY_CONVERT(decimal(18, 2), {_quote_sql_identifier(driver_pay_column)}), 0)"
+    delivery_center_expr = (
+        f"CONVERT(nvarchar(255), {_quote_sql_identifier(delivery_center_column)})"
+        if delivery_center_column
+        else "''"
+    )
+    delivery_center_filter = (
+        "AND LOWER(delivery_center) LIKE '%k1 logistics%'"
+        if delivery_center_column
+        else ""
+    )
+    return f"""
+WITH normalized AS (
+    SELECT
+        {date_expr} AS row_day,
+        {driver_pay_expr} AS driver_pay,
+        {delivery_center_expr} AS delivery_center
+    FROM {table_ref}
+    WHERE {date_expr} >= {_quote_sql_literal(start.isoformat())}
+        AND {date_expr} <= {_quote_sql_literal(end.isoformat())}
+),
+filtered AS (
+    SELECT
+        row_day,
+        driver_pay,
+        DATEADD(day, -(DATEDIFF(day, CONVERT(date, '19000101'), row_day) % 7), row_day) AS week_start
+    FROM normalized
+    WHERE row_day IS NOT NULL
+        AND driver_pay <> 0
+        {delivery_center_filter}
+)
+SELECT
+    CONVERT(varchar(10), week_start, 23) AS week_start,
+    CONVERT(float, SUM(driver_pay)) AS driver_pay,
+    COUNT(1) AS row_count,
+    MIN(row_day) AS date_min,
+    MAX(row_day) AS date_max
+FROM filtered
+GROUP BY week_start
 ORDER BY week_start
 """.strip()
 
@@ -840,16 +918,131 @@ def _atob_weekly_costs(
     )
 
 
+def _xcelerator_warehouse_driver_pay_by_week(
+    start: date,
+    end: date,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
+    if not config.configured:
+        return {}, _source(
+            "not_configured",
+            XCELERATOR_FABRIC_AUTHORITY,
+            message="Fabric Warehouse SQL auth is not configured for Xcelerator driver pay.",
+        )
+
+    try:
+        table_rows = execute_sql_query(config, _build_xcelerator_review_orders_table_discovery_sql())
+        if not table_rows:
+            return {}, _source(
+                "awaiting_feed",
+                XCELERATOR_FABRIC_AUTHORITY,
+                message="No visible Xcelerator ReviewOrders table was found in Fabric Warehouse SQL.",
+            )
+
+        table_schema = str(table_rows[0].get("table_schema") or "dbo")
+        table_name = str(table_rows[0].get("table_name") or "xcelerator_review_orders")
+        column_rows = execute_sql_query(config, _build_table_columns_sql(table_schema, table_name))
+        columns = [str(row.get("column_name") or "") for row in column_rows if row.get("column_name")]
+        date_column = _column_by_alias(
+            columns,
+            (
+                "pickup_target_from",
+                "[P]From Date",
+                "PFrom Date",
+                "From Date",
+                "Order Date",
+                "date",
+            ),
+        )
+        driver_pay_column = _column_by_alias(
+            columns,
+            ("driver_pay_amount", "Driver Pay", "DriverPay", "driver_pay"),
+        )
+        delivery_center_column = _column_by_alias(
+            columns,
+            ("delivery_center", "Delivery Center", "DeliveryCenter", "Delivery Center Name"),
+        )
+        if not date_column or not driver_pay_column:
+            return {}, _source(
+                "unavailable",
+                XCELERATOR_FABRIC_AUTHORITY,
+                message="Xcelerator ReviewOrders is missing date or driver-pay columns.",
+            )
+
+        rows = execute_sql_query(
+            config,
+            _build_xcelerator_driver_pay_warehouse_weekly_sql(
+                start,
+                end,
+                table_schema=table_schema,
+                table_name=table_name,
+                date_column=date_column,
+                driver_pay_column=driver_pay_column,
+                delivery_center_column=delivery_center_column,
+            ),
+        )
+    except Exception as exc:
+        return {}, _source(
+            "unavailable",
+            XCELERATOR_FABRIC_AUTHORITY,
+            message=f"Fabric Warehouse SQL unavailable: {type(exc).__name__}: {exc}",
+        )
+
+    weekly: dict[str, float] = {}
+    row_count = 0
+    date_values: list[date] = []
+    for row in rows:
+        week = str(row.get("week_start") or "").strip()
+        if not week:
+            continue
+        weekly[week] = _money(_number(row.get("driver_pay")))
+        row_count += int(_number(row.get("row_count")))
+        for key in ("date_min", "date_max"):
+            if parsed := _coerce_date(row.get(key)):
+                date_values.append(parsed)
+
+    source = _source(
+        "healthy" if row_count else "awaiting_feed",
+        XCELERATOR_FABRIC_AUTHORITY,
+        message="" if row_count else "Fabric Warehouse SQL returned no K1L driver-pay rows for this period.",
+        row_count=row_count,
+    )
+    source["path"] = "fabric_warehouse_sql"
+    source["table"] = f"{table_schema}.{table_name}"
+    if not delivery_center_column:
+        source["status"] = "partial" if row_count else source["status"]
+        source["message"] = (
+            "Delivery-center column was unavailable, so driver pay could not be filtered to K1 Logistics Inc."
+            if row_count
+            else source["message"]
+        )
+    if row_count and date_values and (min(date_values) > start or max(date_values) < end):
+        source["status"] = "partial"
+        source["message"] = (
+            f"Driver-pay rows cover {min(date_values).isoformat()}..{max(date_values).isoformat()}, "
+            f"not the full requested {start.isoformat()}..{end.isoformat()} period."
+        )
+    return weekly, source
+
+
 def _xcelerator_driver_pay_by_week(
     start: date,
     end: date,
     *,
     config: LaneStabilityConfig | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
+    warehouse_weekly, warehouse_source = _xcelerator_warehouse_driver_pay_by_week(start, end)
+    if warehouse_source.get("status") == "healthy":
+        return warehouse_weekly, warehouse_source
+
     if os.getenv("FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH", "").strip():
         try:
             imported = get_xcelerator_review_orders_weekly_driver_pay(start, end)
+        except XceleratorReviewOrdersStateTooLarge:
+            return warehouse_weekly, warehouse_source
         except Exception as exc:
+            if warehouse_source.get("status") != "not_configured":
+                return warehouse_weekly, warehouse_source
             return {}, _source(
                 "unavailable",
                 XCELERATOR_AUTHORITY,
@@ -878,6 +1071,9 @@ def _xcelerator_driver_pay_by_week(
             message=source_message,
             row_count=row_count,
         )
+
+    if warehouse_source.get("status") != "not_configured":
+        return warehouse_weekly, warehouse_source
 
     config = config or LaneStabilityConfig.from_env()
     if not config.configured:

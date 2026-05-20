@@ -223,6 +223,7 @@ Xcelerator/Fabric and QBO app settings used by Control Tower and Fuel analytics.
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_URL=
 FLEETPULSE_LANE_STABILITY_ORDER_FEED_API_KEY=
 FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH=/home/data/fleetpulse_xcelerator_review_orders.json
+FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES=5000000
 FLEETPULSE_QBO_EXPENSE_FEED_URL=
 FLEETPULSE_QBO_EXPENSE_STATE_PATH=/home/data/fleetpulse_qbo_expenses.json
 FLEETPULSE_QBO_EXPENSE_FEED_PATH=
@@ -245,7 +246,7 @@ FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_ID=
 FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_SECRET=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_URL=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
-FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true
+FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=false
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
@@ -257,12 +258,16 @@ for one lumpy posted insurance bill date. AtoB remains available as fuel-card
 audit evidence but is not double-counted when QBO fuel rows are live. Rental and
 lease matching includes Ryder, Bruckner, Idealease/Idlease, XTRA Lease, and
 Camarena rows when those names appear on the vendor/memo/description fields.
-`FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` keeps the finance
-trend dashboard on the imported read-only ReviewOrders state when available,
-avoiding slow Fabric Warehouse SQL calls while preserving Xcelerator ownership.
+FleetPulse prefers the live Fabric Warehouse SQL `xcelerator_review_orders`
+projection for Xcelerator driver pay and entity margin when configured. Set
+`FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` only for a controlled
+manual ReviewOrders export fallback.
 Local ReviewOrders evidence files are cached by file modified time and size, so
 finance and lane panels can reuse the same imported rows without blocking each
-other on repeated state-file reads.
+other on repeated state-file reads. Very large local state files are blocked
+from synchronous dashboard reads by
+`FLEETPULSE_XCELERATOR_REVIEW_ORDERS_MAX_SYNC_STATE_BYTES` so stale audit files
+cannot freeze live panels.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data
