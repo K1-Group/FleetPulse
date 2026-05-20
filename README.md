@@ -282,6 +282,11 @@ expenses as read-only QBO evidence, excludes Xcelerator-owned driver pay and
 revenue accounts to prevent double counting, and uses import coverage dates when
 provided to avoid certifying partial finance feeds as complete.
 
+`GET /api/fuel/k1l-operating-kpi` returns the K1 Logistics Inc monthly CPM
+snapshot and exposes `revenue_per_mile` as Revenue / Mile in the dashboard. The
+cost denominator remains Geotab miles, while the revenue numerator comes from
+the configured read-only Xcelerator revenue projection.
+
 `GET /api/fuel/entity-margin?start=YYYY-MM-DD&end=YYYY-MM-DD` adds the dashboard
 split requested for K1 operations review. K1 Logistics Inc CPM uses only orders
 assigned to the `K1 Logistics Inc` delivery center for revenue and driver pay,

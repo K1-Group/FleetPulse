@@ -764,8 +764,8 @@ export default function FuelAnalytics() {
   const completeEntityCpm = Boolean(entityMargin?.complete_k1l_cpm_available || k1lFinalCpm !== null)
   const completeEntityTrueCpm = Boolean(entityMargin?.complete_k1l_true_cpm_available || k1lFinalCpm !== null)
   const k1lProfitPerMileLabel = k1OperatingSummary?.profit_per_mile !== undefined && k1OperatingSummary?.profit_per_mile !== null
-    ? 'RPM - Final CPM'
-    : 'RPM - CPM'
+    ? 'Revenue/Mile - Final CPM'
+    : 'Revenue/Mile - CPM'
   const k1lEngineHours = finiteValue(weeklyEngineSummary?.operating_hours ?? entitySummary?.operating_hours)
   const k1lTotalCost = finiteValue(k1OperatingSummary?.total_cost ?? entitySummary?.k1l_true_operating_cost)
   const k1lRevenue = finiteValue(k1OperatingSummary?.revenue ?? entitySummary?.k1l_grand_total)
@@ -990,7 +990,7 @@ export default function FuelAnalytics() {
             <div className="mt-1 text-xs text-gray-500">{formatCurrency(k1lTotalCost ?? marginSummary?.k1l_true_operating_cost)} total cost</div>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
-            <div className="text-xs uppercase text-gray-500">K1L RPM</div>
+            <div className="text-xs uppercase text-gray-500">K1L Revenue / Mile</div>
             <div className="mt-1 text-2xl font-bold text-teal-300">
               {formatRate(k1lRevenuePerMile)}
             </div>
@@ -1039,7 +1039,7 @@ export default function FuelAnalytics() {
               <Legend />
               <Bar yAxisId="margin" dataKey="k1l_target_gross_margin" name="K1L 72% GM Target" fill="#10b981" />
               <Bar yAxisId="margin" dataKey="k1g_target_gross_margin" name="K1G 20% GM Target" fill="#a855f7" />
-              <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_mile" name="K1L Revenue/Mile" stroke="#f8fafc" strokeWidth={2} dot={false} />
+              <Line yAxisId="rate" type="monotone" dataKey="k1l_revenue_per_mile" name="K1L Revenue / Mile" stroke="#f8fafc" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="k1l_fuel_plus_driver_cpm" name="K1L Fuel+Driver CPM" stroke="#38bdf8" strokeWidth={2} dot={false} />
               <Line yAxisId="rate" type="monotone" dataKey="k1l_true_operating_cpm" name="K1L True CPM" stroke="#fb7185" strokeWidth={2} dot={false} />
             </ComposedChart>
@@ -1299,7 +1299,7 @@ export default function FuelAnalytics() {
               {k1OperatingKpi?.as_of_date ? `Finalized through ${k1OperatingKpi.as_of_date}` : 'Finalized monthly snapshot'} · {k1OperatingKpi?.source || 'QBO + Xcelerator + AtoB + Geotab'}
             </div>
             <div className="mt-1 text-xs text-gray-500">
-              CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack · RPM: {k1OperatingRevenueSourceLabel}{' '}
+              CPM: Geotab miles + QBO/AtoB/Xcelerator cost stack · Revenue / Mile: {k1OperatingRevenueSourceLabel}{' '}
               <span className={k1OperatingRevenueSourceClass}>({k1OperatingRevenueSourceStatus.replace('_', ' ')})</span>
             </div>
           </div>
@@ -1309,7 +1309,7 @@ export default function FuelAnalytics() {
               <div className="text-emerald-400">{formatRate(k1lFinalCpm)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-gray-500">RPM</div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-500">Revenue / Mile</div>
               <div className="text-teal-300">{formatRate(k1lRevenuePerMile)}</div>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
@@ -1340,7 +1340,7 @@ export default function FuelAnalytics() {
                   labelStyle={{ color: '#9ca3af' }}
                   formatter={(value: number, name: string) => {
                     if (name === 'Final CPM') return [formatRate(value), name]
-                    if (name === 'RPM') return [formatRate(value), name]
+                    if (name === 'Revenue / Mile') return [formatRate(value), name]
                     if (name === 'Profit/Mi') return [formatRate(value), name]
                     if (name === 'Miles') return [formatNumber(value), name]
                     return [formatCurrency(value), name]
@@ -1349,7 +1349,7 @@ export default function FuelAnalytics() {
                 <Legend />
                 <Bar yAxisId="cost" dataKey="total_cost" name="Total Cost" fill="#10b981" radius={[4, 4, 0, 0]} />
                 <Line yAxisId="rate" type="monotone" dataKey="cost_per_mile" name="Final CPM" stroke="#f8fafc" strokeWidth={3} dot={{ r: 4 }} />
-                <Line yAxisId="rate" type="monotone" dataKey="revenue_per_mile" name="RPM" stroke="#34d399" strokeWidth={3} dot={{ r: 4 }} connectNulls />
+                <Line yAxisId="rate" type="monotone" dataKey="revenue_per_mile" name="Revenue / Mile" stroke="#34d399" strokeWidth={3} dot={{ r: 4 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="profit_per_mile" name="Profit/Mi" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 <Line yAxisId="rate" type="monotone" dataKey="miles" name="Miles" stroke="#a78bfa" strokeWidth={2} dot={false} hide />
               </ComposedChart>
@@ -1359,7 +1359,7 @@ export default function FuelAnalytics() {
               <div className="grid grid-cols-6 gap-2 border-b border-gray-800 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
                 <span>Month</span>
                 <span className="text-right">CPM</span>
-                <span className="text-right">RPM</span>
+                <span className="text-right">Revenue/Mi</span>
                 <span className="text-right">Profit/Mi</span>
                 <span className="text-right">Cost</span>
                 <span className="text-right">Miles</span>

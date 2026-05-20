@@ -119,7 +119,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-400 light:text-gray-600">
             <Gauge className="h-4 w-4 text-emerald-300" />
-            K1L Final CPM / RPM
+            K1L CPM + Revenue / Mile
           </p>
           <div className={`mt-2 grid gap-3 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
             <div>
@@ -129,7 +129,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
               </p>
             </div>
             <div>
-              <div className="text-[10px] uppercase text-gray-500">RPM</div>
+              <div className="text-[10px] uppercase text-gray-500">Revenue / Mile</div>
               <p className={`${compact ? 'text-xl' : 'text-2xl'} break-words font-bold text-emerald-300 light:text-emerald-700`}>
                 {loading ? '...' : formatCpm(summary?.revenue_per_mile)}
               </p>
@@ -145,7 +145,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
 
       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500 light:text-gray-600">
         <span>CPM: Geotab/QBO/AtoB/Xcelerator</span>
-        <span>RPM: {revenueSourceLabel} ({revenueSourceStatus.replace('_', ' ')})</span>
+        <span>Revenue / Mile: {revenueSourceLabel} ({revenueSourceStatus.replace('_', ' ')})</span>
       </div>
 
       <div className={`mt-3 grid gap-2 text-xs text-gray-400 light:text-gray-600 ${compact ? 'grid-cols-1' : 'sm:grid-cols-3'}`}>
