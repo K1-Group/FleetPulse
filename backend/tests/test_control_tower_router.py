@@ -117,6 +117,56 @@ def test_financial_surface_is_k1_group_read_only_and_awaits_feed(monkeypatch):
     assert payload["feeds"][0]["status"] == "awaiting_feed"
 
 
+def test_seat_kpi_coverage_reports_missing_source_contracts(monkeypatch):
+    for name in (
+        "LAKEHOUSE_SQL_SERVER",
+        "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_SERVER",
+        "FLEETPULSE_XCELERATOR_REVIEW_ORDERS_STATE_PATH",
+        "FLEETPULSE_QBO_FINANCIAL_FEED_URL",
+        "FLEETPULSE_QBO_FINANCIAL_FEED_PATH",
+        "XCELERATOR_API_BASE_URL",
+        "SHAREPOINT_SITE_ID",
+        "GEOTAB_SERVER",
+        "GEOTAB_USERNAME",
+        "GEOTAB_PASSWORD",
+        "GEOTAB_DATABASE",
+        "FLEETPULSE_MONITOR_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    response = _client().get("/api/control-tower/seat-kpis")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    assert payload["summary"]["total"] >= 25
+    assert payload["summary"]["awaiting_feed"] > 0
+    billing_gap = next(item for item in payload["kpis"] if item["key"] == "billing_exception_aging")
+    assert billing_gap["seat_id"] == "finance_controller"
+    assert billing_gap["status"] == "awaiting_feed"
+    assert billing_gap["source_route"] is None
+    assert "billing_packet_exception_feed_missing" == billing_gap["blocker"]
+
+
+def test_seat_kpi_coverage_marks_configured_routes_as_available(monkeypatch):
+    monkeypatch.setenv("LAKEHOUSE_SQL_SERVER", "lakehouse.example")
+    monkeypatch.setenv("FLEETPULSE_QBO_FINANCIAL_FEED_PATH", "/tmp/qbo-financial.json")
+    monkeypatch.setenv("GEOTAB_SERVER", "my.geotab.com")
+    monkeypatch.setenv("GEOTAB_USERNAME", "reader@example.com")
+    monkeypatch.setenv("GEOTAB_PASSWORD", "secret")
+    monkeypatch.setenv("GEOTAB_DATABASE", "K1logistics")
+
+    response = _client().get("/api/control-tower/seat-kpis")
+
+    assert response.status_code == 200
+    payload = response.json()
+    by_key = {item["key"]: item for item in payload["kpis"]}
+    assert by_key["lane_stability"]["status"] == "healthy"
+    assert by_key["ap_aging"]["status"] == "warning"
+    assert by_key["truck_availability"]["status"] == "healthy"
+    assert "secret" not in response.text
+
+
 def test_configured_xcelerator_feed_url_reads_live_rows_without_fake_values(monkeypatch):
     monkeypatch.setenv("FLEETPULSE_FINANCIAL_FEED_ENABLED", "true")
     monkeypatch.setenv("FLEETPULSE_XCELERATOR_EVENT_FEED_URL", "https://example.invalid/xcelerator")

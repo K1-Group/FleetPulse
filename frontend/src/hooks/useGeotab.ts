@@ -6,6 +6,7 @@ import type {
   ControlTowerCodexResponse,
   ControlTowerFinancialResponse,
   ControlTowerOverview,
+  ControlTowerSeatKpiCoverageResponse,
   ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
   DashboardValidationResponse,
@@ -189,6 +190,10 @@ export function useControlTowerTrailerTracking(enabled = true) {
 
 export function useControlTowerFinancial() {
   return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000)
+}
+
+export function useControlTowerSeatKpis(enabled = true) {
+  return useFetch<ControlTowerSeatKpiCoverageResponse>(`${API}/control-tower/seat-kpis`, 300000, enabled)
 }
 
 export function useOperatingCostWindow(days = 364, enabled = true) {

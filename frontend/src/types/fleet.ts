@@ -353,6 +353,40 @@ export interface ControlTowerFinancialResponse {
   feeds: ControlTowerFeedStatus[]
 }
 
+export interface ControlTowerSeatKpiItem {
+  key: string
+  label: string
+  seat_id: string
+  seat_label: string
+  manager_seat_id: string | null
+  target: string
+  source_authority: string
+  source_route: string | null
+  status: ControlTowerStatus
+  blocker: string | null
+  required_config: string[]
+  owner_action: string
+}
+
+export interface ControlTowerSeatKpiCoverageSummary {
+  total: number
+  healthy: number
+  warning: number
+  awaiting_feed: number
+  unavailable: number
+  coverage_pct: number
+  seats_with_missing: number
+}
+
+export interface ControlTowerSeatKpiCoverageResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  summary: ControlTowerSeatKpiCoverageSummary
+  kpis: ControlTowerSeatKpiItem[]
+  feeds: ControlTowerFeedStatus[]
+}
+
 export interface OperatingCostSource {
   status: string
   source_authority?: string

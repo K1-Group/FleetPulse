@@ -9,10 +9,12 @@ from models import (
     ControlTowerCodexResponse,
     ControlTowerFinancialResponse,
     ControlTowerOverview,
+    ControlTowerSeatKpiCoverageResponse,
     ControlTowerTrailerTrackingResponse,
     ControlTowerTrailersResponse,
 )
 from services import control_tower_service
+from services.control_tower_seat_kpi_service import get_seat_kpi_coverage
 from services.trailer_tracking_service import get_live_trailer_tracking
 from services.xtra_lease_ingestion_service import (
     XtraLeaseConfigError,
@@ -65,6 +67,11 @@ def ingest_xtra_trailer_feed(
 @router.get("/financial", response_model=ControlTowerFinancialResponse)
 def financial():
     return control_tower_service.get_financial()
+
+
+@router.get("/seat-kpis", response_model=ControlTowerSeatKpiCoverageResponse)
+def seat_kpis():
+    return get_seat_kpi_coverage()
 
 
 @router.get("/agents", response_model=ControlTowerAgentsResponse)

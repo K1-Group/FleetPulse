@@ -33,21 +33,22 @@ import {
   useControlTowerAttention,
   useControlTowerCodex,
   useControlTowerFinancial,
+  useControlTowerSeatKpis,
   useControlTowerTrailerTracking,
   useControlTowerOverview,
   useControlTowerTrailers,
   useLaneStabilityWindow,
   useOperatingCostWindow,
-  useOperatingSystemTaskKpiMatrix,
 } from '../hooks/useGeotab'
 import type {
   ControlTowerFeedStatus,
+  ControlTowerSeatKpiCoverageResponse,
+  ControlTowerSeatKpiItem,
   ControlTowerSectionSummary,
   ControlTowerStatus,
   LaneStabilityPayload,
   OperatingCostSnapshot,
   OperatingCostWeeklyRow,
-  OperatingSystemSeatContract,
 } from '../types/fleet'
 
 type SectionKey = 'attention' | 'trailers' | 'financial' | 'agents' | 'codex'
@@ -482,43 +483,24 @@ function FinancialOps52WeekPanel({
 }
 
 function SeatKpiNeedsPanel({
-  seats,
+  coverage,
   loading,
   error,
 }: {
-  seats: OperatingSystemSeatContract[]
+  coverage: ControlTowerSeatKpiCoverageResponse | null
   loading: boolean
   error: string | null
 }) {
-  const managerCount = seats.filter(seat => seat.seat_type === 'accountability').length
-  const functionalCount = seats.filter(seat => seat.seat_type === 'functional').length
-  const gaps = [
-    {
-      seat: 'Finance Controller',
-      kpis: 'AP aging, AR over 30, billing exception aging, driver-pay exceptions, weekly close variance',
-      source: 'QuickBooks + Xcelerator + SharePoint approvals',
-    },
-    {
-      seat: 'Operations Manager',
-      kpis: 'Lane stability, active load exception aging, on-time dispatch, pickup/delivery OTD, uncovered load board',
-      source: 'Xcelerator + Geotab + lane stability lakehouse',
-    },
-    {
-      seat: 'Revenue Manager',
-      kpis: 'Pipeline coverage, quote margin compliance, booked revenue, win rate, account expansion',
-      source: 'Xcelerator CRM/contracts + SharePoint quote approvals',
-    },
-    {
-      seat: 'Fleet & Compliance Manager',
-      kpis: 'Truck availability, PM compliance, critical faults open, MTTR, safety/coaching closure',
-      source: 'Geotab + SharePoint maintenance evidence',
-    },
-    {
-      seat: 'People & Systems Manager',
-      kpis: 'Seat fill rate, training completion, access lifecycle SLA, integration uptime, failed-job aging',
-      source: 'SharePoint + Teams + Time Doctor + monitoring',
-    },
-  ]
+  const kpis = coverage?.kpis ?? []
+  const kpisBySeat = useMemo(() => {
+    const map = new Map<string, ControlTowerSeatKpiItem[]>()
+    kpis.forEach(item => {
+      const current = map.get(item.seat_label) ?? []
+      current.push(item)
+      map.set(item.seat_label, current)
+    })
+    return [...map.entries()]
+  }, [kpis])
 
   return (
     <Panel className="xl:col-span-3">
@@ -532,27 +514,62 @@ function SeatKpiNeedsPanel({
             Fixed-seat scorecards need live KPI snapshots before FleetPulse can rank seat performance.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <MetricTile label="Managers" value={loading ? '...' : number(managerCount)} />
-          <MetricTile label="Functional" value={loading ? '...' : number(functionalCount)} />
+        <div className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-4">
+          <MetricTile label="Coverage" value={loading ? '...' : percent(coverage?.summary.coverage_pct)} />
+          <MetricTile label="Live" value={loading ? '...' : number(coverage?.summary.healthy)} tone="good" />
+          <MetricTile label="Partial" value={loading ? '...' : number(coverage?.summary.warning)} tone="warning" />
+          <MetricTile label="Missing" value={loading ? '...' : number(coverage?.summary.awaiting_feed)} tone="bad" />
         </div>
       </div>
 
       {error && (
         <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200 light:text-amber-700">
-          Seat matrix endpoint is not available to this session: {error}
+          Seat KPI coverage endpoint is not available to this session: {error}
         </div>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-5">
-        {gaps.map(gap => (
-          <div key={gap.seat} className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
-            <div className="text-sm font-semibold text-white light:text-gray-900">{gap.seat}</div>
-            <div className="mt-2 text-xs leading-5 text-gray-300 light:text-gray-700">{gap.kpis}</div>
-            <div className="mt-3 text-[11px] text-gray-500 light:text-gray-600">{gap.source}</div>
-          </div>
-        ))}
-      </div>
+      {loading && !kpis.length ? (
+        <EmptyState label="Loading seat KPI coverage..." />
+      ) : kpisBySeat.length ? (
+        <div className="grid gap-3 xl:grid-cols-5">
+          {kpisBySeat.map(([seat, items]) => {
+            const missing = items.filter(item => item.status === 'awaiting_feed' || item.status === 'unavailable').length
+            return (
+              <div key={seat} className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-sm font-semibold text-white light:text-gray-900">{seat}</div>
+                  <span className="rounded-full border border-gray-700 px-2 py-0.5 text-[11px] text-gray-400 light:border-gray-200 light:text-gray-600">
+                    {missing} missing
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {items.map(item => (
+                    <div key={item.key} className="rounded-md border border-gray-800 bg-gray-900/60 p-2 light:border-gray-200 light:bg-white">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-gray-100 light:text-gray-900">{item.label}</div>
+                          <div className="mt-1 text-[11px] text-gray-500 light:text-gray-600">{item.target}</div>
+                        </div>
+                        <StatusPill status={item.status} />
+                      </div>
+                      <div className="mt-2 text-[11px] leading-4 text-gray-400 light:text-gray-700">{item.owner_action}</div>
+                      <div className="mt-2 text-[11px] text-gray-500 light:text-gray-600">{item.source_authority}</div>
+                      {item.source_route && (
+                        <div className="mt-1 truncate font-mono text-[10px] text-cyan-300 light:text-cyan-700">{item.source_route}</div>
+                      )}
+                      {item.blocker && (
+                        <div className="mt-1 truncate font-mono text-[10px] text-amber-300 light:text-amber-700">{item.blocker}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <EmptyState label="No seat KPI contracts returned yet." />
+      )}
     </Panel>
   )
 }
@@ -566,7 +583,7 @@ export default function ControlTower() {
   const financial = useControlTowerFinancial()
   const operatingCost52 = useOperatingCostWindow(364, active === 'financial')
   const laneStability52 = useLaneStabilityWindow(364, active === 'financial')
-  const seatMatrix = useOperatingSystemTaskKpiMatrix(active === 'financial')
+  const seatKpis = useControlTowerSeatKpis(active === 'financial')
   const agents = useControlTowerAgents()
   const codex = useControlTowerCodex()
 
@@ -764,9 +781,9 @@ export default function ControlTower() {
             error={operatingCost52.error || laneStability52.error}
           />
           <SeatKpiNeedsPanel
-            seats={seatMatrix.data?.seats ?? []}
-            loading={seatMatrix.loading}
-            error={seatMatrix.error}
+            coverage={seatKpis.data}
+            loading={seatKpis.loading}
+            error={seatKpis.error}
           />
         </motion.div>
       )}

@@ -328,6 +328,9 @@ CPM spikes, lane stable coverage, critical lanes, and cross-route lanes. The
 same panel lists seat-KPI coverage still needed for the fixed-seat operating
 system, with FleetPulse remaining the KPI provider and the workforce ledger
 remaining the seat authority.
+`GET /api/control-tower/seat-kpis` backs the missing-KPI surface. It maps each
+manager-seat KPI to its source authority, current FleetPulse route if one
+exists, readiness status, missing app setting names, and the next owner action.
 
 ### Backend
 ```bash
@@ -501,6 +504,7 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | **🚚 Control Tower Endpoints** |
 | `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
+| `GET /api/control-tower/seat-kpis` | Fixed-seat KPI coverage: live, partial, and missing source contracts |
 | **🧠 AI Endpoints** |
 | `POST /api/ai/chat` | **Claude AI-powered chat** (with conversation history) |
 | `POST /api/ai/chat/stream` | **Streaming AI responses** (Server-Sent Events) |
