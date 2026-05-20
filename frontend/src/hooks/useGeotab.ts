@@ -188,8 +188,8 @@ export function useControlTowerTrailerTracking(enabled = true) {
   return useFetch<ControlTowerTrailerTrackingResponse>(`${API}/control-tower/trailers/live`, 30000, enabled)
 }
 
-export function useControlTowerFinancial() {
-  return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000, true, 60000)
+export function useControlTowerFinancial(enabled = true) {
+  return useFetch<ControlTowerFinancialResponse>(`${API}/control-tower/financial`, 60000, enabled, 60000)
 }
 
 export function useControlTowerSeatKpis(enabled = true) {
