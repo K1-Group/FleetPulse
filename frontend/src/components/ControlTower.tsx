@@ -333,11 +333,15 @@ function FinancialOps52WeekPanel({
   const previousFourCost = costRows.slice(-5, -1)
   const costAvg4 = average(previousFourCost.map(row => row.total_cost))
   const cpmAvg4 = average(previousFourCost.map(row => row.cost_per_mile))
+  const unresolved = operatingCost?.unresolved_sources ?? []
+  const mileageCoveragePending = unresolved.includes('telemetry')
+  const summaryCpm = mileageCoveragePending
+    ? null
+    : operatingCost?.summary.true_cost_per_mile ?? operatingCost?.summary.known_cost_per_mile
   const costSpike = latestCost && costAvg4 ? latestCost.total_cost > costAvg4 * 1.15 : false
-  const cpmSpike = latestCost?.cost_per_mile && cpmAvg4 ? latestCost.cost_per_mile > cpmAvg4 * 1.1 : false
+  const cpmSpike = !mileageCoveragePending && latestCost?.cost_per_mile && cpmAvg4 ? latestCost.cost_per_mile > cpmAvg4 * 1.1 : false
   const laneCoverageWarning = Number(laneStability?.summary.today_stable_cov_pct ?? latestStability?.stable_cov_pct ?? 100) < 80
   const criticalLaneWarning = Number(laneStability?.summary.critical_today ?? latestStability?.critical_lanes ?? 0) > 0
-  const unresolved = operatingCost?.unresolved_sources ?? []
   const signals = [
     costSpike ? 'Weekly cost spike over 4-week average' : null,
     cpmSpike ? 'CPM spike over 4-week average' : null,
@@ -381,9 +385,9 @@ function FinancialOps52WeekPanel({
         />
         <MetricTile
           label="52W CPM"
-          value={rate(operatingCost?.summary.true_cost_per_mile ?? operatingCost?.summary.known_cost_per_mile)}
-          helper={`${number(operatingCost?.summary.miles)} miles`}
-          tone={cpmSpike ? 'bad' : 'neutral'}
+          value={rate(summaryCpm)}
+          helper={mileageCoveragePending ? `Pending full Geotab miles (${number(operatingCost?.summary.miles)} captured)` : `${number(operatingCost?.summary.miles)} miles`}
+          tone={mileageCoveragePending ? 'warning' : cpmSpike ? 'bad' : 'neutral'}
         />
         <MetricTile
           label="Latest Week"
