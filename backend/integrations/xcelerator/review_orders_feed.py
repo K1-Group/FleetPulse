@@ -5,11 +5,16 @@ from __future__ import annotations
 import csv
 import json
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+
+_FILE_ROWS_CACHE: dict[str, tuple[int, int, list[dict[str, Any]]]] = {}
+_FILE_ROWS_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -77,7 +82,19 @@ def _coerce_rows(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _load_json_or_csv(path: Path) -> list[dict[str, Any]]:
+def clear_review_orders_feed_cache() -> None:
+    """Clear cached local ReviewOrders file rows."""
+
+    with _FILE_ROWS_CACHE_LOCK:
+        _FILE_ROWS_CACHE.clear()
+
+
+def _path_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _load_json_or_csv_uncached(path: Path) -> list[dict[str, Any]]:
     suffix = path.suffix.casefold()
     if suffix == ".json":
         return _coerce_rows(json.loads(path.read_text(encoding="utf-8")))
@@ -106,6 +123,20 @@ def _load_json_or_csv(path: Path) -> list[dict[str, Any]]:
                 records.append(record)
         return records
     raise RuntimeError(f"unsupported_review_orders_feed_file:{suffix or 'unknown'}")
+
+
+def _load_json_or_csv(path: Path) -> list[dict[str, Any]]:
+    signature = _path_signature(path)
+    cache_key = str(path.resolve())
+    with _FILE_ROWS_CACHE_LOCK:
+        cached = _FILE_ROWS_CACHE.get(cache_key)
+        if cached and cached[0] == signature[0] and cached[1] == signature[1]:
+            return list(cached[2])
+
+    rows = _load_json_or_csv_uncached(path)
+    with _FILE_ROWS_CACHE_LOCK:
+        _FILE_ROWS_CACHE[cache_key] = (signature[0], signature[1], rows)
+    return list(rows)
 
 
 def load_review_orders_rows(config: ReviewOrdersFeedConfig) -> list[dict[str, Any]]:

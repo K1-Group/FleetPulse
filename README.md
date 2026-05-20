@@ -260,6 +260,9 @@ Camarena rows when those names appear on the vendor/memo/description fields.
 `FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` keeps the finance
 trend dashboard on the imported read-only ReviewOrders state when available,
 avoiding slow Fabric Warehouse SQL calls while preserving Xcelerator ownership.
+Local ReviewOrders evidence files are cached by file modified time and size, so
+finance and lane panels can reuse the same imported rows without blocking each
+other on repeated state-file reads.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data

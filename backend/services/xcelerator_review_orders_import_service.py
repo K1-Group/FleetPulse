@@ -23,7 +23,8 @@ from utils.idempotency import stable_idempotency_key
 
 XCELERATOR_REVIEW_ORDERS_AUTHORITY = "K1 Group LLC / Xcelerator ReviewOrders export"
 XCELERATOR_REVIEW_ORDERS_NAMESPACE = "xcelerator_review_orders_v1"
-_STATE_LOCK = threading.Lock()
+_STATE_LOCK = threading.RLock()
+_ROWS_CACHE: dict[str, tuple[int, int, list[dict[str, Any]]]] = {}
 
 
 @dataclass(frozen=True)
@@ -86,13 +87,26 @@ class XceleratorReviewOrdersStateStore:
         tmp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         tmp_path.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")), encoding="utf-8")
         tmp_path.replace(self.path)
+        _invalidate_rows_cache(self.path)
 
     def rows(self) -> list[dict[str, Any]]:
         with _STATE_LOCK:
+            signature = _path_signature(self.path) if self.path.exists() else None
+            if self.path.exists():
+                cache_key = str(self.path.resolve())
+                cached = _ROWS_CACHE.get(cache_key)
+                if cached and cached[0] == signature[0] and cached[1] == signature[1]:
+                    return list(cached[2])
             state = self.load_state()
-        rows = [row for row in state.get("rows", []) if isinstance(row, dict)]
-        rows.sort(key=lambda item: str(_row_date(item) or ""), reverse=True)
-        return rows
+            rows = [row for row in state.get("rows", []) if isinstance(row, dict)]
+            rows.sort(key=lambda item: str(_row_date(item) or ""), reverse=True)
+            if signature:
+                _ROWS_CACHE[str(self.path.resolve())] = (
+                    signature[0],
+                    signature[1],
+                    rows,
+                )
+            return list(rows)
 
     def append_rows(self, rows: list[dict[str, Any]], *, dry_run: bool = False) -> tuple[int, int, list[dict[str, Any]]]:
         with _STATE_LOCK:
@@ -227,6 +241,23 @@ def get_xcelerator_review_orders_weekly_driver_pay(
         "date_max": max(row_dates).isoformat() if row_dates else None,
         "driver_pay_total": round(sum(weekly.values()), 2),
     }
+
+
+def clear_xcelerator_review_orders_cache() -> None:
+    """Clear cached ReviewOrders state rows."""
+
+    with _STATE_LOCK:
+        _ROWS_CACHE.clear()
+
+
+def _path_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _invalidate_rows_cache(path: Path) -> None:
+    with _STATE_LOCK:
+        _ROWS_CACHE.pop(str(path.resolve()), None)
 
 
 def _state_path_from_env() -> Path:

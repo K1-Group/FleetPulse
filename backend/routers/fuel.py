@@ -94,7 +94,8 @@ async def import_atob_report(request: AtoBFuelImportRequest):
 @router.post("/xcelerator/review-orders/import")
 async def import_xcelerator_review_orders_report(request: XceleratorReviewOrdersImportRequest):
     """Import a downloaded Xcelerator ReviewOrders report as read-only driver-pay evidence."""
-    result = import_xcelerator_review_orders(
+    result = await asyncio.to_thread(
+        import_xcelerator_review_orders,
         request.content,
         filename=request.filename,
         dry_run=request.dry_run,
@@ -107,7 +108,7 @@ async def import_xcelerator_review_orders_report(request: XceleratorReviewOrders
 @router.get("/xcelerator/review-orders/summary")
 async def xcelerator_review_orders_summary(days: int = 370):
     """Return actual imported Xcelerator ReviewOrders driver-pay summary."""
-    return get_xcelerator_review_orders_summary(days=days)
+    return await asyncio.to_thread(get_xcelerator_review_orders_summary, days=days)
 
 
 @router.get("/qbo/expenses/status")
