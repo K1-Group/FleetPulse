@@ -245,6 +245,7 @@ FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_ID=
 FLEETPULSE_XCELERATOR_CEO_POWERBI_CLIENT_SECRET=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_URL=
 FLEETPULSE_XCELERATOR_ENTITY_MARGIN_ORDER_FEED_PATH=
+FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true
 ```
 
 `GET /api/fuel/operating-cost?start=YYYY-MM-DD&end=YYYY-MM-DD` returns weekly
@@ -256,6 +257,9 @@ for one lumpy posted insurance bill date. AtoB remains available as fuel-card
 audit evidence but is not double-counted when QBO fuel rows are live. Rental and
 lease matching includes Ryder, Bruckner, Idealease/Idlease, XTRA Lease, and
 Camarena rows when those names appear on the vendor/memo/description fields.
+`FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` keeps the finance
+trend dashboard on the imported read-only ReviewOrders state when available,
+avoiding slow Fabric Warehouse SQL calls while preserving Xcelerator ownership.
 When a feed is missing, FleetPulse marks the source as unresolved and leaves
 the true CPM/hour fields blank while still showing the known cost stack.
 Geotab OData weeks are fetched concurrently and retried so transient Data

@@ -218,3 +218,44 @@ def test_entity_margin_snapshot_prefers_fabric_warehouse_sql(monkeypatch):
     assert snapshot["sources"]["xcelerator_entity"]["table"] == "dbo.xcelerator_review_orders"
     assert snapshot["summary"]["k1l_grand_total"] == 1000.0
     assert snapshot["summary"]["k1l_revenue_per_engine_hour"] == 166.6667
+
+
+def test_entity_margin_snapshot_prefers_review_orders_feed_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setattr(service, "get_operating_cost_snapshot", _fake_operating_cost_snapshot)
+
+    def fail_execute_sql_query(config, query):
+        raise AssertionError("Warehouse SQL should not be used when ReviewOrders feed preference is enabled")
+
+    monkeypatch.setattr(service, "execute_sql_query", fail_execute_sql_query)
+    review_orders = tmp_path / "review-orders.csv"
+    review_orders.write_text(
+        "\n".join(
+            [
+                "pickup_target_from,delivery_center,grand_total_amount,driver_pay_amount,order_tracking_id",
+                "2026-05-04,K1 Logistics Inc,1000,250,L-1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = service.EntityMarginConfig(
+        powerbi=PowerBIExecuteQueriesConfig(),
+        review_orders_feed=ReviewOrdersFeedConfig(path=str(review_orders)),
+        warehouse_sql=FabricWarehouseSqlConfig(
+            server="server",
+            database="database",
+            tenant_id="tenant",
+            client_id="client",
+            client_secret="secret",
+        ),
+    )
+
+    snapshot = asyncio.run(
+        service.get_entity_margin_snapshot(
+            start="2026-05-04",
+            end="2026-05-06",
+            config=config,
+        )
+    )
+
+    assert snapshot["xcelerator_source_type"] == "review_orders_feed"
+    assert snapshot["summary"]["k1l_grand_total"] == 1000.0

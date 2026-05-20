@@ -11,6 +11,7 @@ The projection keeps source ownership intact:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -404,12 +405,59 @@ def _load_warehouse_entity_rows(
     return rows, source, WAREHOUSE_SQL_ENTITY_SOURCE_TYPE
 
 
+def _prefer_review_orders_feed() -> bool:
+    value = os.getenv("FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED", "true")
+    return value.strip().casefold() not in {"0", "false", "no", "off"}
+
+
+def _load_review_orders_entity_rows(
+    *,
+    config: ReviewOrdersFeedConfig,
+    fallback_message: str = "",
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if not config.configured:
+        return [], _source(
+            "awaiting_feed",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message=fallback_message or "Xcelerator entity margin feed is not configured.",
+        ), "unconfigured"
+
+    try:
+        rows = load_review_orders_rows(config)
+    except Exception as exc:
+        return [], _source(
+            "unavailable",
+            XCELERATOR_ENTITY_AUTHORITY,
+            message=f"{type(exc).__name__}: {exc}",
+        ), "review_orders_feed"
+
+    return rows, _source(
+        "healthy" if rows else "awaiting_feed",
+        XCELERATOR_ENTITY_AUTHORITY,
+        message=(
+            fallback_message
+            if rows and fallback_message
+            else (
+                ""
+                if rows
+                else "Xcelerator entity margin feed is configured, but no rows are available."
+            )
+        ),
+        row_count=len(rows),
+    ), "review_orders_feed"
+
+
 def _load_xcelerator_entity_rows(
     start: date,
     end: date,
     *,
     config: EntityMarginConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if _prefer_review_orders_feed() and config.review_orders_feed.configured:
+        rows, source, source_type = _load_review_orders_entity_rows(config=config.review_orders_feed)
+        if rows or source.get("status") != "awaiting_feed":
+            return rows, source, source_type
+
     warehouse_error = ""
     if config.warehouse_sql.configured:
         try:
@@ -437,30 +485,10 @@ def _load_xcelerator_entity_rows(
         except Exception as exc:
             powerbi_error = f"{type(exc).__name__}: {exc}"
 
-    if not config.review_orders_feed.configured:
-        return [], _source(
-            "awaiting_feed",
-            XCELERATOR_ENTITY_AUTHORITY,
-            message=warehouse_error or powerbi_error or "Xcelerator entity margin feed is not configured.",
-        ), "unconfigured"
-
-    try:
-        rows = load_review_orders_rows(config.review_orders_feed)
-    except Exception as exc:
-        return [], _source(
-            "unavailable",
-            XCELERATOR_ENTITY_AUTHORITY,
-            message=f"{type(exc).__name__}: {exc}",
-        ), "review_orders_feed"
-
-    return rows, _source(
-        "healthy" if rows else "awaiting_feed",
-        XCELERATOR_ENTITY_AUTHORITY,
-        message=_fallback_feed_message(powerbi_error)
-        if rows
-        else "Xcelerator entity margin feed is configured, but no rows are available.",
-        row_count=len(rows),
-    ), "review_orders_feed"
+    return _load_review_orders_entity_rows(
+        config=config.review_orders_feed,
+        fallback_message=warehouse_error or _fallback_feed_message(powerbi_error),
+    )
 
 
 def _xcelerator_entity_weekly(
