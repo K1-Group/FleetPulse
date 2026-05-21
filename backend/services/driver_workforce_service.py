@@ -678,18 +678,22 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
     except Exception as exc:
         meta["errors"].append(f"xcelerator_event_state:{type(exc).__name__}")
 
-    try:
-        review_store = XceleratorReviewOrdersStateStore()
-        review_rows = review_store.rows()
-        rows.extend(review_rows)
-        meta["review_orders_rows"] = len(review_rows)
-        if review_store.path.exists():
-            file_updated = datetime.fromtimestamp(review_store.path.stat().st_mtime, timezone.utc)
-            last_updated = max(last_updated, file_updated) if last_updated else file_updated
-    except XceleratorReviewOrdersStateTooLarge as exc:
-        meta["errors"].append(f"xcelerator_review_orders_state_too_large:{exc.size}")
-    except Exception as exc:
-        meta["errors"].append(f"xcelerator_review_orders:{type(exc).__name__}")
+    include_review_orders = os.getenv(
+        "FLEETPULSE_DRIVER_WORKFORCE_INCLUDE_REVIEW_ORDERS", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if include_review_orders:
+        try:
+            review_store = XceleratorReviewOrdersStateStore()
+            review_rows = review_store.rows()
+            rows.extend(review_rows)
+            meta["review_orders_rows"] = len(review_rows)
+            if review_store.path.exists():
+                file_updated = datetime.fromtimestamp(review_store.path.stat().st_mtime, timezone.utc)
+                last_updated = max(last_updated, file_updated) if last_updated else file_updated
+        except XceleratorReviewOrdersStateTooLarge as exc:
+            meta["errors"].append(f"xcelerator_review_orders_state_too_large:{exc.size}")
+        except Exception as exc:
+            meta["errors"].append(f"xcelerator_review_orders:{type(exc).__name__}")
     return rows, last_updated, meta
 
 
