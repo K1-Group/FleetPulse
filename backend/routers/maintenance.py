@@ -1068,7 +1068,7 @@ async def get_urgent_maintenance():
         odometers = _get_fleet_odometers()
         intervals = _maintenance_intervals()
         costs = _maintenance_costs()
-        intelligence = await get_maintenance_intelligence(days=lookback_days)
+        intelligence = get_cached(f"maintenance_intelligence:{lookback_days}", ttl=300) or {}
         decision_by_vehicle = {
             decision.get("vehicle_id"): decision
             for decision in intelligence.get("decisions", [])
