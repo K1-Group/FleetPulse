@@ -13,6 +13,7 @@ import asyncio
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from integrations.fabric_warehouse.sql_client import execute_sql_query
 from services.entity_margin_service import (
     EntityMarginConfig,
@@ -407,6 +408,13 @@ def _load_xcelerator_route_lh_weekly(
     *,
     config: EntityMarginConfig,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    if xcelerator_ceo_powerbi_only():
+        return {}, _empty_source(
+            "awaiting_feed",
+            xcelerator_source_label(),
+            "Route/LH lifecycle efficiency is disabled until it is exposed by the Xcelerator CEO Dashboard semantic model.",
+        )
+
     if not config.warehouse_sql.configured:
         return {}, _empty_source(
             "not_configured",

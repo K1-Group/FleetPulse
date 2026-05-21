@@ -28,6 +28,11 @@ from integrations.fabric_warehouse.sql_client import (
     FabricWarehouseSqlConfig,
     execute_sql_query,
 )
+from integrations.powerbi.execute_queries import (
+    PowerBIExecuteQueriesConfig,
+    execute_dax_query,
+)
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from services.atob_fuel_expense_service import AtoBFuelExpenseStateStore
 from services.lane_stability_service import (
     LaneStabilityConfig,
@@ -44,6 +49,7 @@ GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab Data Connector"
 GEOTAB_FABRIC_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 ATOB_AUTHORITY = "AtoB manual fuel expense export"
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator"
+XCELERATOR_CEO_POWERBI_AUTHORITY = "K1 Group LLC / Xcelerator CEO Dashboard Power BI semantic model"
 XCELERATOR_FABRIC_AUTHORITY = "K1 Group LLC / Xcelerator Fabric Warehouse SQL"
 QBO_AUTHORITY = "K1 Logistics Inc / QuickBooks Online"
 OPERATING_COST_AUTHORITY = (
@@ -1025,12 +1031,88 @@ def _xcelerator_warehouse_driver_pay_by_week(
     return weekly, source
 
 
+def _build_xcelerator_powerbi_driver_pay_dax(start: date, end: date) -> str:
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        ADDCOLUMNS(
+            'xcelerator_review_orders',
+            "PickupDate", DATEVALUE('xcelerator_review_orders'[pickup_target_from]),
+            "WeekStart", DATEVALUE('xcelerator_review_orders'[pickup_target_from]) - WEEKDAY(DATEVALUE('xcelerator_review_orders'[pickup_target_from]), 2) + 1
+        ),
+        NOT ISBLANK('xcelerator_review_orders'[pickup_target_from])
+            && [PickupDate] >= DATE({start.year}, {start.month}, {start.day})
+            && [PickupDate] <= DATE({end.year}, {end.month}, {end.day})
+    )
+RETURN
+GROUPBY(
+    BaseRows,
+    [WeekStart],
+    'xcelerator_review_orders'[delivery_center],
+    "DriverPay", SUMX(CURRENTGROUP(), 'xcelerator_review_orders'[driver_pay_amount]),
+    "Orders", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[order_tracking_id])
+)
+ORDER BY [WeekStart], 'xcelerator_review_orders'[delivery_center]
+""".strip()
+
+
+def _xcelerator_powerbi_driver_pay_by_week(
+    start: date,
+    end: date,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
+    if not config.configured:
+        return {}, _source(
+            "not_configured",
+            xcelerator_source_label(),
+            message="Xcelerator CEO Dashboard Power BI auth is not configured.",
+        )
+
+    try:
+        rows = execute_dax_query(config, _build_xcelerator_powerbi_driver_pay_dax(start, end))
+    except Exception as exc:
+        return {}, _source(
+            "unavailable",
+            xcelerator_source_label(),
+            message=f"{type(exc).__name__}: {exc}",
+        )
+
+    weekly: dict[str, float] = {}
+    row_count = 0
+    for row in rows:
+        delivery_center = _find_value(
+            row,
+            ("delivery_center", "Delivery Center", "DeliveryCenter", "Delivery Center Name"),
+        )
+        if "k1logistics" not in _normalize(delivery_center):
+            continue
+        week_start = _coerce_date(_find_value(row, ("WeekStart", "week_start", "PickupDate")))
+        if week_start is None:
+            continue
+        week = _week_key(week_start)
+        weekly[week] = weekly.get(week, 0.0) + _number(
+            _find_value(row, ("DriverPay", "Driver Pay", "driver_pay", "driver_pay_amount"))
+        )
+        row_count += int(_number(_find_value(row, ("Orders", "orders", "OrderCount", "order_count"))))
+
+    return {key: _money(value) for key, value in weekly.items()}, _source(
+        "healthy" if weekly else "awaiting_feed",
+        XCELERATOR_CEO_POWERBI_AUTHORITY,
+        message="" if weekly else "Xcelerator CEO Dashboard semantic model returned no K1L driver-pay rows.",
+        row_count=row_count,
+    )
+
+
 def _xcelerator_driver_pay_by_week(
     start: date,
     end: date,
     *,
     config: LaneStabilityConfig | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
+    if xcelerator_ceo_powerbi_only():
+        return _xcelerator_powerbi_driver_pay_by_week(start, end)
+
     warehouse_weekly, warehouse_source = _xcelerator_warehouse_driver_pay_by_week(start, end)
     if warehouse_source.get("status") == "healthy":
         return warehouse_weekly, warehouse_source

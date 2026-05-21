@@ -244,7 +244,7 @@ export default function StabilityDashboard() {
               <Database className="h-5 w-5 shrink-0 text-cyan-300" />
               <h2 className="text-xl font-semibold text-white light:text-gray-900">Lane Stability</h2>
             </div>
-            <p className="mt-1 text-sm text-gray-400 light:text-gray-600">Daily - live from K1 lakehouse</p>
+            <p className="mt-1 text-sm text-gray-400 light:text-gray-600">Daily - live from Xcelerator CEO Dashboard</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex rounded-lg border border-gray-800 bg-gray-950/70 p-1 light:border-gray-200 light:bg-gray-100">
@@ -425,7 +425,7 @@ function ColumnChart({
 function EmptyState() {
   return (
     <div className="flex h-[260px] items-center justify-center rounded-lg border border-dashed border-gray-700 bg-gray-950/30 text-sm text-gray-500 light:border-gray-300 light:bg-gray-50">
-      No lakehouse rows returned for this window.
+      No Xcelerator CEO Dashboard rows returned for this window.
     </div>
   )
 }

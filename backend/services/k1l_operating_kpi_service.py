@@ -21,6 +21,7 @@ from integrations.powerbi.execute_queries import (
     PowerBIExecuteQueriesConfig,
     execute_dax_query,
 )
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 
 
 DEFAULT_ENTITY = "K1 Logistics Inc"
@@ -162,6 +163,8 @@ def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         env.get("K1L_OPERATING_COST_REVENUE_SOURCE"),
         POWERBI_REVENUE_SOURCE,
     )
+    if xcelerator_ceo_powerbi_only():
+        revenue_source = POWERBI_REVENUE_SOURCE
     return {
         "as_of_date": _read_string(
             parsed_json.get("as_of_date") or env.get("K1L_OPERATING_COST_CUTOFF_DATE")
@@ -179,7 +182,9 @@ def _config_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         "source": _resolve_source_label(
             revenue_source,
             parsed_json.get("source"),
-            env.get("K1L_OPERATING_COST_SOURCE"),
+            xcelerator_source_label()
+            if revenue_source == POWERBI_REVENUE_SOURCE
+            else env.get("K1L_OPERATING_COST_SOURCE"),
         ),
     }
 
@@ -206,6 +211,7 @@ GROUPBY(
     [MonthStart],
     'xcelerator_review_orders'[delivery_center],
     "GrandTotal", SUMX(CURRENTGROUP(), 'xcelerator_review_orders'[grand_total_amount]),
+    "DriverPay", SUMX(CURRENTGROUP(), 'xcelerator_review_orders'[driver_pay_amount]),
     "Orders", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[order_tracking_id])
 )
 ORDER BY [MonthStart], 'xcelerator_review_orders'[delivery_center]
@@ -294,6 +300,7 @@ def _load_powerbi_k1l_monthly_revenue(
     query = _build_powerbi_monthly_revenue_dax(months[0], months[-1])
     result_rows = execute_dax_query(config, query)
     revenue_by_month: dict[str, float] = {}
+    driver_pay_by_month: dict[str, float] = {}
     included_rows = 0
     for row in result_rows:
         delivery_center = _find_value(
@@ -309,16 +316,42 @@ def _load_powerbi_k1l_monthly_revenue(
             _find_value(row, ("GrandTotal", "Grand Total", "grand_total", "grand_total_amount", "Revenue")),
             f"{month}.xcelerator_revenue",
         )
+        driver_pay_value = _find_value(row, ("DriverPay", "Driver Pay", "driver_pay", "driver_pay_amount"))
+        if driver_pay_value not in (None, ""):
+            driver_pay_by_month[month] = driver_pay_by_month.get(month, 0.0) + _number(
+                driver_pay_value,
+                f"{month}.xcelerator_driver_pay",
+            )
         included_rows += int(_number(_find_value(row, ("Orders", "orders", "OrderCount", "order_count")), f"{month}.orders"))
 
     return {
         month: _round(revenue)
         for month, revenue in revenue_by_month.items()
     }, {
-        "status": "healthy" if revenue_by_month else "awaiting_feed",
-        "message": "" if revenue_by_month else "Power BI returned rows, but none matched K1 Logistics Inc monthly revenue.",
+        "status": "healthy" if revenue_by_month or driver_pay_by_month else "awaiting_feed",
+        "message": "" if revenue_by_month or driver_pay_by_month else "Power BI returned rows, but none matched K1 Logistics Inc monthly revenue/pay.",
         "row_count": included_rows,
+        "driver_pay_by_month": {
+            month: _round(driver_pay)
+            for month, driver_pay in driver_pay_by_month.items()
+        },
     }
+
+
+def _strip_xcelerator_values(row: dict[str, Any]) -> dict[str, Any]:
+    stripped = dict(row)
+    for key in (
+        "revenue",
+        "grossRevenue",
+        "grandTotal",
+        "grand_total",
+        "k1lRevenue",
+        "k1l_grand_total",
+        "driverPay",
+        "driver_pay",
+    ):
+        stripped.pop(key, None)
+    return stripped
 
 
 def _load_warehouse_k1l_monthly_revenue(
@@ -382,16 +415,21 @@ def _merge_revenue_values(
     revenue_source: str,
     status: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
-    if not revenue_by_month:
+    driver_pay_by_month = status.get("driver_pay_by_month") if isinstance(status, dict) else {}
+    driver_pay_by_month = driver_pay_by_month if isinstance(driver_pay_by_month, dict) else {}
+    strict_ceo = xcelerator_ceo_powerbi_only() and revenue_source == POWERBI_REVENUE_SOURCE
+    if not revenue_by_month and not driver_pay_by_month and not strict_ceo:
         return rows, JSON_REVENUE_SOURCE, status
 
     merged: list[dict[str, Any]] = []
     for row in rows:
         month = _month_from_raw_row(row)
+        merged_row = _strip_xcelerator_values(row) if strict_ceo else dict(row)
         if month in revenue_by_month:
-            merged.append({**row, "revenue": revenue_by_month[month]})
-        else:
-            merged.append(row)
+            merged_row["revenue"] = revenue_by_month[month]
+        if month in driver_pay_by_month:
+            merged_row["driverPay"] = driver_pay_by_month[month]
+        merged.append(merged_row)
     return merged, revenue_source, status
 
 
@@ -424,6 +462,11 @@ def _merge_powerbi_revenue(
     try:
         revenue_by_month, status = _load_powerbi_k1l_monthly_revenue(rows, config=config)
     except Exception as exc:
+        if xcelerator_ceo_powerbi_only():
+            return [_strip_xcelerator_values(row) for row in rows], POWERBI_REVENUE_SOURCE, {
+                "status": "unavailable",
+                "message": f"{type(exc).__name__}: {exc}; Xcelerator fallback sources are disabled.",
+            }
         return rows, JSON_REVENUE_SOURCE, {
             "status": "unavailable",
             "message": f"{type(exc).__name__}: {exc}; using monthly JSON revenue when present.",

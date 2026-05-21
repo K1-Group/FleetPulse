@@ -18,6 +18,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from configs.driver_workforce import DriverWorkforceConfig
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from geotab_client import GeotabClient
 from models import Alert, AlertSeverity, Vehicle
 from services.fleet_service import get_scoped_device_map, get_vehicles
@@ -669,6 +670,12 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
         "review_orders_rows": 0,
         "errors": [],
     }
+    if xcelerator_ceo_powerbi_only():
+        meta["xcelerator_source"] = "ceo_powerbi"
+        meta["source_authority"] = xcelerator_source_label()
+        meta["errors"].append("route_tickets_not_exposed_by_ceo_powerbi")
+        return rows, None, meta
+
     last_updated: datetime | None = None
     try:
         event_rows, event_last_updated = load_xcelerator_event_state_rows()
