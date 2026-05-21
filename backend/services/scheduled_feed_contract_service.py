@@ -25,6 +25,7 @@ def get_scheduled_feed_contracts() -> dict[str, Any]:
                 "X-FleetPulse-QBO-Key",
                 "X-FleetPulse-Xcelerator-Key",
                 "X-FleetPulse-HR-Key",
+                "X-FleetPulse-HR-Call-Key",
                 "X-FleetPulse-Seat-KPI-Key",
             ],
             "credential_storage": "Azure Key Vault App Settings references",
@@ -33,6 +34,7 @@ def get_scheduled_feed_contracts() -> dict[str, Any]:
             _qbo_financial_contract(),
             _xcelerator_events_contract(),
             _hr_recruiting_contract(),
+            _hr_call_analysis_contract(),
             *[_seat_feed_contract(key) for key in FEED_SPECS],
         ],
     }
@@ -128,6 +130,31 @@ def _hr_recruiting_contract() -> dict[str, Any]:
             ["first_assigned_at", "assigned_at", "receivedDateTime", "date"],
         ],
     )
+
+
+def _hr_call_analysis_contract() -> dict[str, Any]:
+    contract = _base_contract(
+        key="hr_call_analysis",
+        label="HR Call Analysis and Voice Productivity Snapshot",
+        source_authority="Grasshopper call logs + SharePoint HR call-analysis reports",
+        status_route="/api/hr-call-analysis/status",
+        import_route="/api/hr-call-analysis/import",
+        auth_header="X-FleetPulse-HR-Call-Key",
+        state_path_env="HR_CALL_ANALYSIS_STATE_PATH",
+        import_key_env="HR_CALL_ANALYSIS_IMPORT_API_KEY",
+        accepted_containers=["call_rows", "analysis_reports", "lead_rows", "rows", "data", "value"],
+        required_field_groups=[
+            ["call_started_at", "Date/Time", "date_time"],
+            ["extension_id", "Extension", "employee_name", "agent_name"],
+            ["duration_seconds", "Duration", "duration"],
+            ["external_party_hash", "phone_hash", "Caller ID", "Connecting #"],
+        ],
+    )
+    contract["schedule"] = "every_15_minutes"
+    contract["recommended_time"] = "Every 15 minutes America/Chicago"
+    contract["sharepoint_sync_route"] = "/api/hr-call-analysis/sharepoint/sync"
+    contract["sharepoint_folder_env"] = "SHAREPOINT_HR_CALL_ANALYSIS_FOLDER_URL"
+    return contract
 
 
 def _seat_feed_contract(feed_key: str) -> dict[str, Any]:

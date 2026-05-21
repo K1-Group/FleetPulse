@@ -764,3 +764,90 @@ export interface HrRecruitingDataset {
   row_counts: Record<string, number>
   validation_errors: Record<string, number>
 }
+
+// HR call-analysis and productivity monitor
+export interface HrCallAnalysisSummary {
+  total_call_legs: number
+  total_minutes: number
+  avg_call_seconds: number
+  outbound_attempts: number
+  connected_calls: number
+  connect_rate_pct: number | null
+  voicemails: number
+  hangups: number
+  active_employee_count: number
+  analysis_reports: number
+  coaching_flags: number
+  urgent_flags: number
+  unresolved_calls: number
+  human_error_reports: number
+  first_call_eligible_leads: number
+  first_call_within_24h: number
+  first_call_24h_pct: number | null
+  stale_no_call_48h: number
+}
+
+export interface HrCallEmployeeProductivity {
+  extension_id: string
+  employee_name: string
+  productivity_score_0_100: number
+  call_legs: number
+  voice_call_legs: number
+  distinct_external_parties: number
+  total_minutes: number
+  outbound_legs: number
+  connected_legs: number
+  not_connected_legs: number
+  voicemails: number
+  hangups: number
+  connected_rate_pct: number
+  voicemail_rate_pct: number
+  hangup_rate_pct: number
+}
+
+export interface HrCallDailyVolume {
+  date: string
+  call_legs: number
+  outbound_attempts: number
+  connected_calls: number
+  voicemails: number
+  total_minutes: number
+}
+
+export interface HrCallCoachingFlag {
+  analysis_file_key: string
+  call_date: string | null
+  agent_name: string
+  category: string
+  sentiment: string
+  resolved: boolean | null
+  resolution_quality: string
+  action_items_count: number
+  flag_reasons: string
+}
+
+export interface HrCallAnalysisDataset {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_system: string
+  source_authority: string
+  source_status: string
+  source_message: string | null
+  last_imported_at: string | null
+  pii_suppressed: boolean
+  phone_numbers_stored: boolean
+  active_extensions: string[]
+  coverage: {
+    start: string | null
+    end: string | null
+    months: string[]
+  }
+  summary: HrCallAnalysisSummary
+  employee_productivity: HrCallEmployeeProductivity[]
+  monthly_employee_productivity: Array<HrCallEmployeeProductivity & { month: string }>
+  daily_volume: HrCallDailyVolume[]
+  follow_up: Record<string, unknown>[]
+  coaching_flags: HrCallCoachingFlag[]
+  row_counts: Record<string, number>
+  validation_notes: string[]
+}

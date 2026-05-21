@@ -16,6 +16,7 @@ import type {
   DriverScore,
   FleetCoachingSummary,
   FleetOverview,
+  HrCallAnalysisDataset,
   HrRecruitingDataset,
   LaneStabilityPayload,
   OperatingSystemConfigurationResponse,
@@ -125,6 +126,10 @@ export function useMonitorStatus(enabled = true) {
 
 export function useHrRecruitingWorklist(enabled = true) {
   return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist`, 60000, enabled, 60000)
+}
+
+export function useHrCallAnalysis(enabled = true) {
+  return useFetch<HrCallAnalysisDataset>(`${API}/hr-call-analysis/dashboard`, 60000, enabled, 60000)
 }
 
 // Driver Coaching hooks

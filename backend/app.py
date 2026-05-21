@@ -90,6 +90,8 @@ _ROUTERS = [
     ("driver_workforce", "/api/driver-workforce", ["Driver Workforce"]),
     ("hr_recruiting", "/api/hr-recruiting", ["HR Recruiting"]),
     ("hr_recruiting_powerbi", "/api/powerbi", ["Power BI"]),
+    ("hr_call_analysis", "/api/hr-call-analysis", ["HR Call Analysis"]),
+    ("hr_call_analysis_powerbi", "/api/powerbi", ["Power BI"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),
     ("lane_stability", "/api/lane-stability", ["Lane Stability"]),
     ("zapier", "/api/zapier", ["Zapier"]),

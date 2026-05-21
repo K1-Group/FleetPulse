@@ -1,0 +1,185 @@
+"""Tests for HR call-analysis imports and dashboard-safe metrics."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND_DIR))
+
+from configs.hr_call_analysis import HrCallAnalysisConfig  # noqa: E402
+from services.hr_call_analysis_service import (  # noqa: E402
+    get_hr_call_analysis_dataset,
+    import_hr_call_analysis_snapshot,
+)
+
+
+def _config(path: str = "/tmp/hr-call-analysis-test.json") -> HrCallAnalysisConfig:
+    return HrCallAnalysisConfig(
+        state_path=path,
+        import_api_key="",
+        hash_salt="fleetpulse-hr-call",
+        active_extensions=("4", "702", "722", "725"),
+        sharepoint_enabled=False,
+        sharepoint_folder_url="",
+        graph_tenant_id="",
+        graph_client_id="",
+        graph_client_secret="",
+        site_id="",
+        site_url="https://tenant.sharepoint.com/sites/K1",
+        site_hostname="tenant.sharepoint.com",
+        site_path="/sites/K1",
+        drive_id="",
+        drive_name="",
+        folder_path="Grasshopper/Call Analysis Reports/HR",
+        source_file_urls=(),
+        file_extensions=(".txt",),
+        file_limit=25,
+        sync_api_key="",
+        sync_interval_minutes=15,
+        timeout_seconds=5,
+        retry_count=0,
+        retry_backoff_seconds=0,
+    )
+
+
+def test_call_analysis_dataset_suppresses_phone_and_scores_employee(tmp_path) -> None:
+    config = _config(str(tmp_path / "hr-call-analysis.json"))
+    rows = [
+        {
+            "Date/Time": "5/8/2026 9:16:31 PM",
+            "VPS Number": "(855) 558-1118",
+            "Duration": '="5:36"',
+            "Caller ID": "(580) 748-2358",
+            "Connecting #": "Unknown",
+            "Extension": "702 - David Attar",
+            "Direction": "In",
+            "Type": "Inbound leg of forwarded call",
+        },
+        {
+            "Date/Time": "5/8/2026 9:16:48 PM",
+            "VPS Number": "(855) 558-1118",
+            "Duration": '="5:06"',
+            "Caller ID": "Unknown",
+            "Connecting #": "(580) 748-2358",
+            "Extension": "702 - David Attar",
+            "Direction": "Out",
+            "Type": "Forwarded call connected",
+        },
+    ]
+
+    result = import_hr_call_analysis_snapshot(
+        json.dumps({"call_rows": rows}),
+        filename="call.json",
+        config=config,
+    )
+    assert result["status"] == "ok"
+    assert result["call_rows"] == 2
+    dataset = asyncio.run(get_hr_call_analysis_dataset(config=config))
+
+    assert dataset["summary"]["total_call_legs"] == 2
+    assert dataset["summary"]["connected_calls"] == 1
+    assert dataset["employee_productivity"][0]["employee_name"] == "David Attar"
+    serialized = json.dumps(dataset)
+    assert "(855) 558-1118" not in serialized
+    assert "(580) 748-2358" not in serialized
+
+
+def test_imported_state_feeds_dataset_and_first_call_sla(tmp_path) -> None:
+    state_path = tmp_path / "hr-call-analysis.json"
+    config = _config(str(state_path))
+    phone_hash = "candidate-phone-hash"
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "call_started_at": "2026-05-02T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 300,
+                        "external_party_hash": phone_hash,
+                    }
+                ],
+                "lead_rows": [
+                    {
+                        "source_email_id": "message-1",
+                        "phone_hash": phone_hash,
+                        "worklist": "DFW",
+                        "status": "Assigned",
+                        "first_assigned_at": "2026-05-02T08:00:00Z",
+                    }
+                ],
+            }
+        ),
+        filename="hr-call.json",
+        config=config,
+    )
+
+    assert result["status"] == "ok"
+    dataset = asyncio.run(
+        get_hr_call_analysis_dataset(
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+            config=config,
+        )
+    )
+
+    assert dataset["source_status"] == "ok"
+    assert dataset["summary"]["total_call_legs"] == 1
+    assert dataset["summary"]["first_call_eligible_leads"] == 1
+    assert dataset["summary"]["first_call_within_24h"] == 1
+    assert dataset["employee_productivity"][0]["employee_name"] == "David Attar"
+    assert "(580)" not in json.dumps(dataset)
+
+
+def test_sharepoint_analysis_report_parses_coaching_flag(tmp_path) -> None:
+    state_path = tmp_path / "hr-call-analysis.json"
+    config = _config(str(state_path))
+    content = """Analysis Report:
+
+CALL INTELLIGENCE REPORT
+
+BASIC INFORMATION
+- File Name: 05-20-2026- (817) 807-2272-HR Manager-10-41 AM.mp3
+- Date & Time: 2026-05-21T09:20:06Z
+- Agent Name: Ruth
+- Call Duration: Short
+- Language: English
+
+PRIMARY ISSUE CATEGORY
+[x] Other: Driver recruiting follow-up
+
+HUMAN ERRORS DETECTED
+No errors detected.
+
+CUSTOMER SENTIMENT ANALYSIS
+- Overall Sentiment: Positive
+
+RESOLUTION ASSESSMENT
+- Was the issue resolved? Yes
+- Resolution Quality: Good
+
+URGENT FLAGS
+- Urgent: NO
+
+ACTION ITEMS
+[ ] Follow up with applicant -> Owner: Ruth -> Due: ASAP
+"""
+
+    result = import_hr_call_analysis_snapshot(
+        content,
+        filename="05-20-2026- (817) 807-2272-HR Manager-10-41 AM.mp3)-analysis.txt",
+        config=config,
+    )
+    assert result["analysis_reports"] == 1
+    dataset = asyncio.run(get_hr_call_analysis_dataset(config=config))
+    assert dataset["summary"]["analysis_reports"] == 1
+    assert dataset["summary"]["coaching_flags"] == 1
+    serialized = json.dumps(dataset)
+    assert "(817) 807-2272" not in serialized

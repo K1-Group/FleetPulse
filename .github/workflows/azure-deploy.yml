@@ -34,7 +34,9 @@ jobs:
             backend/tests/test_seat_kpi_feed_service.py \
             backend/tests/test_control_tower_router.py \
             backend/tests/test_hr_recruiting_service.py \
-            backend/tests/test_hr_recruiting_router.py
+            backend/tests/test_hr_recruiting_router.py \
+            backend/tests/test_hr_call_analysis_service.py \
+            backend/tests/test_hr_call_analysis_router.py
 
       - name: Set up Node
         uses: actions/setup-node@v4

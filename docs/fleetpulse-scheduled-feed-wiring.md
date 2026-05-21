@@ -21,6 +21,7 @@ AZURE_KEY_VAULT_NAME=kv-k1-fleetpulse
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
 HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
+HR_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
 FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH=/home/data/fleetpulse_billing_exceptions.json
 FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH=/home/data/fleetpulse_weekly_close_variance.json
 FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH=/home/data/fleetpulse_dispatch_timestamps.json
@@ -34,6 +35,7 @@ The script creates these Key Vault secrets if values are not supplied by env:
 FLEETPULSE-QBO-FINANCIAL-IMPORT-API-KEY
 FLEETPULSE-XCELERATOR-EVENT-IMPORT-API-KEY
 HR-RECRUITING-IMPORT-API-KEY
+HR-CALL-ANALYSIS-IMPORT-API-KEY
 FLEETPULSE-BILLING-EXCEPTIONS-IMPORT-API-KEY
 FLEETPULSE-WEEKLY-CLOSE-VARIANCE-IMPORT-API-KEY
 FLEETPULSE-DISPATCH-TIMESTAMPS-IMPORT-API-KEY
@@ -126,6 +128,48 @@ Required HR row fields:
 
 FleetPulse stores the source rows, but every HR dashboard and Power BI payload
 suppresses applicant PII.
+
+### HR Call Analysis Snapshot
+
+- Trigger: Power Automate recurrence every 15 minutes.
+- Action: Read the SharePoint folder
+  `Documents/Grasshopper/Call Analysis Reports/HR`.
+- Action: Webhooks by Zapier or Power Automate HTTP `POST`.
+- URL: `https://k1-fleetpulse.azurewebsites.net/api/hr-call-analysis/import`
+- Header: `X-FleetPulse-HR-Call-Key: <Key Vault secret value>`
+- Body:
+
+```json
+{
+  "filename": "grasshopper-hr-call-detail.csv",
+  "content": "{{csv_or_json_string_with_call_rows}}"
+}
+```
+
+Direct SharePoint sync is also available when Graph app credentials are
+configured:
+
+- URL: `https://k1-fleetpulse.azurewebsites.net/api/hr-call-analysis/sharepoint/sync`
+- Header: `X-FleetPulse-HR-Call-Key: <Key Vault secret value>`
+- Recommended cadence: every 15 minutes.
+
+Minimum useful call row fields:
+
+```json
+{
+  "call_started_at": "2026-05-08T21:16:31Z",
+  "extension_id": "702",
+  "employee_name": "David Attar",
+  "direction": "Out",
+  "call_type": "Mobile Outbound Connected",
+  "duration_seconds": 306,
+  "external_party_hash": "sha256-phone-key"
+}
+```
+
+FleetPulse stores normalized call rows and SharePoint analysis metadata only.
+Raw phone numbers are hashed and raw recordings/transcripts remain in
+Grasshopper/SharePoint.
 
 ### Seat KPI Source Feeds
 

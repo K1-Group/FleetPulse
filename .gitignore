@@ -38,3 +38,6 @@ Thumbs.db
 venv/
 __pycache__/
 *.pyc
+
+# Local analytics snapshots with hashed operational evidence
+data/hr_call_analysis/
