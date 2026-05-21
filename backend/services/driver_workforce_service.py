@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from configs.driver_workforce import DriverWorkforceConfig
 from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from geotab_client import GeotabClient
+from integrations.powerbi.execute_queries import PowerBIExecuteQueriesConfig, execute_dax_query
 from models import Alert, AlertSeverity, Vehicle
 from services.fleet_service import get_scoped_device_map, get_vehicles
 from services.xcelerator_event_feed_service import (
@@ -668,13 +669,20 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
         "xcelerator_event_state_configured": xcelerator_event_state_configured(),
         "xcelerator_event_rows": 0,
         "review_orders_rows": 0,
+        "ceo_powerbi_rows": 0,
         "errors": [],
     }
     if xcelerator_ceo_powerbi_only():
         meta["xcelerator_source"] = "ceo_powerbi"
         meta["source_authority"] = xcelerator_source_label()
-        meta["errors"].append("route_tickets_not_exposed_by_ceo_powerbi")
-        return rows, None, meta
+        try:
+            rows = _load_ceo_powerbi_route_ticket_rows()
+            meta["ceo_powerbi_rows"] = len(rows)
+            meta["route_service_names"] = _route_ticket_service_names()
+            return rows, datetime.now(timezone.utc), meta
+        except Exception as exc:
+            meta["errors"].append(f"ceo_powerbi_route_tickets:{type(exc).__name__}")
+            return rows, None, meta
 
     last_updated: datetime | None = None
     try:
@@ -702,6 +710,70 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
         except Exception as exc:
             meta["errors"].append(f"xcelerator_review_orders:{type(exc).__name__}")
     return rows, last_updated, meta
+
+
+def _load_ceo_powerbi_route_ticket_rows() -> list[dict[str, Any]]:
+    config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
+    if not config.configured:
+        raise RuntimeError("xcelerator_ceo_powerbi_not_configured")
+    return execute_dax_query(config, _build_ceo_powerbi_route_ticket_dax())
+
+
+def _route_ticket_service_names() -> list[str]:
+    raw = os.getenv("FLEETPULSE_DRIVER_WORKFORCE_ROUTE_SERVICE_NAMES", "Route Ticket")
+    names = [item.strip() for item in raw.split(",") if item.strip()]
+    return names or ["Route Ticket"]
+
+
+def _route_ticket_delivery_center() -> str:
+    return os.getenv("FLEETPULSE_DRIVER_WORKFORCE_DELIVERY_CENTER", "K1 Logistics Inc").strip()
+
+
+def _dax_string(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _build_ceo_powerbi_route_ticket_dax() -> str:
+    service_names = ", ".join(_dax_string(name) for name in _route_ticket_service_names())
+    delivery_center = _route_ticket_delivery_center()
+    delivery_center_filter = (
+        f"\n            && 'xcelerator_review_orders'[delivery_center] = {_dax_string(delivery_center)}"
+        if delivery_center
+        else ""
+    )
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        'xcelerator_review_orders',
+        'xcelerator_review_orders'[service_name] IN {{ {service_names} }}
+            && NOT ISBLANK('xcelerator_review_orders'[pickup_target_from])
+            && NOT ISBLANK('xcelerator_review_orders'[delivery_target_to])
+            && DATEVALUE('xcelerator_review_orders'[pickup_target_from]) >= TODAY() - 1
+            && DATEVALUE('xcelerator_review_orders'[pickup_target_from]) <= TODAY() + 1{delivery_center_filter}
+    )
+RETURN
+SELECTCOLUMNS(
+    BaseRows,
+    "ticket_id", 'xcelerator_review_orders'[order_tracking_id],
+    "driver_id", 'xcelerator_review_orders'[driver_no],
+    "driver_name", 'xcelerator_review_orders'[driver_no],
+    "route_status", SWITCH(
+        'xcelerator_review_orders'[status],
+        "C", "complete",
+        "N", "open",
+        "S", "open",
+        'xcelerator_review_orders'[status]
+    ),
+    "pickup_location", 'xcelerator_review_orders'[pickup_city],
+    "delivery_location", 'xcelerator_review_orders'[delivery_city],
+    "planned_start", 'xcelerator_review_orders'[pickup_target_from],
+    "planned_finish", 'xcelerator_review_orders'[delivery_target_to],
+    "service_type", 'xcelerator_review_orders'[service_name],
+    "delivery_center", 'xcelerator_review_orders'[delivery_center]
+)
+ORDER BY [planned_start], [ticket_id]
+""".strip()
 
 
 def _load_geotab_activity(

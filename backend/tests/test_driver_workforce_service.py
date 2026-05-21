@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from configs.driver_workforce import DriverWorkforceConfig
 from services.driver_workforce_service import (
+    _build_ceo_powerbi_route_ticket_dax,
     build_driver_workdays,
     calculate_driver_workforce_kpis,
     normalize_geotab_activity,
@@ -137,3 +138,34 @@ def test_active_without_ticket_requires_geotab_activity():
 
     assert [row["status"] for row in workdays] == ["active_without_ticket"]
     assert workdays[0]["vehicle_id"] == "moving"
+
+
+def test_ceo_powerbi_route_ticket_rows_normalize_from_service_name_projection(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_DRIVER_WORKFORCE_ROUTE_SERVICE_NAMES", "Route Ticket")
+    query = _build_ceo_powerbi_route_ticket_dax()
+
+    assert "'xcelerator_review_orders'[service_name] IN { \"Route Ticket\" }" in query
+    assert '"service_type", \'xcelerator_review_orders\'[service_name]' in query
+
+    tickets, invalid = normalize_route_tickets(
+        [
+            {
+                "[ticket_id]": "35.052126",
+                "[driver_id]": "369",
+                "[driver_name]": "369",
+                "[route_status]": "open",
+                "[pickup_location]": "Fort Worth",
+                "[delivery_location]": "Fort Worth",
+                "[planned_start]": "2026-05-21T11:00:00",
+                "[planned_finish]": "2026-05-21T20:30:00",
+                "[service_type]": "Route Ticket",
+            }
+        ],
+        config=DriverWorkforceConfig(timezone="America/Chicago"),
+    )
+
+    assert invalid == 0
+    assert tickets[0]["ticket_id"] == "35.052126"
+    assert tickets[0]["driver_id"] == "369"
+    assert tickets[0]["planned_start"] == _dt("2026-05-21T16:00:00Z")
+    assert tickets[0]["planned_finish"] == _dt("2026-05-22T01:30:00Z")
