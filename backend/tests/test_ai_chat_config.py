@@ -142,6 +142,35 @@ def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
     monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: FakeOverview())
     monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
     monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [FakeSafety()])
+    monkeypatch.setattr(
+        "services.lakehouse_lane_stability_service.get_lane_stability_daily",
+        lambda window=42: {
+            "window": window,
+            "generated_at": "2026-05-21T14:00:00+00:00",
+            "source_authority": "K1 Group LLC / Fabric lakehouse lane_stability_daily_kpi",
+            "projection_mode": "read_only",
+            "rows": [
+                {
+                    "snapshot_date": "2026-05-21",
+                    "stable_cov_pct": 0.82,
+                    "critical_lanes": 2,
+                    "cross_route_lanes": 6,
+                    "total_orders": 140,
+                    "scored_lanes": 50,
+                    "stable_lanes": 41,
+                    "total_revenue": 65000.0,
+                    "delta_cov_pp": 1.2,
+                }
+            ],
+            "summary": {
+                "today_stable_cov_pct": 0.82,
+                "wow_delta_pp": 1.2,
+                "critical_today": 2,
+                "cross_route_today": 6,
+                "revenue_wtd": 65000.0,
+            },
+        },
+    )
 
     context = asyncio.run(ai_chat._fetch_fleet_context())
     parsed = json.loads(context)
@@ -149,6 +178,8 @@ def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
     assert parsed["fleet_overview"]["total_vehicles"] == 45
     assert parsed["fleet_overview"]["raw_device_count"] == 759
     assert parsed["safety_scores"][0]["vehicle_id"] == "truck-1"
+    assert parsed["metric_definitions"]["lane_stability"]["scored_lanes"]
+    assert parsed["lane_stability"]["latest_row"]["scored_lanes"] == 50
     assert "V018" not in context
     assert "Fort Worth" not in context
     assert "180" not in context
@@ -265,3 +296,70 @@ def test_live_data_fallback_summarizes_fleet_status(monkeypatch):
     assert "45 scoped vehicles" in response.response
     assert "6 active" in response.response
     assert "13.3%" in response.response
+
+
+def test_live_data_fallback_explains_scored_lanes(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    overview = SimpleNamespace(
+        active=6,
+        avg_trip_distance_miles=247.3,
+        avg_trip_duration_hours=8.2,
+        idle=0,
+        offline=3,
+        parked=36,
+        source_mode="live_filtered",
+        total_distance_miles=17313.1,
+        total_stops_today=436,
+        total_trips_today=70,
+        total_vehicles=45,
+        trip_definition="driver_session_with_stops_over_5_min",
+    )
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [])
+    monkeypatch.setattr(
+        "services.lakehouse_lane_stability_service.get_lane_stability_daily",
+        lambda window=42: {
+            "window": window,
+            "generated_at": "2026-05-21T14:00:00+00:00",
+            "source_authority": "K1 Group LLC / Fabric lakehouse lane_stability_daily_kpi",
+            "projection_mode": "read_only",
+            "rows": [
+                {
+                    "snapshot_date": "2026-05-21",
+                    "stable_cov_pct": 0.82,
+                    "critical_lanes": 2,
+                    "cross_route_lanes": 6,
+                    "total_orders": 140,
+                    "scored_lanes": 50,
+                    "stable_lanes": 41,
+                    "total_revenue": 65000.0,
+                    "delta_cov_pp": 1.2,
+                }
+            ],
+            "summary": {
+                "today_stable_cov_pct": 0.82,
+                "wow_delta_pp": 1.2,
+                "critical_today": 2,
+                "cross_route_today": 6,
+                "revenue_wtd": 65000.0,
+            },
+        },
+    )
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(message="What does scored lanes mean?")
+        )
+    )
+
+    assert response.model == "live-data-fallback"
+    assert response.is_ai_powered is False
+    assert "Scored lanes are the lanes FleetPulse includes in the lane stability calculation" in response.response
+    assert "50 scored lanes" in response.response
+    assert "41 stable lanes" in response.response
+    assert "82.0% stable coverage" in response.response
+    assert response.chart_type == "bar"
+    assert response.data[0]["metric"] == "scored_lanes"

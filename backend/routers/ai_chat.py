@@ -256,6 +256,105 @@ def _summarize_vehicle_names(vehicles: list[Any], *, limit: int = 12) -> str:
     return ", ".join(names)
 
 
+def _as_percent_text(value: Any) -> str:
+    try:
+        numeric = float(value or 0)
+    except (TypeError, ValueError):
+        numeric = 0.0
+    if abs(numeric) <= 1:
+        numeric *= 100
+    return f"{numeric:.1f}%"
+
+
+LANE_STABILITY_METRIC_DEFINITIONS = {
+    "scored_lanes": (
+        "Count of distinct Xcelerator service + lane combinations included in lane "
+        "stability scoring for the current day/window. In the lakehouse daily KPI "
+        "table this is total_lanes exposed as scored_lanes, and it is the denominator "
+        "for stable lane coverage."
+    ),
+    "stable_lanes": "Scored lanes whose driver coverage is currently stable.",
+    "stable_cov_pct": "Stable lane coverage percentage: stable lanes divided by scored lanes.",
+    "critical_lanes": "Scored lanes in the critical stability band.",
+    "cross_route_lanes": "Scored lanes being served across more than one route slot.",
+    "total_orders": "Xcelerator order count represented in the lane stability projection.",
+}
+
+
+def _is_lane_stability_question(normalized: str) -> bool:
+    if "lane" not in normalized:
+        return False
+    return any(
+        term in normalized
+        for term in (
+            "scored",
+            "score",
+            "stability",
+            "stable",
+            "coverage",
+            "critical",
+            "cross route",
+            "cross-route",
+            "orders vs",
+        )
+    )
+
+
+def _lane_stability_answer_from_payload(payload: dict[str, Any]) -> tuple[str, list[str], list[dict[str, Any]] | None]:
+    summary = payload.get("summary") or {}
+    rows = payload.get("rows") or []
+    latest = rows[-1] if rows else {}
+    scored_lanes = int(latest.get("scored_lanes") or 0)
+    stable_lanes = int(latest.get("stable_lanes") or 0)
+    stable_cov = latest.get("stable_cov_pct", summary.get("today_stable_cov_pct", 0))
+    total_orders = int(latest.get("total_orders") or 0)
+    snapshot_date = str(latest.get("snapshot_date") or "latest snapshot")
+    critical_lanes = int(latest.get("critical_lanes") or summary.get("critical_today") or 0)
+    cross_route_lanes = int(latest.get("cross_route_lanes") or summary.get("cross_route_today") or 0)
+
+    response = (
+        "Scored lanes are the lanes FleetPulse includes in the lane stability calculation. "
+        "They are distinct Xcelerator service + lane combinations after excluding non-operational "
+        "or service-only rows, and they are the denominator for stable lane coverage. "
+        f"In the latest lane-stability snapshot ({snapshot_date}), FleetPulse has "
+        f"{scored_lanes} scored lanes, {stable_lanes} stable lanes, "
+        f"{_as_percent_text(stable_cov)} stable coverage, {critical_lanes} critical lanes, "
+        f"{cross_route_lanes} cross-route lanes, and {total_orders} represented orders."
+    )
+    insights = [
+        "If scored lanes increase, the denominator is broader; stable coverage can move even if stable lane count is flat.",
+        "Critical lanes are the scored lanes that need the fastest operational review.",
+        "Source: read-only Xcelerator/Fabric lane stability projection.",
+    ]
+    data = [
+        {
+            "location": "Scored lanes",
+            "metric": "scored_lanes",
+            "score": scored_lanes,
+            "count": scored_lanes,
+        },
+        {
+            "location": "Stable lanes",
+            "metric": "stable_lanes",
+            "score": stable_lanes,
+            "count": stable_lanes,
+        },
+        {
+            "location": "Critical lanes",
+            "metric": "critical_lanes",
+            "score": critical_lanes,
+            "count": critical_lanes,
+        },
+        {
+            "location": "Cross-route lanes",
+            "metric": "cross_route_lanes",
+            "score": cross_route_lanes,
+            "count": cross_route_lanes,
+        },
+    ]
+    return response, insights, data
+
+
 async def _live_data_fallback_response(message: str) -> ChatResponse:
     """Answer supported live-data questions when the AI provider is unavailable."""
 
@@ -275,7 +374,23 @@ async def _live_data_fallback_response(message: str) -> ChatResponse:
     chart_type: str | None = None
     insights: list[str] = []
 
-    if "active" in normalized and ("vehicle" in normalized or "truck" in normalized or "asset" in normalized):
+    if _is_lane_stability_question(normalized):
+        try:
+            from services.lakehouse_lane_stability_service import get_lane_stability_daily
+
+            lane_payload = get_lane_stability_daily(window=42)
+            response, insights, data = _lane_stability_answer_from_payload(lane_payload)
+            chart_type = "bar"
+        except Exception as exc:
+            response = (
+                "Scored lanes are the Xcelerator service + lane combinations included in "
+                "FleetPulse lane stability scoring. They are the denominator for stable "
+                "lane coverage. Current lane-stability values are unavailable from the "
+                f"live projection right now ({type(exc).__name__})."
+            )
+            insights.append("Source expected: read-only Xcelerator/Fabric lane stability projection.")
+
+    elif "active" in normalized and ("vehicle" in normalized or "truck" in normalized or "asset" in normalized):
         try:
             vehicles = get_vehicles()
             vehicles_loaded = True
@@ -429,13 +544,17 @@ async def _fetch_fleet_context() -> str:
     from services.fleet_service import get_fleet_overview
     from services.alert_service import get_recent_alerts
     from services.safety_service import get_safety_scores
+    from services.lakehouse_lane_stability_service import get_lane_stability_daily
 
     context: dict[str, Any] = {
-        "source_authority": "Geotab",
+        "source_authority": "Geotab plus read-only Xcelerator/Fabric projections when included",
         "data_policy": (
             "Use only the values in this JSON. Do not infer, invent, or use "
             "sample/demo fleet values when a field is unavailable."
         ),
+        "metric_definitions": {
+            "lane_stability": LANE_STABILITY_METRIC_DEFINITIONS,
+        },
     }
 
     try:
@@ -453,6 +572,22 @@ async def _fetch_fleet_context() -> str:
     except Exception as exc:
         context["safety_scores_error"] = type(exc).__name__
 
+    try:
+        lane_payload = _to_jsonable(get_lane_stability_daily(window=42))
+        lane_rows = lane_payload.get("rows") or []
+        context["lane_stability"] = {
+            "source_authority": lane_payload.get("source_authority"),
+            "projection_mode": lane_payload.get("projection_mode"),
+            "window": lane_payload.get("window"),
+            "generated_at": lane_payload.get("generated_at"),
+            "summary": lane_payload.get("summary"),
+            "latest_row": lane_rows[-1] if lane_rows else None,
+            "recent_rows": lane_rows[-7:],
+            "row_count": len(lane_rows),
+        }
+    except Exception as exc:
+        context["lane_stability_error"] = type(exc).__name__
+
     return json.dumps(context, default=str)
 
 
@@ -464,6 +599,7 @@ FleetPulse is a GeoTab-powered fleet management platform that provides real-time
 - Safety scoring and incident management  
 - Fuel and route metrics when present in the supplied context
 - Maintenance and diagnostics when present in the supplied context
+- Lane stability metrics from read-only Xcelerator/Fabric projections when present in the supplied context
 - Driver behavior analysis
 - Cost optimization only when the supplied data supports it
 
@@ -477,6 +613,7 @@ YOUR ROLE:
 - If a value is unavailable in the supplied current fleet data, say it is unavailable instead of using demo/sample data.
 - Do not describe the supplied FleetPulse context as fixed, sample data, or demo data.
 - If the user asks to refresh data, explain that this response uses the latest available FleetPulse context fetched for the current request.
+- If the user asks what a metric means, first use metric_definitions from the supplied context, then include current values when they are present.
 
 RESPONSE FORMAT:
 Always provide:
