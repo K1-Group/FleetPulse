@@ -20,13 +20,16 @@ ATOB_POWER_AUTOMATE_FLOW_STATUS = {
     "flow_id": "34873590-059e-4317-9e1b-4dfc603e5653",
     "connection": "rami@k1group.net",
     "trigger": "When a new email arrives from hello@atob.com with subject 'Your transaction data is ready'",
-    "issue": "AtoB email download link is wrapped by Postmark tracking and returned HTTP 302 instead of CSV content.",
-    "resolution": "Added HTTP - Follow Redirect to GET the Location header, then rewired Compose - CSV Text to decode that response body.",
+    "issue": "Validation failed because the AtoB tracking URL returns HTTP 302 as a failed action, so the redirect handler is skipped.",
+    "resolution": "HTTP - Follow Redirect exists, but it must run after HTTP - Download CSV fails with 302, and Compose - CSV Text must decode HTTP - Follow Redirect.",
     "fixed_at": "2026-05-21T17:15:38-05:00",
-    "status": "saved_pending_test_validation",
-    "failed_run_tracking_id": "08584222108971700785225667789CU29",
-    "failed_action_tracking_id": "7a35bcdc-1dc1-4cdd-97dd-8a4e12c8e6b1",
-    "next_step": "Run Test from the Power Automate designer or trigger with the next AtoB email.",
+    "status": "failed_validation",
+    "latest_run_id": "08584222024119360080644246379CU24",
+    "latest_run_at": "2026-05-21T23:01:14Z",
+    "failed_run_tracking_id": "08584222024119360081644246379CU31",
+    "failed_action_tracking_id": "585e73a9-eb18-4d80-a02c-6eebcfc598ae",
+    "save_blocker": "Power Automate save validation is blocked by Excel Online (Business) 401 Unauthorized on GetSingleScript.",
+    "next_step": "Re-auth the Excel Online (Business) connection, save the redirect runAfter/binding fix, then re-test.",
 }
 
 ATOB_LOADING_OPTIMIZATION_PLAN = [

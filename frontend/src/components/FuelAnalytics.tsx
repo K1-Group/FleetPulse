@@ -127,8 +127,11 @@ interface AtoBSharePointStatus {
     resolution: string
     fixed_at: string
     status: string
+    latest_run_id?: string
+    latest_run_at?: string
     failed_run_tracking_id: string
     failed_action_tracking_id: string
+    save_blocker?: string
     next_step: string
   }
   loading_optimization_plan?: Array<{
@@ -513,6 +516,32 @@ const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
 
 const humanStatusLabel = (value?: string | null) => String(value || '').replace(/_/g, ' ')
 
+const flowStatusBadge = (status?: string | null) => {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized.includes('failed') || normalized.includes('error')) {
+    return {
+      label: 'Failed validation',
+      className: 'border-red-400/30 bg-red-500/10 text-red-200',
+    }
+  }
+  if (normalized.includes('validated') || normalized.includes('success')) {
+    return {
+      label: 'Validated',
+      className: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200',
+    }
+  }
+  if (normalized.includes('pending')) {
+    return {
+      label: 'Pending test validation',
+      className: 'border-amber-400/30 bg-amber-500/10 text-amber-200',
+    }
+  }
+  return {
+    label: humanStatusLabel(status) || 'Unknown',
+    className: 'border-gray-500/30 bg-gray-700/20 text-gray-300',
+  }
+}
+
 const formatNumber = (value?: number | null, maximumFractionDigits = 0) => (
   value === null || value === undefined
     ? 'Pending'
@@ -772,6 +801,7 @@ export default function FuelAnalytics() {
   const qboImportLocked = Boolean(qboStatus?.api_key_required && !qboApiKey)
   const sharePointReady = Boolean(sharePointStatus?.sync_ready)
   const atobFlow = sharePointStatus?.power_automate_flow
+  const atobFlowBadge = flowStatusBadge(atobFlow?.status)
   const optimizationPlan = sharePointStatus?.loading_optimization_plan || []
   const operatingSummary = operatingCost?.summary
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
@@ -1527,8 +1557,8 @@ export default function FuelAnalytics() {
                       {atobFlow.environment} · {humanStatusLabel(atobFlow.status)}
                     </div>
                   </div>
-                  <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-200">
-                    Pending test validation
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${atobFlowBadge.className}`}>
+                    {atobFlowBadge.label}
                   </span>
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 text-xs text-blue-100/80 xl:grid-cols-2">
@@ -1541,6 +1571,16 @@ export default function FuelAnalytics() {
                   <div>
                     <span className="font-semibold text-blue-100">Flow ID:</span> {atobFlow.flow_id}
                   </div>
+                  {atobFlow.latest_run_id && (
+                    <div>
+                      <span className="font-semibold text-blue-100">Latest run:</span> {atobFlow.latest_run_id}
+                    </div>
+                  )}
+                  {atobFlow.save_blocker && (
+                    <div>
+                      <span className="font-semibold text-blue-100">Save blocker:</span> {atobFlow.save_blocker}
+                    </div>
+                  )}
                   <div>
                     <span className="font-semibold text-blue-100">Next step:</span> {atobFlow.next_step}
                   </div>

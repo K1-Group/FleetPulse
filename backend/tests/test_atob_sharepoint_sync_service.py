@@ -120,8 +120,9 @@ def test_sharepoint_status_reports_missing_configuration():
     assert status["sync_ready"] is False
     assert status["api_key_required"] is True
     assert "FLEETPULSE_GRAPH_TENANT_ID" in status["missing_config"]
-    assert status["power_automate_flow"]["status"] == "saved_pending_test_validation"
+    assert status["power_automate_flow"]["status"] == "failed_validation"
     assert status["power_automate_flow"]["flow_id"] == "34873590-059e-4317-9e1b-4dfc603e5653"
+    assert "Excel Online" in status["power_automate_flow"]["save_blocker"]
     assert status["loading_optimization_plan"][0]["status"] == "in_progress"
 
 
