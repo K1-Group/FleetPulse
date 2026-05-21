@@ -37,6 +37,34 @@ export interface FleetOverview {
   trip_definition: string
 }
 
+export interface DataConnectorVehicleKpiSummary {
+  total_vehicles: number
+  total_distance_miles?: number
+  total_distance_km?: number
+  total_drive_hours: number
+  total_idle_hours: number
+  utilization_pct: number
+}
+
+export interface DataConnectorVehicleKpiResponse {
+  vehicles: Array<{
+    vehicle_id?: string
+    vehicle_name: string
+    distance_miles?: number
+    distance_km?: number
+    drive_hours: number
+    idle_hours: number
+    trips: number
+    fuel_litres: number
+  }>
+  summary: DataConnectorVehicleKpiSummary
+  period_days: number
+  feed_status?: string
+  message?: string
+  source_authority?: string
+  projection_mode?: 'read_only' | string
+}
+
 export interface LocationStats {
   name: string
   address: string

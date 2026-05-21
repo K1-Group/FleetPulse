@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type {
+  DataConnectorVehicleKpiResponse,
   DashboardValidationItem,
   DashboardValidationResponse,
   DashboardValidationStatus,
@@ -76,6 +77,9 @@ interface Props {
   loading: boolean
   safetyScores?: VehicleSafetyScore[] | null
   safetyLoading?: boolean
+  utilization7d?: DataConnectorVehicleKpiResponse | null
+  utilization7dError?: string | null
+  utilization7dLoading?: boolean
   validation?: DashboardValidationResponse | null
 }
 
@@ -260,16 +264,35 @@ function placeholderKpi(card: Omit<KpiCard, 'value'> & { value?: null }): KpiCar
   return { value: null, ...card }
 }
 
+function utilizationStatus(
+  data: DataConnectorVehicleKpiResponse | null | undefined,
+  loading: boolean,
+  error?: string | null,
+): KpiStatus {
+  if (loading) return 'pending'
+  if (error) return 'error'
+  if (!data) return 'no-data'
+  if (data.feed_status === 'degraded' || data.feed_status === 'table_unavailable') return 'error'
+  if (data.feed_status === 'empty') return 'no-data'
+  return asNumber(data.summary?.utilization_pct) !== null ? 'verified' : 'no-data'
+}
+
 function buildCards(
   overview: FleetOverview | null,
   loading: boolean,
   validation: DashboardValidationResponse | null | undefined,
   safetyScores: VehicleSafetyScore[] | null | undefined,
   safetyLoading: boolean,
+  utilization7d: DataConnectorVehicleKpiResponse | null | undefined,
+  utilization7dLoading: boolean,
+  utilization7dError?: string | null,
 ): KpiCard[] {
   const safetyItem = validation?.sections?.safety_scorecard || null
   const safetyValue = averageSafetyScore(safetyScores)
   const safetyStatus = mapValidationStatus(safetyItem, safetyValue !== null, safetyLoading)
+  const utilization7dValue = asNumber(utilization7d?.summary?.utilization_pct)
+  const utilization7dPeriod = utilization7d?.period_days || 7
+  const utilization7dStatus = utilizationStatus(utilization7d, utilization7dLoading, utilization7dError)
 
   return [
     overviewKpi(validation, loading, overview, {
@@ -332,16 +355,20 @@ function buildCards(
       status: 'no-data',
       tone: 'warning',
     }),
-    placeholderKpi({
+    {
       group: 'Fleet',
       icon: 'gauge',
       id: 'utilization',
-      label: 'Utilization %',
-      source: 'Geotab Data Connector',
-      status: 'pending',
+      label: 'Utilization 7d',
+      source: utilization7d?.source_authority || 'Geotab Data Connector',
+      stateLabel: utilization7dStatus === 'no-data' ? 'No Data' : undefined,
+      status: utilization7dStatus,
       tone: 'info',
       unit: '%',
-    }),
+      value: utilization7dValue,
+      decimals: 1,
+      delta: `Previous ${utilization7dPeriod} days`,
+    },
     overviewKpi(validation, loading, overview, {
       decimals: 1,
       group: 'Operations',
@@ -575,11 +602,23 @@ export default function Dashboard({
   loading,
   safetyScores,
   safetyLoading = false,
+  utilization7d,
+  utilization7dError,
+  utilization7dLoading = false,
   validation,
 }: Props) {
   const cards = useMemo(
-    () => buildCards(overview, loading, validation, safetyScores, safetyLoading),
-    [loading, overview, safetyLoading, safetyScores, validation],
+    () => buildCards(
+      overview,
+      loading,
+      validation,
+      safetyScores,
+      safetyLoading,
+      utilization7d,
+      utilization7dLoading,
+      utilization7dError,
+    ),
+    [loading, overview, safetyLoading, safetyScores, utilization7d, utilization7dError, utilization7dLoading, validation],
   )
 
   return (

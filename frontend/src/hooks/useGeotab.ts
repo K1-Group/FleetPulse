@@ -9,6 +9,7 @@ import type {
   ControlTowerSeatKpiCoverageResponse,
   ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
+  DataConnectorVehicleKpiResponse,
   DashboardValidationResponse,
   DriverWorkforceResponse,
   DriverCoachingDetail,
@@ -110,6 +111,15 @@ export function useLocations(enabled = true) {
 
 export function useDashboardValidation(enabled = true) {
   return useFetch<DashboardValidationResponse>(`${API}/dashboard/validation`, 60000, enabled)
+}
+
+export function useDataConnectorVehicleKpis(days = 7, enabled = true) {
+  return useFetch<DataConnectorVehicleKpiResponse>(
+    `${API}/data-connector/vehicle-kpis?days=${days}`,
+    300000,
+    enabled,
+    25000,
+  )
 }
 
 export function useDriverWorkforce(enabled = true) {
