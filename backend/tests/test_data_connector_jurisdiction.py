@@ -32,11 +32,15 @@ if "mygeotab" not in sys.modules:
 
 @pytest.fixture(autouse=True)
 def _stub_geotab_creds(monkeypatch):
+    from _cache import clear_cached_prefix
+
+    clear_cached_prefix("data-connector:")
     monkeypatch.setenv("GEOTAB_USERNAME", "u")
     monkeypatch.setenv("GEOTAB_PASSWORD", "p")
     monkeypatch.setenv("GEOTAB_DATABASE", "k1logistics")
     monkeypatch.delenv("GEOTAB_ODATA_SERVER", raising=False)
     yield
+    clear_cached_prefix("data-connector:")
 
 
 def _import_router_fresh():
@@ -349,6 +353,39 @@ def test_fault_trends_uses_geotab_asset_name_from_metadata(monkeypatch):
     assert result["faults"][0]["fault_code"] == "1378"
     assert result["faults"][0]["count"] == 2
     assert result["faults"][0]["date"] == "2026-05-02"
+
+
+def test_vehicle_kpis_uses_route_cache(monkeypatch):
+    mod = _import_router_fresh()
+    call_count = 0
+
+    async def _rows(table, *_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if table == "VehicleKpi_Daily":
+            return [
+                {
+                    "DeviceId": "G8B120F4CFB4",
+                    "Distance_Km": 10,
+                    "DriveDuration_Seconds": 3600,
+                    "Trip_Count": 1,
+                }
+            ]
+        if table == mod._PROBE_TABLE:
+            return [{"DeviceId": "G8B120F4CFB4", "Name": "K1-117"}]
+        return []
+
+    monkeypatch.setattr(mod, "_odata_get", _rows)
+
+    import asyncio
+
+    first = asyncio.run(mod.vehicle_kpis(days=7))
+    second = asyncio.run(mod.vehicle_kpis(days=7))
+
+    assert first == second
+    assert second["feed_status"] == "ok"
+    assert second["vehicles"][0]["vehicle_name"] == "K1-117"
+    assert call_count == 2
 
 
 def test_vehicle_kpis_returns_degraded_payload_on_timeout(monkeypatch):

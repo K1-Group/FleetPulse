@@ -87,7 +87,7 @@ export default function DataConnector() {
       )
       let res: Response
       try {
-        res = await fetch(url, { cache: 'no-store', signal: controller.signal })
+        res = await fetch(url, { signal: controller.signal })
       } catch (fetchError) {
         if (fetchError instanceof DOMException && fetchError.name === 'AbortError') {
           throw new Error('Data Connector request timed out before the upstream feed responded.')

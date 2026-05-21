@@ -359,7 +359,7 @@ async def fuel_summary():
     """Get fleet fuel consumption summary."""
     cache_key = "fuel:summary"
     cached = get_cached(cache_key)
-    if cached:
+    if cached is not None:
         return cached
 
     try:
@@ -465,7 +465,7 @@ async def fuel_trends():
     """Get daily fuel cost trends for the past 30 days."""
     cache_key = "fuel:trends"
     cached = get_cached(cache_key)
-    if cached:
+    if cached is not None:
         return cached
 
     try:
@@ -513,7 +513,7 @@ async def fuel_efficiency_by_vehicle():
     """Get per-vehicle fuel efficiency rankings."""
     cache_key = "fuel:efficiency"
     cached = get_cached(cache_key)
-    if cached:
+    if cached is not None:
         return cached
 
     try:
@@ -593,7 +593,7 @@ async def fuel_revenue_productivity(days: int = Query(7, ge=1, le=31)):
     """Get weekly revenue per active truck and dispatch driver."""
     cache_key = f"fuel:revenue-productivity:{days}"
     cached = get_cached(cache_key)
-    if cached:
+    if cached is not None:
         return cached
 
     snapshot = await asyncio.to_thread(get_revenue_productivity_snapshot, days)

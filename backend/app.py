@@ -8,6 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from http_cache import api_cache_control_header
+
 logger = logging.getLogger("fleetpulse")
 
 
@@ -66,6 +68,19 @@ async def enforce_entra_sso(request: Request, call_next):
         target = f"{target}?{request.url.query}"
     login_url = f"/.auth/login/aad?post_login_redirect_uri={quote(target, safe='')}"
     return RedirectResponse(login_url, status_code=302)
+
+
+@app.middleware("http")
+async def add_dashboard_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    cache_control = api_cache_control_header(
+        request.method,
+        request.url.path,
+        response.status_code,
+    )
+    if cache_control:
+        response.headers["Cache-Control"] = cache_control
+    return response
 
 
 # Resilient router loading — skip any router with import errors

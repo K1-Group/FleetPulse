@@ -23,6 +23,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
+from _cache import clear_cached_prefix, get_cached, set_cached
 from geotab_client import GeotabClient
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,13 @@ try:
     )
 except ValueError:
     _ODATA_QUEUE_TIMEOUT_SECONDS = 5.0
+try:
+    _DATA_CONNECTOR_CACHE_TTL_SECONDS = max(
+        int(os.getenv("FLEETPULSE_DATA_CONNECTOR_CACHE_TTL_SECONDS", "300")),
+        0,
+    )
+except ValueError:
+    _DATA_CONNECTOR_CACHE_TTL_SECONDS = 300
 _ODATA_REQUEST_SEMAPHORE = asyncio.Semaphore(_ODATA_MAX_CONCURRENT_REQUESTS)
 
 # Probe table that exists for every K1 database and is cheap to query.
@@ -154,6 +162,22 @@ def _data_connector_config_status() -> dict[str, Any]:
         "cached_odata_server": _ODATA_SERVER,
         "probe_table": _PROBE_TABLE,
     }
+
+
+def _cache_key(*parts: object) -> str:
+    return "data-connector:" + ":".join(str(part) for part in parts)
+
+
+def _get_data_connector_cached(key: str) -> Any | None:
+    if _DATA_CONNECTOR_CACHE_TTL_SECONDS <= 0:
+        return None
+    return get_cached(key, ttl=_DATA_CONNECTOR_CACHE_TTL_SECONDS)
+
+
+def _set_data_connector_cached(key: str, value: Any) -> Any:
+    if _DATA_CONNECTOR_CACHE_TTL_SECONDS > 0:
+        set_cached(key, value)
+    return value
 
 
 def _is_jurisdiction_error(text: str) -> bool:
@@ -270,6 +294,7 @@ async def _invalidate_server() -> None:
     if _ODATA_SERVER:
         logger.warning("Invalidating cached Data Connector server %s", _ODATA_SERVER)
     _ODATA_SERVER = None
+    clear_cached_prefix("data-connector:")
 
 
 async def _acquire_odata_slot(table: str) -> None:
@@ -398,6 +423,20 @@ async def _odata_get(table: str, search: str = "last_14_day", select: str | None
                 406,
                 f"Data Connector error: Jurisdiction Mismatch persists after refresh: {exc.detail}",
             )
+
+
+async def _cached_odata_get(
+    table: str,
+    search: str = "last_14_day",
+    select: str | None = None,
+    top: int = 1000,
+) -> list[dict]:
+    cache_key = _cache_key("odata", table, search, select or "", top)
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
+    rows = await _odata_get(table, search=search, select=select, top=top)
+    return _set_data_connector_cached(cache_key, rows)
 
 
 def _connector_error_message(exc: Exception) -> str:
@@ -621,21 +660,29 @@ async def list_tables():
     only to enumerate table names; rely on actual table queries (with proper
     jurisdiction handling in _odata_get) for data.
     """
+    cache_key = _cache_key("tables")
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
     base = await _find_server()
     auth = _basic_auth()
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.get(base, auth=auth)
         if r.status_code != 200:
             raise HTTPException(r.status_code, r.text[:500])
-        return r.json()
+        return _set_data_connector_cached(cache_key, r.json())
 
 
 @router.get("/vehicle-kpis")
 async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
     """Fleet utilization KPIs per vehicle."""
+    cache_key = _cache_key("vehicle-kpis", days)
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
     try:
-        rows = await _odata_get("VehicleKpi_Daily", search=search)
+        rows = await _cached_odata_get("VehicleKpi_Daily", search=search)
     except Exception as exc:
         logger.warning("VehicleKpi_Daily unavailable: %s", _connector_error_message(exc))
         return {
@@ -650,7 +697,7 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
             **_degraded_source_payload(days, exc),
         }
     if not rows:
-        return {
+        return _set_data_connector_cached(cache_key, {
             "vehicles": [],
             "summary": {
                 "total_vehicles": 0,
@@ -663,10 +710,10 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
             "feed_status": "empty",
             "source_authority": "K1 Logistics Inc / Geotab Data Connector",
             "projection_mode": "read_only",
-        }
+        })
 
     try:
-        metadata_rows = await _odata_get(_PROBE_TABLE, search=search, top=2000)
+        metadata_rows = await _cached_odata_get(_PROBE_TABLE, search=search, top=2000)
     except HTTPException as exc:
         logger.warning(
             "Vehicle metadata lookup failed; falling back to KPI identifiers: status=%s",
@@ -679,7 +726,7 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
     total_drive = sum(v["drive_hours"] for v in vehicles)
     total_idle = sum(v["idle_hours"] for v in vehicles)
 
-    return {
+    return _set_data_connector_cached(cache_key, {
         "vehicles": vehicles,
         "summary": {
             "total_vehicles": len(vehicles),
@@ -690,19 +737,23 @@ async def vehicle_kpis(days: int = Query(14, ge=1, le=90)):
         },
         "period_days": days,
         "feed_status": "ok",
-    }
+    })
 
 
 @router.get("/safety-scores")
 async def safety_scores(days: int = Query(14, ge=1, le=90)):
     """Aggregated safety scores from Data Connector."""
+    cache_key = _cache_key("safety-scores", days)
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
 
     # Try fleet-level first, then vehicle-level
     try:
         fleet_rows, vehicle_rows = await asyncio.gather(
-            _odata_get("FleetSafety_Daily", search=search),
-            _odata_get("VehicleSafety_Daily", search=search),
+            _cached_odata_get("FleetSafety_Daily", search=search),
+            _cached_odata_get("VehicleSafety_Daily", search=search),
         )
     except Exception as exc:
         logger.warning("Safety Data Connector rows unavailable: %s", _connector_error_message(exc))
@@ -712,29 +763,33 @@ async def safety_scores(days: int = Query(14, ge=1, le=90)):
             **_degraded_source_payload(days, exc),
         }
 
-    return {
+    return _set_data_connector_cached(cache_key, {
         "fleet_daily": fleet_rows[:30],
         "vehicle_scores": vehicle_rows[:100],
         "period_days": days,
         "feed_status": "ok",
-    }
+    })
 
 
 @router.get("/fault-trends")
 async def fault_trends(days: int = Query(14, ge=1, le=90)):
     """Fault code trends from Data Connector."""
+    cache_key = _cache_key("fault-trends", days)
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
     try:
-        rows = await _odata_get("FaultMonitoring_Daily", search=search)
+        rows = await _cached_odata_get("FaultMonitoring_Daily", search=search)
     except HTTPException as exc:
         if exc.status_code == 404 and _is_missing_metadata_error(str(exc.detail)):
             logger.warning("FaultMonitoring_Daily is not available in this Data Connector feed")
-            return {
+            return _set_data_connector_cached(cache_key, {
                 "faults": [],
                 "period_days": days,
                 "feed_status": "table_unavailable",
                 "message": "FaultMonitoring_Daily is not available for this Geotab Data Connector feed.",
-            }
+            })
         logger.warning("FaultMonitoring_Daily unavailable: %s", _connector_error_message(exc))
         return {
             "faults": [],
@@ -748,7 +803,7 @@ async def fault_trends(days: int = Query(14, ge=1, le=90)):
         }
 
     try:
-        metadata_rows = await _odata_get(_PROBE_TABLE, search=search, top=2000)
+        metadata_rows = await _cached_odata_get(_PROBE_TABLE, search=search, top=2000)
     except HTTPException as exc:
         logger.warning(
             "Fault trend vehicle metadata lookup failed; falling back to fault identifiers: status=%s",
@@ -757,12 +812,19 @@ async def fault_trends(days: int = Query(14, ge=1, le=90)):
         metadata_rows = []
 
     faults = _annotate_fault_rows(rows[:200], _vehicle_metadata_name_map(metadata_rows))
-    return {"faults": faults, "period_days": days, "feed_status": "ok"}
+    return _set_data_connector_cached(cache_key, {"faults": faults, "period_days": days, "feed_status": "ok"})
 
 
 @router.get("/trip-summary")
 async def trip_summary(days: int = Query(14, ge=1, le=90)):
     """Trip summaries from Data Connector."""
+    cache_key = _cache_key("trip-summary", days)
+    cached = _get_data_connector_cached(cache_key)
+    if cached is not None:
+        return cached
     search = f"last_{days}_day" if days in (1, 7, 14, 30, 90) else "last_14_day"
-    rows = await _odata_get("VehicleKpi_Daily", search=search)
-    return {"trips": _convert_trip_summary_rows(rows[:200]), "period_days": days}
+    rows = await _cached_odata_get("VehicleKpi_Daily", search=search)
+    return _set_data_connector_cached(
+        cache_key,
+        {"trips": _convert_trip_summary_rows(rows[:200]), "period_days": days},
+    )
