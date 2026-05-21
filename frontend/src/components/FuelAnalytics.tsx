@@ -117,6 +117,26 @@ interface AtoBSharePointStatus {
     report_id?: string | null
     semantic_model_id?: string | null
   }
+  power_automate_flow?: {
+    flow_name: string
+    environment: string
+    flow_id: string
+    connection: string
+    trigger: string
+    issue: string
+    resolution: string
+    fixed_at: string
+    status: string
+    failed_run_tracking_id: string
+    failed_action_tracking_id: string
+    next_step: string
+  }
+  loading_optimization_plan?: Array<{
+    priority: number
+    item: string
+    detail: string
+    status: string
+  }>
 }
 
 interface AtoBSharePointSyncResult {
@@ -491,6 +511,8 @@ const formatCurrency = (value?: number | null, maximumFractionDigits = 0) => (
       })
 )
 
+const humanStatusLabel = (value?: string | null) => String(value || '').replace(/_/g, ' ')
+
 const formatNumber = (value?: number | null, maximumFractionDigits = 0) => (
   value === null || value === undefined
     ? 'Pending'
@@ -749,6 +771,8 @@ export default function FuelAnalytics() {
   const actualFuelCost = summary?.fuel_cost_source === 'atob_manual_import'
   const qboImportLocked = Boolean(qboStatus?.api_key_required && !qboApiKey)
   const sharePointReady = Boolean(sharePointStatus?.sync_ready)
+  const atobFlow = sharePointStatus?.power_automate_flow
+  const optimizationPlan = sharePointStatus?.loading_optimization_plan || []
   const operatingSummary = operatingCost?.summary
   const completeOperatingCost = Boolean(operatingCost?.complete_cost_available)
   const unresolvedCostSources = operatingCost?.unresolved_sources.join(', ') || ''
@@ -1493,6 +1517,52 @@ export default function FuelAnalytics() {
             <div className="mt-1 text-xs text-gray-500">
               Power BI: {sharePointStatus?.powerbi_connection?.semantic_model_id ? 'AtoB model mapped' : 'Model mapping optional'} · Source files: {sharePointStatus?.source_file_url_count ?? 0}
             </div>
+            {atobFlow && (
+              <div className="mt-4 rounded-xl border border-blue-500/25 bg-blue-500/10 p-4">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-blue-200/80">Power Automate Flow</div>
+                    <div className="mt-1 text-sm font-semibold text-blue-100">{atobFlow.flow_name}</div>
+                    <div className="mt-1 text-xs text-blue-100/70">
+                      {atobFlow.environment} · {humanStatusLabel(atobFlow.status)}
+                    </div>
+                  </div>
+                  <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-200">
+                    Pending test validation
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 text-xs text-blue-100/80 xl:grid-cols-2">
+                  <div>
+                    <span className="font-semibold text-blue-100">Root cause:</span> {atobFlow.issue}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-blue-100">Fix:</span> {atobFlow.resolution}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-blue-100">Flow ID:</span> {atobFlow.flow_id}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-blue-100">Next step:</span> {atobFlow.next_step}
+                  </div>
+                </div>
+              </div>
+            )}
+            {optimizationPlan.length > 0 && (
+              <div className="mt-3 rounded-xl border border-gray-700/70 bg-gray-950/35 p-4">
+                <div className="mb-3 text-xs uppercase tracking-wide text-gray-500">Loading Optimization Plan</div>
+                <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                  {optimizationPlan.map(item => (
+                    <div key={item.priority} className="rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-gray-100">{item.item}</span>
+                        <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] uppercase text-gray-400">{humanStatusLabel(item.status)}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div>
                 <div className="text-xs uppercase text-gray-500">Transactions</div>

@@ -14,6 +14,48 @@ from services.atob_fuel_expense_service import (
 
 ATOB_SHAREPOINT_SOURCE_AUTHORITY = "SharePoint / AtoB fuel folder"
 
+ATOB_POWER_AUTOMATE_FLOW_STATUS = {
+    "flow_name": "AtoB Transactions -> SharePoint AtoB Fuel List",
+    "environment": "K1 SOP's and Procedures",
+    "flow_id": "34873590-059e-4317-9e1b-4dfc603e5653",
+    "connection": "rami@k1group.net",
+    "trigger": "When a new email arrives from hello@atob.com with subject 'Your transaction data is ready'",
+    "issue": "AtoB email download link is wrapped by Postmark tracking and returned HTTP 302 instead of CSV content.",
+    "resolution": "Added HTTP - Follow Redirect to GET the Location header, then rewired Compose - CSV Text to decode that response body.",
+    "fixed_at": "2026-05-21T17:15:38-05:00",
+    "status": "saved_pending_test_validation",
+    "failed_run_tracking_id": "08584222108971700785225667789CU29",
+    "failed_action_tracking_id": "7a35bcdc-1dc1-4cdd-97dd-8a4e12c8e6b1",
+    "next_step": "Run Test from the Power Automate designer or trigger with the next AtoB email.",
+}
+
+ATOB_LOADING_OPTIMIZATION_PLAN = [
+    {
+        "priority": 1,
+        "item": "Keep browser uploads off the critical path",
+        "detail": "Use AtoB email -> Power Automate -> SharePoint -> FleetPulse sync instead of parsing large files on dashboard render.",
+        "status": "in_progress",
+    },
+    {
+        "priority": 2,
+        "item": "Use scheduled incremental ingestion",
+        "detail": "Load only new AtoB files/rows and preserve duplicate detection before clearing fuel caches.",
+        "status": "active_pattern",
+    },
+    {
+        "priority": 3,
+        "item": "Read warm aggregates in the UI",
+        "detail": "Dashboard cards should read imported summaries and cached connector rollups, not raw transaction files.",
+        "status": "recommended",
+    },
+    {
+        "priority": 4,
+        "item": "Profile slow dependencies",
+        "detail": "Use Application Insights dependency timing to isolate Geotab OData, SQL, or SharePoint calls above 3 seconds.",
+        "status": "recommended",
+    },
+]
+
 
 class AtoBSharePointConfigError(RuntimeError):
     """Raised when SharePoint AtoB sync is called without required config."""
@@ -93,6 +135,8 @@ def atob_sharepoint_status(
             "report_id": config.powerbi_report_id or None,
             "semantic_model_id": config.powerbi_semantic_model_id or None,
         },
+        "power_automate_flow": ATOB_POWER_AUTOMATE_FLOW_STATUS,
+        "loading_optimization_plan": ATOB_LOADING_OPTIMIZATION_PLAN,
     }
 
 
