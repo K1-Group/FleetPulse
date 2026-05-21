@@ -83,6 +83,84 @@ export interface DashboardValidationResponse {
   summary: Record<DashboardValidationStatus, number>
 }
 
+export type DriverWorkforceStatus =
+  | 'scheduled'
+  | 'working'
+  | 'near_limit'
+  | 'overdue'
+  | 'late_start'
+  | 'complete'
+  | 'active_without_ticket'
+  | 'ticket_no_activity'
+  | 'unmatched'
+
+export interface DriverWorkforceKpis {
+  scheduled_today: number
+  working_now: number
+  late_start: number
+  near_limit: number
+  overdue: number
+  avg_time_worked_minutes: number | null
+  active_without_ticket: number
+  ticket_no_activity: number
+}
+
+export interface DriverWorkforceWorkday {
+  driver_id: string | null
+  driver_name: string | null
+  vehicle_id: string | null
+  vehicle_name: string | null
+  ticket_id: string | null
+  route_status: string
+  pickup_location: string | null
+  delivery_location: string | null
+  planned_start: string
+  planned_finish: string
+  planned_hours: number
+  actual_start_time: string | null
+  actual_last_seen: string | null
+  actual_worked_minutes: number | null
+  remaining_minutes: number | null
+  variance_minutes: number | null
+  completion_time: string | null
+  source: string
+  status: DriverWorkforceStatus
+  status_label: string
+  time_worked_display: string
+  remaining_display: string
+  overlap_issue: boolean
+}
+
+export interface DriverWorkforceValidation {
+  state: string
+  status: DashboardValidationStatus
+  message: string
+  row_count: number
+  joined_count: number
+  invalid_ticket_count: number
+}
+
+export interface DriverWorkforceResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  config: Record<string, number | string>
+  operating_day: {
+    start: string
+    end: string
+    timezone: string
+  }
+  source_freshness: {
+    xcelerator_tickets: string | null
+    geotab: string | null
+  }
+  kpis: DriverWorkforceKpis
+  workdays: DriverWorkforceWorkday[]
+  alerts: Alert[]
+  insights: string[]
+  validation: DriverWorkforceValidation
+}
+
 export interface SafetyBreakdown {
   speeding: number
   harsh_braking: number

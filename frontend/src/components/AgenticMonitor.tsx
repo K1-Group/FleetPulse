@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Brain, AlertTriangle, Lightbulb, Clock } from 'lucide-react'
-import type { Alert } from '../types/fleet'
+import type { Alert, DriverWorkforceResponse } from '../types/fleet'
 
 interface MonitorStatus {
   running: boolean
@@ -21,6 +21,7 @@ interface Props {
   status: MonitorStatus | null
   loading: boolean
   onTriggerCheck: () => void
+  driverWorkforce?: DriverWorkforceResponse | null
 }
 
 const groupStyle: Record<string, string> = {
@@ -30,7 +31,7 @@ const groupStyle: Record<string, string> = {
   low: 'bg-blue-500',
 }
 
-export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck }: Props) {
+export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck, driverWorkforce }: Props) {
   const [expanded, setExpanded] = useState(true)
   const [activeTab, setActiveTab] = useState<'alerts' | 'insights' | 'recommendations'>('insights')
   const patterns = status?.patterns || {}
@@ -41,7 +42,7 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
   const lastCheck = typeof patterns.last_check === 'string' ? patterns.last_check : null
 
   const liveInsights = useMemo(() => {
-    return (alerts || []).slice(0, 5).map(alert => ({
+    const alertInsights = (alerts || []).slice(0, 5).map(alert => ({
       id: alert.id,
       icon: <AlertTriangle className="w-4 h-4" />,
       title: alert.alert_type || 'Fleet alert',
@@ -49,7 +50,16 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
       action: alert.acknowledged ? 'Acknowledged' : 'Review',
       priority: alert.severity,
     }))
-  }, [alerts])
+    const workforceInsights = (driverWorkforce?.insights || []).slice(0, 5).map((message, index) => ({
+      id: `driver-workforce-${index}`,
+      icon: <Clock className="w-4 h-4" />,
+      title: 'Driver Workforce',
+      message,
+      action: 'Review',
+      priority: driverWorkforce?.kpis.overdue ? 'critical' : driverWorkforce?.kpis.near_limit ? 'medium' : 'low',
+    }))
+    return [...workforceInsights, ...alertInsights].slice(0, 8)
+  }, [alerts, driverWorkforce?.insights, driverWorkforce?.kpis.near_limit, driverWorkforce?.kpis.overdue])
 
   const recommendations = useMemo(() => {
     const activeAlerts = alerts || []
@@ -62,6 +72,14 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
         type: alert.severity,
       }))
     }
+    if ((driverWorkforce?.kpis.overdue || 0) > 0) {
+      return [{
+        title: 'Overdue route tickets',
+        description: `${driverWorkforce?.kpis.overdue} Xcelerator route ticket(s) are past planned finish and still open.`,
+        impact: 'Dispatch review required',
+        type: 'critical',
+      }]
+    }
     if (!status?.running) {
       return [{
         title: 'Monitor disabled',
@@ -71,7 +89,7 @@ export default function AgenticMonitor({ alerts, status, loading, onTriggerCheck
       }]
     }
     return []
-  }, [alerts, status?.running])
+  }, [alerts, driverWorkforce?.kpis.overdue, status?.running])
 
   const groupedAlerts = useMemo(() => {
     const activeAlerts = alerts || []

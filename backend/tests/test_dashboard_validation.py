@@ -124,8 +124,9 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     assert payload["sections"]["data_connector"]["status"] == "verified"
     assert payload["sections"]["operating_system"]["status"] == "failed"
     assert payload["sections"]["alerts"]["status"] == "pending_no_data"
+    assert payload["sections"]["driver_workforce"]["status"] == "pending_no_data"
     assert payload["sections"]["agentic_monitor"]["status"] == "pending_no_audit"
-    assert payload["summary"]["pending_no_data"] == 1
+    assert payload["summary"]["pending_no_data"] == 2
     assert payload["summary"]["pending_no_audit"] == 2
     assert any(row["blocked_by"] == "no_audit" for row in payload["pending_ledger"])
 

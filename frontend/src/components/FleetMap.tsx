@@ -10,6 +10,7 @@ interface Props {
   vehicles: Vehicle[] | null
   locations: LocationStats[] | null
   trailers?: ControlTowerTrailerLiveAsset[] | null
+  selectedVehicleId?: string | null
 }
 
 interface RouteTrail {
@@ -34,10 +35,11 @@ const statusEmoji: Record<string, string> = {
   offline: '⚫'
 }
 
-function vehicleIcon(status: string, isMoving: boolean = false) {
+function vehicleIcon(status: string, isMoving: boolean = false, isSelected: boolean = false) {
   const color = statusColor[status] || '#6b7280'
-  const size = isMoving ? 16 : 14
+  const size = isSelected ? 24 : isMoving ? 16 : 14
   const animation = isMoving ? 'animation: pulse 1.5s infinite;' : ''
+  const border = isSelected ? '3px solid #facc15' : '2px solid white'
   
   return L.divIcon({
     className: '',
@@ -47,7 +49,7 @@ function vehicleIcon(status: string, isMoving: boolean = false) {
         height:${size}px;
         border-radius:50%;
         background:${color};
-        border:2px solid white;
+        border:${border};
         box-shadow:0 0 8px rgba(0,0,0,.6);
         ${animation}
         transform: translate(-50%, -50%);
@@ -148,7 +150,7 @@ const formatLastUpdated = (value: string | null): string => {
 
 const assetLabel = (vehicle: Vehicle): string => vehicle.name || vehicle.id || 'Unknown asset'
 
-export default function FleetMap({ vehicles, locations, trailers }: Props) {
+export default function FleetMap({ vehicles, locations, trailers, selectedVehicleId }: Props) {
   const [showVehicles, setShowVehicles] = useState(true)
   const [showTrailers, setShowTrailers] = useState(true)
   const [showLocations, setShowLocations] = useState(true)
@@ -493,7 +495,11 @@ export default function FleetMap({ vehicles, locations, trailers }: Props) {
               <Marker
                 key={v.id}
                 position={[v.position!.latitude, v.position!.longitude]}
-                icon={vehicleIcon(v.status, v.status === 'active' && (v.position?.speed || 0) > 5)}
+                icon={vehicleIcon(
+                  v.status,
+                  v.status === 'active' && (v.position?.speed || 0) > 5,
+                  selectedVehicleId === v.id
+                )}
               >
                 <Tooltip
                   direction="top"

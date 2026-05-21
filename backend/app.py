@@ -42,6 +42,7 @@ _ROUTERS = [
     ("control_tower", "/api/control-tower", ["Control Tower"]),
     ("operating_system", "/api/operating-system", ["K1 Operating System"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
+    ("driver_workforce", "/api/driver-workforce", ["Driver Workforce"]),
     ("hr_recruiting", "/api/hr-recruiting", ["HR Recruiting"]),
     ("hr_recruiting_powerbi", "/api/powerbi", ["Power BI"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),

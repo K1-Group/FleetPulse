@@ -15,6 +15,7 @@ from typing import Any
 from configs.operating_system import OperatingSystemRuntimeConfig
 from services.alert_service import get_recent_alerts
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
+from services.driver_workforce_service import get_driver_workforce_dataset
 from services.k1l_operating_kpi_service import (
     POWERBI_REVENUE_SOURCE,
     WAREHOUSE_SQL_REVENUE_SOURCE,
@@ -782,6 +783,60 @@ def _validate_static_or_config_surfaces() -> dict[str, ValidationItem]:
     }
 
 
+def _validate_driver_workforce_surface() -> ValidationItem:
+    try:
+        payload = get_driver_workforce_dataset()
+        validation = payload.get("validation") or {}
+        status = str(validation.get("status") or "pending")
+        return _item(
+            "driver_workforce",
+            "Driver Workforce Route Windows",
+            status,
+            source_authority="Xcelerator route tickets + Geotab activity",
+            message=str(
+                validation.get("message")
+                or "Xcelerator route tickets + Geotab activity"
+            ),
+            row_count=validation.get("row_count"),
+            metrics=[
+                "scheduled_today",
+                "working_now",
+                "late_start",
+                "near_limit",
+                "overdue",
+                "avg_time_worked_minutes",
+            ],
+            required_config=[
+                "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH",
+                "GEOTAB_DATABASE",
+                "GEOTAB_USERNAME",
+                "GEOTAB_PASSWORD",
+            ],
+            blocked_by=None if status == "verified" else validation.get("state"),
+            next_check=None if status == "verified" else _next_check_iso(),
+            contract={
+                "name": "driver_workforce_route_windows",
+                "planned_authority": "K1 Group LLC / Xcelerator",
+                "actual_authority": "K1 Logistics Inc / Geotab",
+                "rule": "route_ticket_window_overlap_joined_to_geotab_activity",
+            },
+        )
+    except Exception as exc:
+        return _item(
+            "driver_workforce",
+            "Driver Workforce Route Windows",
+            "failed",
+            source_authority="Xcelerator route tickets + Geotab activity",
+            message=f"Driver workforce route-window validation failed: {exc}",
+            required_config=[
+                "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH",
+                "GEOTAB_DATABASE",
+                "GEOTAB_USERNAME",
+                "GEOTAB_PASSWORD",
+            ],
+        )
+
+
 def get_dashboard_validation_snapshot() -> dict[str, Any]:
     sections: dict[str, ValidationItem] = {}
     metrics: dict[str, ValidationItem] = {}
@@ -793,6 +848,8 @@ def get_dashboard_validation_snapshot() -> dict[str, Any]:
     metrics.update(k1l_metrics)
     metrics.update(overview_metrics)
     sections.update(_validate_vehicle_surfaces())
+    driver_workforce = _validate_driver_workforce_surface()
+    sections[driver_workforce["key"]] = driver_workforce
     sections.update(_validate_safety_surfaces())
     sections.update(_validate_alert_surfaces())
     sections.update(_validate_static_or_config_surfaces())

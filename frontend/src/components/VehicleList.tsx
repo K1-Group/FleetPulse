@@ -7,6 +7,7 @@ import { roundedMph } from '../utils/units'
 interface Props {
   vehicles: Vehicle[] | null
   loading: boolean
+  selectedVehicleId?: string | null
 }
 
 const statusBadge: Record<string, string> = {
@@ -23,7 +24,7 @@ const statusIcon: Record<string, JSX.Element> = {
   offline: <Zap className="w-3 h-3" />,
 }
 
-export default function VehicleList({ vehicles, loading }: Props) {
+export default function VehicleList({ vehicles, loading, selectedVehicleId }: Props) {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [locationFilter, setLocationFilter] = useState<string>('all')
@@ -254,7 +255,9 @@ export default function VehicleList({ vehicles, loading }: Props) {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ delay: index * 0.02 }}
-                  className="hover:bg-gray-800/40 transition-colors group"
+                  className={`hover:bg-gray-800/40 transition-colors group ${
+                    selectedVehicleId === vehicle.id ? 'bg-yellow-500/10 ring-1 ring-yellow-400/40' : ''
+                  }`}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">

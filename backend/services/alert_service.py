@@ -13,6 +13,7 @@ from typing import Any
 from geotab_client import GeotabClient
 from models import Alert, AlertRule, AlertSeverity
 from services.fleet_service import get_scoped_device_map
+from services.driver_workforce_service import driver_workforce_alert_models
 
 # ── Default alert rules ────────────────────────────────────────
 DEFAULT_RULES: list[AlertRule] = [
@@ -128,6 +129,12 @@ def get_recent_alerts(hours: int = 24) -> list[Alert]:
         a = _event_to_alert(e, devices)
         if a:
             alerts.append(a)
+
+    try:
+        alerts.extend(driver_workforce_alert_models(now=now))
+    except Exception as exc:
+        logger = __import__("logging").getLogger("fleetpulse")
+        logger.warning("Driver workforce alerts unavailable: %s", exc)
 
     alerts.sort(key=lambda a: a.timestamp, reverse=True)
     result = alerts[:100]  # cap at 100
