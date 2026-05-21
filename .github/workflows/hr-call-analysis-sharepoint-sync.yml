@@ -1,0 +1,60 @@
+name: Sync HR Call Analysis SharePoint Feed
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hr-call-analysis-sharepoint-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger FleetPulse SharePoint sync
+        env:
+          FLEETPULSE_HR_CALL_SYNC_URL: https://k1-fleetpulse.azurewebsites.net/api/hr-call-analysis/sharepoint/sync
+          FLEETPULSE_HR_CALL_SYNC_KEY: ${{ secrets.HR_CALL_ANALYSIS_IMPORT_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${FLEETPULSE_HR_CALL_SYNC_KEY:-}" ]; then
+            echo "Missing HR_CALL_ANALYSIS_IMPORT_API_KEY repository secret."
+            exit 1
+          fi
+
+          response_file="$(mktemp)"
+          status_code="$(
+            curl --silent --show-error --location \
+              --request POST "${FLEETPULSE_HR_CALL_SYNC_URL}" \
+              --header "Content-Type: application/json" \
+              --header "X-FleetPulse-HR-Call-Key: ${FLEETPULSE_HR_CALL_SYNC_KEY}" \
+              --data '{"dry_run":false}' \
+              --output "${response_file}" \
+              --write-out "%{http_code}"
+          )"
+
+          echo "FleetPulse HR call SharePoint sync HTTP ${status_code}"
+          jq '{
+            status,
+            dry_run,
+            fetched_count,
+            imported_count,
+            duplicate_count,
+            invalid_count,
+            error_count: (.errors | length)
+          }' "${response_file}"
+
+          if [ "${status_code}" -lt 200 ] || [ "${status_code}" -ge 300 ]; then
+            exit 1
+          fi
+
+          if [ "$(jq -r '.status' "${response_file}")" != "ok" ]; then
+            exit 1
+          fi

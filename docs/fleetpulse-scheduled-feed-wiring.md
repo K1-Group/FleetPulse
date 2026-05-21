@@ -152,6 +152,10 @@ configured:
 - URL: `https://k1-fleetpulse.azurewebsites.net/api/hr-call-analysis/sharepoint/sync`
 - Header: `X-FleetPulse-HR-Call-Key: <Key Vault secret value>`
 - Recommended cadence: every 15 minutes.
+- GitHub Actions fallback: `.github/workflows/hr-call-analysis-sharepoint-sync.yml`
+  calls this endpoint every 15 minutes using the
+  `HR_CALL_ANALYSIS_IMPORT_API_KEY` repository secret. Logs only print sync
+  counts, not call content or transcript text.
 
 Minimum useful call row fields:
 
