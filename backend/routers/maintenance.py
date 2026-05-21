@@ -210,6 +210,10 @@ def _forecast_secondary_days() -> int:
     return _env_int("FLEETPULSE_MAINTENANCE_FORECAST_SECONDARY_DAYS", 90, min_value=1, max_value=730)
 
 
+def _unknown_fault_high_count() -> int:
+    return _env_int("FLEETPULSE_MAINTENANCE_UNKNOWN_FAULT_HIGH_COUNT", 25, min_value=1, max_value=1000)
+
+
 def _env_terms(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -254,6 +258,7 @@ def _maintenance_runtime_config() -> dict[str, Any]:
         "avg_miles_per_day": _avg_miles_per_day(),
         "forecast_primary_days": _forecast_primary_days(),
         "forecast_secondary_days": _forecast_secondary_days(),
+        "unknown_fault_high_count": _unknown_fault_high_count(),
         "risk_thresholds": _risk_thresholds(),
         "interval_service_count": len(_maintenance_intervals()),
         "cost_service_count": len(_maintenance_costs()),
@@ -306,6 +311,15 @@ def _fault_description(fault: dict) -> str:
         ),
         "Unknown fault",
     )
+
+
+def _description_is_unknown_fault(description: Any) -> bool:
+    text = _as_text(description).lower()
+    return text in {"unknown fault", "**unknown fault"} or "unknown diagnostic" in text
+
+
+def _fault_is_unknown(fault: dict) -> bool:
+    return _description_is_unknown_fault(_fault_description(fault))
 
 
 def _fault_text(fault: dict) -> str:
@@ -597,9 +611,19 @@ def _fallback_fault_rows_from_geotab(faults_map: dict[str, list[dict]], devices:
     return rows
 
 
-def _fault_code_summary(faults: list[dict], limit: int = 8) -> list[dict[str, str]]:
-    summary = _fault_insights(faults)[:limit]
-    return [
+def _fault_insight_is_unknown(item: dict[str, Any]) -> bool:
+    return _description_is_unknown_fault(item.get("description"))
+
+
+def _fault_code_summary(faults: list[dict], limit: int = 4) -> list[dict[str, Any]]:
+    all_insights = _fault_insights(faults)
+    unknown_count = sum(int(item.get("count") or 0) for item in all_insights if _fault_insight_is_unknown(item))
+    unknown_examples = [
+        _as_text(item.get("code"))
+        for item in all_insights
+        if _fault_insight_is_unknown(item) and _as_text(item.get("code"))
+    ][:4]
+    known_rows = [
         {
             "code": item["code"],
             "description": (
@@ -607,9 +631,59 @@ def _fault_code_summary(faults: list[dict], limit: int = 8) -> list[dict[str, st
                 if item["count"] > 1
                 else item["description"]
             ),
+            "count": item["count"],
+            "severity": item.get("severity", "low"),
         }
-        for item in summary
+        for item in all_insights
+        if not _fault_insight_is_unknown(item)
     ]
+    display_limit = max(limit - 1, 1) if unknown_count else limit
+    rows = known_rows[:display_limit]
+    if unknown_count:
+        examples = ", ".join(unknown_examples)
+        rows.append(
+            {
+                "code": "unmapped",
+                "description": (
+                    f"{unknown_count} unmapped Geotab diagnostic row(s)"
+                    + (f" · examples: {examples}" if examples else "")
+                ),
+                "count": unknown_count,
+                "severity": "mapping_needed",
+            }
+        )
+    return rows[:limit]
+
+
+def _coerce_urgency(value: Any) -> UrgencyLevel | None:
+    if isinstance(value, UrgencyLevel):
+        return value
+    try:
+        return UrgencyLevel(str(value))
+    except ValueError:
+        return None
+
+
+def _urgency_sort_value(urgency: UrgencyLevel) -> int:
+    return {
+        UrgencyLevel.CRITICAL: 0,
+        UrgencyLevel.HIGH: 1,
+        UrgencyLevel.MEDIUM: 2,
+        UrgencyLevel.LOW: 3,
+    }.get(urgency, 9)
+
+
+def _fault_urgency_from_known_faults(faults: list[dict]) -> UrgencyLevel | None:
+    severities = {_fault_severity(fault) for fault in faults}
+    if "critical" in severities:
+        return UrgencyLevel.CRITICAL
+    if "high" in severities:
+        return UrgencyLevel.HIGH
+    if "medium" in severities:
+        return UrgencyLevel.MEDIUM
+    if faults:
+        return UrgencyLevel.LOW
+    return None
 
 
 def _get_devices_cached() -> list[dict]:
@@ -988,11 +1062,18 @@ async def get_urgent_maintenance():
     if cached is not None:
         return cached
     try:
+        lookback_days = _fault_lookback_days()
         devices = _get_devices_cached()
-        faults_map = _get_fleet_faults(_fault_lookback_days())
+        faults_map = _get_fleet_faults(lookback_days)
         odometers = _get_fleet_odometers()
         intervals = _maintenance_intervals()
         costs = _maintenance_costs()
+        intelligence = await get_maintenance_intelligence(days=lookback_days)
+        decision_by_vehicle = {
+            decision.get("vehicle_id"): decision
+            for decision in intelligence.get("decisions", [])
+            if decision.get("vehicle_id")
+        }
         urgent_alerts = []
         now = datetime.now(timezone.utc)
 
@@ -1000,6 +1081,8 @@ async def get_urgent_maintenance():
             device_id = device.get("id", "")
             device_name = device.get("name", "Unknown Vehicle")
             active_faults = [f for f in faults_map.get(device_id, []) if _fault_is_active(f)]
+            known_active_faults = [fault for fault in active_faults if not _fault_is_unknown(fault)]
+            unknown_fault_count = len(active_faults) - len(known_active_faults)
 
             current_odometer = odometers.get(device_id, 0)
             base_date = now - timedelta(days=_service_baseline_days())
@@ -1024,21 +1107,48 @@ async def get_urgent_maintenance():
                     })
 
             if active_faults or overdue_services or urgent_services:
-                urgency = UrgencyLevel.CRITICAL if (active_faults or overdue_services) else UrgencyLevel.HIGH
+                ai_urgency = _coerce_urgency((decision_by_vehicle.get(device_id) or {}).get("urgency"))
+                fault_summary = _fault_code_summary(active_faults)
+                suppressed_fault_count = max(0, len(_fault_insights(active_faults)) - len(fault_summary))
+                if overdue_services:
+                    urgency = UrgencyLevel.CRITICAL
+                    triage_reason = "Scheduled service is overdue."
+                elif known_active_faults and ai_urgency:
+                    urgency = ai_urgency
+                    triage_reason = "Geotab fault pattern has a maintenance decision."
+                elif known_active_faults:
+                    urgency = _fault_urgency_from_known_faults(known_active_faults) or UrgencyLevel.MEDIUM
+                    triage_reason = "Known Geotab fault code needs maintenance review."
+                elif active_faults:
+                    urgency = (
+                        UrgencyLevel.HIGH
+                        if len(active_faults) >= _unknown_fault_high_count()
+                        else UrgencyLevel.MEDIUM
+                    )
+                    triage_reason = "Unmapped Geotab diagnostic volume needs source mapping before repair dispatch."
+                else:
+                    urgency = UrgencyLevel.HIGH
+                    triage_reason = "Scheduled service is due soon."
+
                 alert = UrgentMaintenanceAlert(
                     vehicle_id=device_id, vehicle_name=device_name,
                     urgency=urgency,
-                    active_fault_codes=_fault_code_summary(active_faults),
+                    active_fault_codes=fault_summary,
                     overdue_services=overdue_services,
                     urgent_services=urgent_services,
                     estimated_repair_cost=sum(
                         costs.get(s["service_type"], 0)
                         for s in overdue_services + urgent_services
                     ),
+                    active_fault_count=len(active_faults),
+                    known_fault_count=len(known_active_faults),
+                    unknown_fault_count=unknown_fault_count,
+                    suppressed_fault_count=suppressed_fault_count,
+                    triage_reason=triage_reason,
                 )
                 urgent_alerts.append(alert)
 
-        urgent_alerts.sort(key=lambda x: (x.urgency.value, x.vehicle_name))
+        urgent_alerts.sort(key=lambda x: (_urgency_sort_value(x.urgency), -x.active_fault_count, x.vehicle_name))
         set_cached("maintenance_urgent", urgent_alerts)
         return urgent_alerts
 

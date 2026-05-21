@@ -97,3 +97,41 @@ def test_maintenance_intelligence_uses_configured_default_window(monkeypatch):
 
     assert payload["period_days"] == 14
     assert payload["config"]["fault_lookback_days"] == 14
+
+
+def test_urgent_maintenance_collapses_unknown_fault_noise(monkeypatch):
+    clear_cached_prefix("maintenance_urgent")
+
+    faults = [
+        {
+            "vehicle_id": "truck-1",
+            "FaultCode": f"b15{i:03X}",
+            "FaultCodeDescription": "Unknown fault",
+            "date": "2026-05-21",
+        }
+        for i in range(30)
+    ]
+
+    async def _intelligence(days=None):
+        return {
+            "decisions": [
+                {
+                    "vehicle_id": "truck-1",
+                    "urgency": "critical",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(maintenance, "_get_devices_cached", lambda: [{"id": "truck-1", "name": "Truck 1"}])
+    monkeypatch.setattr(maintenance, "_get_fleet_faults", lambda days=None: {"truck-1": faults})
+    monkeypatch.setattr(maintenance, "_get_fleet_odometers", lambda: {"truck-1": 0})
+    monkeypatch.setattr(maintenance, "get_maintenance_intelligence", _intelligence)
+
+    alerts = asyncio.run(maintenance.get_urgent_maintenance())
+
+    assert len(alerts) == 1
+    assert alerts[0].urgency == maintenance.UrgencyLevel.HIGH
+    assert alerts[0].known_fault_count == 0
+    assert alerts[0].unknown_fault_count == 30
+    assert alerts[0].active_fault_codes[0]["code"] == "unmapped"
+    assert "unmapped Geotab diagnostic row" in alerts[0].active_fault_codes[0]["description"]

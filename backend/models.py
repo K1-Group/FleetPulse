@@ -261,10 +261,16 @@ class UrgentMaintenanceAlert(BaseModel):
     vehicle_id: str
     vehicle_name: str
     urgency: UrgencyLevel
-    active_fault_codes: list[dict[str, str]]  # {code, description}
+    active_fault_codes: list[dict[str, Any]]  # summarized Geotab diagnostics
     overdue_services: list[dict]  # service details
     urgent_services: list[dict]  # service details
     estimated_repair_cost: float
+    active_fault_count: int = 0
+    known_fault_count: int = 0
+    unknown_fault_count: int = 0
+    suppressed_fault_count: int = 0
+    triage_reason: str = ""
+    source_authority: str = "K1 Logistics Inc / Geotab diagnostics"
 
 
 # ── Driver Coaching ────────────────────────────────────────────

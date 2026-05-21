@@ -50,11 +50,18 @@ interface UrgentAlert {
   vehicle_id: string
   vehicle_name: string
   urgency: 'low' | 'medium' | 'high' | 'critical'
-  active_fault_codes: Array<{code: string, description: string}>
+  active_fault_codes: Array<{code: string, description: string, count?: number, severity?: string}>
   overdue_services: Array<{service_type: string, days_overdue: number}>
   urgent_services: Array<{service_type: string, days_until_due: number}>
   estimated_repair_cost: number
+  active_fault_count?: number
+  known_fault_count?: number
+  unknown_fault_count?: number
+  suppressed_fault_count?: number
+  triage_reason?: string
 }
+
+const URGENT_ALERT_LIMIT = 8
 
 const getUrgencyColor = (urgency: string) => {
   switch (urgency) {
@@ -116,6 +123,15 @@ const getDecisionTone = (urgency: string) => {
   }
 }
 
+const getUrgentAlertTone = (urgency: string) => {
+  switch (urgency) {
+    case 'critical': return 'border-red-500/40 bg-red-950/20 text-red-200'
+    case 'high': return 'border-orange-500/35 bg-orange-950/20 text-orange-200'
+    case 'medium': return 'border-amber-500/30 bg-amber-950/15 text-amber-200'
+    default: return 'border-emerald-500/25 bg-emerald-950/10 text-emerald-200'
+  }
+}
+
 const formatDayWindow = (days?: number | null) => {
   return Number.isFinite(days) && days ? `${days} days` : 'configured window'
 }
@@ -130,6 +146,8 @@ export default function MaintenancePredictor() {
   const intelligenceSummary = intelligence.data?.summary || {}
   const primaryForecastDays = costs.data?.forecast_primary_days as number | undefined
   const secondaryForecastDays = costs.data?.forecast_secondary_days as number | undefined
+  const urgentAlertsToShow = (urgentAlerts.data || []).slice(0, URGENT_ALERT_LIMIT) as UrgentAlert[]
+  const hiddenUrgentAlertCount = Math.max(0, (urgentAlerts.data?.length || 0) - urgentAlertsToShow.length)
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -342,44 +360,81 @@ export default function MaintenancePredictor() {
       {/* Urgent Alerts */}
       {urgentAlerts.data && urgentAlerts.data.length > 0 && (
         <motion.div variants={itemVariants}>
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-red-400" />
-            Urgent Maintenance Required
-            <span className="text-xs bg-red-500 px-2 py-1 rounded-full">
-              {urgentAlerts.data.length}
-            </span>
-          </h2>
-          <div className="grid gap-4">
-            {urgentAlerts.data.map((alert: UrgentAlert, index: number) => (
+          <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold">
+                <AlertTriangle className="w-5 h-5 text-amber-300" />
+                Maintenance Triage Queue
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-xs text-amber-200">
+                  {urgentAlerts.data.length}
+                </span>
+              </h2>
+              <p className="mt-1 text-sm text-gray-400">
+                Showing top {urgentAlertsToShow.length}; repeated unmapped Geotab diagnostics are collapsed for review.
+              </p>
+            </div>
+            {hiddenUrgentAlertCount > 0 && (
+              <span className="text-xs text-gray-500">
+                {hiddenUrgentAlertCount} lower-priority asset{hiddenUrgentAlertCount === 1 ? '' : 's'} hidden
+              </span>
+            )}
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {urgentAlertsToShow.map((alert: UrgentAlert) => (
               <motion.div
                 key={alert.vehicle_id}
                 variants={itemVariants}
-                className="bg-gradient-to-r from-red-900/20 to-red-800/20 border border-red-700/50 rounded-lg p-4"
+                className={`rounded-lg border p-4 ${getUrgentAlertTone(alert.urgency)}`}
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold text-red-200">{alert.vehicle_name}</h3>
-                    <div className="space-y-1 mt-2">
-                      {alert.active_fault_codes.map((fault, i) => (
-                        <div key={i} className="text-sm text-red-300">
-                          <span className="font-mono bg-red-900/30 px-2 py-1 rounded">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-white">{alert.vehicle_name}</h3>
+                      <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
+                        {alert.urgency}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {alert.triage_reason || 'Geotab maintenance review required.'}
+                    </p>
+                    <div className="mt-3 space-y-1">
+                      {alert.active_fault_codes.slice(0, 4).map((fault, i) => (
+                        <div key={`${alert.vehicle_id}-${fault.code}-${i}`} className="flex items-start gap-2 text-sm text-gray-300">
+                          <span className="shrink-0 rounded bg-black/20 px-2 py-1 font-mono text-xs text-gray-100">
                             {fault.code}
                           </span>
-                          <span className="ml-2">{fault.description}</span>
+                          <span className="min-w-0">
+                            {fault.description}
+                            {fault.count && fault.code !== 'unmapped' ? ` (x${fault.count})` : ''}
+                          </span>
                         </div>
                       ))}
                       {alert.overdue_services.map((service, i) => (
-                        <div key={i} className="text-sm text-red-300">
+                        <div key={i} className="text-sm text-red-200">
                           <strong>{formatServiceType(service.service_type)}</strong> - {service.days_overdue} days overdue
                         </div>
                       ))}
+                      {(alert.suppressed_fault_count || 0) > 0 && (
+                        <div className="text-xs text-gray-500">
+                          {alert.suppressed_fault_count} additional diagnostic group{alert.suppressed_fault_count === 1 ? '' : 's'} collapsed
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-red-200 font-semibold">
-                      ${alert.estimated_repair_cost.toLocaleString()}
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-white">
+                      {alert.estimated_repair_cost > 0
+                        ? `$${alert.estimated_repair_cost.toLocaleString()}`
+                        : 'Cost pending'}
                     </p>
-                    <p className="text-xs text-red-400">{alert.urgency.toUpperCase()}</p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {alert.active_fault_count || 0} fault rows
+                    </p>
+                    {(alert.unknown_fault_count || 0) > 0 && (
+                      <p className="text-xs text-gray-500">
+                        {alert.unknown_fault_count} unmapped
+                      </p>
+                    )}
                   </div>
                 </div>
               </motion.div>
