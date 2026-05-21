@@ -127,10 +127,13 @@ interface AtoBSharePointStatus {
     resolution: string
     fixed_at: string
     status: string
+    validated_at?: string
     latest_run_id?: string
     latest_run_at?: string
-    failed_run_tracking_id: string
-    failed_action_tracking_id: string
+    latest_run_tracking_id?: string
+    validation_path?: string
+    failed_run_tracking_id?: string
+    failed_action_tracking_id?: string
     save_blocker?: string
     next_step: string
   }
@@ -1563,17 +1566,27 @@ export default function FuelAnalytics() {
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 text-xs text-blue-100/80 xl:grid-cols-2">
                   <div>
-                    <span className="font-semibold text-blue-100">Root cause:</span> {atobFlow.issue}
+                    <span className="font-semibold text-blue-100">Status detail:</span> {atobFlow.issue}
                   </div>
                   <div>
-                    <span className="font-semibold text-blue-100">Fix:</span> {atobFlow.resolution}
+                    <span className="font-semibold text-blue-100">Resolution:</span> {atobFlow.resolution}
                   </div>
                   <div>
                     <span className="font-semibold text-blue-100">Flow ID:</span> {atobFlow.flow_id}
                   </div>
+                  {atobFlow.validated_at && (
+                    <div>
+                      <span className="font-semibold text-blue-100">Validated:</span> {atobFlow.validated_at}
+                    </div>
+                  )}
                   {atobFlow.latest_run_id && (
                     <div>
                       <span className="font-semibold text-blue-100">Latest run:</span> {atobFlow.latest_run_id}
+                    </div>
+                  )}
+                  {atobFlow.validation_path && (
+                    <div>
+                      <span className="font-semibold text-blue-100">Path:</span> {atobFlow.validation_path}
                     </div>
                   )}
                   {atobFlow.save_blocker && (
