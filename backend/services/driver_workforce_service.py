@@ -102,7 +102,11 @@ def _build_driver_workforce_dataset(
         if ticket["planned_start"] < operating_end and ticket["planned_finish"] > operating_start
     ]
 
-    geotab_data = _load_geotab_activity(operating_start, operating_end, now, config)
+    geotab_data = (
+        _load_geotab_activity(operating_start, operating_end, now, config)
+        if operating_tickets
+        else {"vehicles": [], "events": [], "last_updated": None, "error": None}
+    )
     workdays = build_driver_workdays(operating_tickets, geotab_data, now, config)
     kpis = calculate_driver_workforce_kpis(workdays)
     alerts = generate_driver_workforce_alerts(workdays, now, config)
