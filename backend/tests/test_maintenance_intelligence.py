@@ -76,3 +76,24 @@ def test_maintenance_intelligence_prioritizes_repeated_cooling_fault(monkeypatch
     assert payload["decisions"][0]["risk_score"] >= 85
     assert payload["decisions"][0]["predicted_issue"] == "Cooling system failure risk"
     assert "Recurring code pattern: 1659" in payload["decisions"][0]["evidence"]
+
+
+def test_maintenance_intelligence_uses_configured_default_window(monkeypatch):
+    clear_cached_prefix("maintenance_intelligence:")
+    monkeypatch.setenv("FLEETPULSE_MAINTENANCE_FAULT_LOOKBACK_DAYS", "14")
+
+    async def _fault_trends(days: int):
+        return {
+            "period_days": days,
+            "feed_status": "empty",
+            "faults": [],
+        }
+
+    monkeypatch.setattr(maintenance, "_fault_trends_from_data_connector", _fault_trends)
+    monkeypatch.setattr(maintenance, "_get_devices_cached", lambda: [])
+    monkeypatch.setattr(maintenance, "_get_fleet_faults", lambda days=None: {})
+
+    payload = asyncio.run(maintenance.get_maintenance_intelligence())
+
+    assert payload["period_days"] == 14
+    assert payload["config"]["fault_lookback_days"] == 14

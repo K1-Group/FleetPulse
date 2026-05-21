@@ -179,8 +179,8 @@ export function useMaintenancePredictions() {
   return useFetch<any[]>(`${API}/maintenance/predictions`)
 }
 
-export function useMaintenanceIntelligence() {
-  return useFetch<any>(`${API}/maintenance/intelligence?days=30`, 300000, true, 25000)
+export function useMaintenanceIntelligence(enabled = true) {
+  return useFetch<any>(`${API}/maintenance/intelligence`, 300000, enabled, 25000)
 }
 
 export function useMaintenanceCosts() {

@@ -1,9 +1,11 @@
 """Predictive maintenance endpoints – optimized with caching and timeouts."""
 
+import json
 import logging
+import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+from typing import Annotated, Any, List
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -14,21 +16,20 @@ from models import (
     VehicleMaintenanceDetail,
     MaintenanceCost,
     UrgentMaintenanceAlert,
-    MaintenanceType,
     UrgencyLevel,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAINTENANCE_INTERVALS = {
+DEFAULT_MAINTENANCE_INTERVALS = {
     "oil_change": {"miles": 5000, "months": 6},
     "brake_service": {"miles": 30000, "months": 24},
     "tire_rotation": {"miles": 7500, "months": 12},
     "transmission_service": {"miles": 60000, "months": 48},
 }
 
-MAINTENANCE_COSTS = {
+DEFAULT_MAINTENANCE_COSTS = {
     "oil_change": 75,
     "brake_service": 600,
     "tire_rotation": 25,
@@ -36,10 +37,10 @@ MAINTENANCE_COSTS = {
     "tires_replacement": 600,
 }
 
-FAULT_LOOKBACK_DAYS = 30
+DEFAULT_FAULT_LOOKBACK_DAYS = 30
 GEOTAB_MAINTENANCE_AUTHORITY = "K1 Logistics Inc / Geotab diagnostics"
 
-CRITICAL_FAULT_TERMS = (
+DEFAULT_CRITICAL_FAULT_TERMS = (
     "aftertreatment",
     "brake",
     "coolant",
@@ -54,7 +55,7 @@ CRITICAL_FAULT_TERMS = (
     "transmission",
 )
 
-HIGH_FAULT_TERMS = (
+DEFAULT_HIGH_FAULT_TERMS = (
     "abnormal update rate",
     "battery",
     "condition exists",
@@ -67,6 +68,197 @@ HIGH_FAULT_TERMS = (
     "pressure",
     "warning light",
 )
+
+DEFAULT_RISK_THRESHOLDS = {
+    "critical": 85,
+    "high": 70,
+    "medium": 50,
+}
+
+DEFAULT_SCORING_CONFIG = {
+    "base_score": 25,
+    "fault_count_weight": 2,
+    "fault_count_cap": 20,
+    "active_fault_weight": 3,
+    "active_fault_cap": 18,
+    "recurring_code_weight": 8,
+    "recurring_code_cap": 16,
+    "persistent_cycle_weight": 3,
+    "persistent_cycle_cap": 12,
+    "critical_severity_bonus": 30,
+    "high_severity_bonus": 18,
+    "medium_severity_bonus": 10,
+    "recent_seen_days": 3,
+    "recent_seen_bonus": 8,
+    "confidence_base": 0.42,
+    "confidence_fault_count_cap": 12,
+    "confidence_fault_weight": 0.025,
+    "confidence_recurring_bonus": 0.14,
+    "confidence_active_bonus": 0.12,
+    "confidence_recent_seen_days": 7,
+    "confidence_recent_bonus": 0.08,
+    "confidence_cap": 0.96,
+}
+
+
+def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid integer value for %s; using default", name)
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _env_float(name: str, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid numeric value for %s; using default", name)
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _env_json_object(name: str, default: dict[str, Any]) -> dict[str, Any]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return dict(default)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON value for %s; using default", name)
+        return dict(default)
+    if not isinstance(parsed, dict):
+        logger.warning("JSON value for %s must be an object; using default", name)
+        return dict(default)
+    return parsed
+
+
+def _float_from_mapping(value: Any, default: float, *, min_value: float = 0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, parsed)
+
+
+def _maintenance_intervals() -> dict[str, dict[str, float]]:
+    configured = _env_json_object("FLEETPULSE_MAINTENANCE_INTERVALS_JSON", DEFAULT_MAINTENANCE_INTERVALS)
+    intervals: dict[str, dict[str, float]] = {}
+    for service_type, raw in configured.items():
+        if not isinstance(raw, dict):
+            continue
+        default = DEFAULT_MAINTENANCE_INTERVALS.get(service_type, {"miles": 0, "months": 0})
+        miles = _float_from_mapping(raw.get("miles"), float(default.get("miles", 0)), min_value=0)
+        months = _float_from_mapping(raw.get("months"), float(default.get("months", 0)), min_value=0)
+        if miles > 0 or months > 0:
+            intervals[service_type] = {"miles": miles, "months": months}
+    return intervals or dict(DEFAULT_MAINTENANCE_INTERVALS)
+
+
+def _maintenance_costs() -> dict[str, float]:
+    configured = _env_json_object("FLEETPULSE_MAINTENANCE_COSTS_JSON", DEFAULT_MAINTENANCE_COSTS)
+    costs: dict[str, float] = {}
+    for service_type, default_cost in DEFAULT_MAINTENANCE_COSTS.items():
+        costs[service_type] = _float_from_mapping(configured.get(service_type), float(default_cost), min_value=0)
+    for service_type, raw_cost in configured.items():
+        if service_type in costs:
+            continue
+        costs[service_type] = _float_from_mapping(raw_cost, 0, min_value=0)
+    return costs
+
+
+def _fault_lookback_days() -> int:
+    return _env_int("FLEETPULSE_MAINTENANCE_FAULT_LOOKBACK_DAYS", DEFAULT_FAULT_LOOKBACK_DAYS, min_value=1, max_value=90)
+
+
+def _avg_miles_per_day() -> float:
+    return _env_float("FLEETPULSE_MAINTENANCE_AVG_MILES_PER_DAY", 50, min_value=1, max_value=1000)
+
+
+def _days_per_month() -> float:
+    return _env_float("FLEETPULSE_MAINTENANCE_DAYS_PER_MONTH", 30, min_value=27, max_value=31)
+
+
+def _service_baseline_days() -> int:
+    return _env_int("FLEETPULSE_MAINTENANCE_SERVICE_BASELINE_DAYS", 90, min_value=0, max_value=3650)
+
+
+def _service_baseline_miles() -> float:
+    return _env_float("FLEETPULSE_MAINTENANCE_SERVICE_BASELINE_MILES", 3000, min_value=0, max_value=500000)
+
+
+def _forecast_primary_days() -> int:
+    return _env_int("FLEETPULSE_MAINTENANCE_FORECAST_PRIMARY_DAYS", 30, min_value=1, max_value=365)
+
+
+def _forecast_secondary_days() -> int:
+    return _env_int("FLEETPULSE_MAINTENANCE_FORECAST_SECONDARY_DAYS", 90, min_value=1, max_value=730)
+
+
+def _env_terms(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    terms = tuple(term.strip().lower() for term in raw.split(",") if term.strip())
+    return terms or default
+
+
+def _critical_fault_terms() -> tuple[str, ...]:
+    return _env_terms("FLEETPULSE_MAINTENANCE_CRITICAL_FAULT_TERMS", DEFAULT_CRITICAL_FAULT_TERMS)
+
+
+def _high_fault_terms() -> tuple[str, ...]:
+    return _env_terms("FLEETPULSE_MAINTENANCE_HIGH_FAULT_TERMS", DEFAULT_HIGH_FAULT_TERMS)
+
+
+def _risk_thresholds() -> dict[str, int]:
+    configured = _env_json_object("FLEETPULSE_MAINTENANCE_RISK_THRESHOLDS_JSON", DEFAULT_RISK_THRESHOLDS)
+    thresholds: dict[str, int] = {}
+    for key, default in DEFAULT_RISK_THRESHOLDS.items():
+        thresholds[key] = int(_float_from_mapping(configured.get(key), float(default), min_value=0))
+        thresholds[key] = min(thresholds[key], 100)
+    if not (0 <= thresholds["medium"] <= thresholds["high"] <= thresholds["critical"] <= 100):
+        logger.warning("Invalid maintenance risk threshold ordering; using defaults")
+        return dict(DEFAULT_RISK_THRESHOLDS)
+    return thresholds
+
+
+def _scoring_config() -> dict[str, float]:
+    configured = _env_json_object("FLEETPULSE_MAINTENANCE_SCORING_JSON", DEFAULT_SCORING_CONFIG)
+    return {
+        key: _float_from_mapping(configured.get(key), float(default), min_value=0)
+        for key, default in DEFAULT_SCORING_CONFIG.items()
+    }
+
+
+def _maintenance_runtime_config() -> dict[str, Any]:
+    return {
+        "fault_lookback_days": _fault_lookback_days(),
+        "service_baseline_days": _service_baseline_days(),
+        "service_baseline_miles": _service_baseline_miles(),
+        "avg_miles_per_day": _avg_miles_per_day(),
+        "forecast_primary_days": _forecast_primary_days(),
+        "forecast_secondary_days": _forecast_secondary_days(),
+        "risk_thresholds": _risk_thresholds(),
+        "interval_service_count": len(_maintenance_intervals()),
+        "cost_service_count": len(_maintenance_costs()),
+        "config_source": "environment_overrides_or_defaults",
+    }
 
 
 def _as_text(value: Any, default: str = "") -> str:
@@ -203,9 +395,9 @@ def _fault_component(text: str) -> str:
 
 def _fault_severity(fault: dict) -> str:
     text = _fault_text(fault)
-    if any(term in text for term in CRITICAL_FAULT_TERMS):
+    if any(term in text for term in _critical_fault_terms()):
         return "critical"
-    if any(term in text for term in HIGH_FAULT_TERMS):
+    if any(term in text for term in _high_fault_terms()):
         return "high"
     if "unknown diagnostic" in text:
         return "medium"
@@ -233,19 +425,20 @@ def _predicted_issue(component: str, top_description: str) -> str:
 
 
 def _decision_from_score(score: int) -> tuple[UrgencyLevel, str, str]:
-    if score >= 85:
+    thresholds = _risk_thresholds()
+    if score >= thresholds["critical"]:
         return (
             UrgencyLevel.CRITICAL,
             "hold_and_inspect_now",
             "Hold the asset for maintenance inspection before dispatch if operationally possible.",
         )
-    if score >= 70:
+    if score >= thresholds["high"]:
         return (
             UrgencyLevel.HIGH,
             "schedule_repair_24h",
             "Schedule diagnosis or repair in the next 24 hours.",
         )
-    if score >= 50:
+    if score >= thresholds["medium"]:
         return (
             UrgencyLevel.MEDIUM,
             "diagnose_next_service_window",
@@ -313,6 +506,7 @@ def _build_maintenance_decisions(faults: list[dict], days: int) -> list[dict]:
 
     decisions: list[dict] = []
     now = datetime.now(timezone.utc)
+    scoring = _scoring_config()
     for vehicle_id, vehicle_faults in by_vehicle.items():
         if not vehicle_faults:
             continue
@@ -327,28 +521,32 @@ def _build_maintenance_decisions(faults: list[dict], days: int) -> list[dict]:
         top = insights[0]
         component = top.get("component") or "General powertrain"
 
-        score = 25
-        score += min(len(vehicle_faults) * 2, 20)
-        score += min(active_count * 3, 18)
-        score += min(len(recurring_codes) * 8, 16)
-        score += min(persistent_count * 3, 12)
+        score = scoring["base_score"]
+        score += min(len(vehicle_faults) * scoring["fault_count_weight"], scoring["fault_count_cap"])
+        score += min(active_count * scoring["active_fault_weight"], scoring["active_fault_cap"])
+        score += min(len(recurring_codes) * scoring["recurring_code_weight"], scoring["recurring_code_cap"])
+        score += min(persistent_count * scoring["persistent_cycle_weight"], scoring["persistent_cycle_cap"])
         if top["severity"] == "critical":
-            score += 30
+            score += scoring["critical_severity_bonus"]
         elif top["severity"] == "high":
-            score += 18
+            score += scoring["high_severity_bonus"]
         elif top["severity"] == "medium":
-            score += 10
-        if latest_seen and (now - latest_seen) <= timedelta(days=3):
-            score += 8
-        risk_score = max(0, min(score, 100))
+            score += scoring["medium_severity_bonus"]
+        if latest_seen and (now - latest_seen) <= timedelta(days=scoring["recent_seen_days"]):
+            score += scoring["recent_seen_bonus"]
+        risk_score = int(max(0, min(round(score), 100)))
         urgency, decision, recommended_action = _decision_from_score(risk_score)
         confidence = min(
-            0.96,
-            0.42
-            + min(len(vehicle_faults), 12) * 0.025
-            + (0.14 if recurring_codes else 0)
-            + (0.12 if active_count else 0)
-            + (0.08 if latest_seen and (now - latest_seen) <= timedelta(days=7) else 0),
+            scoring["confidence_cap"],
+            scoring["confidence_base"]
+            + min(len(vehicle_faults), scoring["confidence_fault_count_cap"]) * scoring["confidence_fault_weight"]
+            + (scoring["confidence_recurring_bonus"] if recurring_codes else 0)
+            + (scoring["confidence_active_bonus"] if active_count else 0)
+            + (
+                scoring["confidence_recent_bonus"]
+                if latest_seen and (now - latest_seen) <= timedelta(days=scoring["confidence_recent_seen_days"])
+                else 0
+            ),
         )
 
         vehicle_name = _fault_vehicle_name(vehicle_faults[0], vehicle_id)
@@ -429,13 +627,12 @@ def _get_devices_cached() -> list[dict]:
 
 def calculate_maintenance_due_date(last_service: datetime, odometer_at_service: float,
                                    current_odometer: float, service_type: str) -> tuple[datetime, bool]:
-    intervals = MAINTENANCE_INTERVALS[service_type]
+    intervals = _maintenance_intervals()[service_type]
     miles_since_service = current_odometer - odometer_at_service
     miles_remaining = intervals["miles"] - miles_since_service
-    avg_miles_per_day = 50
-    days_until_due = max(0, miles_remaining / avg_miles_per_day)
+    days_until_due = max(0, miles_remaining / _avg_miles_per_day())
     due_date_by_miles = datetime.now(timezone.utc) + timedelta(days=days_until_due)
-    due_date_by_time = last_service + timedelta(days=intervals["months"] * 30)
+    due_date_by_time = last_service + timedelta(days=intervals["months"] * _days_per_month())
     due_date = min(due_date_by_miles, due_date_by_time)
     is_overdue = due_date < datetime.now(timezone.utc)
     return due_date, is_overdue
@@ -499,8 +696,9 @@ def _get_fleet_engine_hours() -> dict[str, float]:
         return {}
 
 
-def _get_fleet_faults(days: int = FAULT_LOOKBACK_DAYS) -> dict[str, list[dict]]:
+def _get_fleet_faults(days: int | None = None) -> dict[str, list[dict]]:
     """Get fault data for ALL devices in ONE API call."""
+    days = days or _fault_lookback_days()
     cached = get_cached(f"maint:faults:{days}", ttl=300)
     if cached is not None:
         return cached
@@ -538,7 +736,8 @@ async def _fault_trends_from_data_connector(days: int) -> dict[str, Any]:
 
 
 @router.get("/intelligence")
-async def get_maintenance_intelligence(days: int = Query(30, ge=1, le=90)):
+async def get_maintenance_intelligence(days: Annotated[int | None, Query(ge=1, le=90)] = None):
+    days = days or _fault_lookback_days()
     cached = get_cached(f"maintenance_intelligence:{days}", ttl=300)
     if cached is not None:
         return cached
@@ -574,6 +773,7 @@ async def get_maintenance_intelligence(days: int = Query(30, ge=1, le=90)):
             "feedback_signal": "repair_outcome_and_code_clearance_evidence",
             "write_policy": "no_source_of_truth_overwrites",
         },
+        "config": _maintenance_runtime_config(),
         "summary": summary,
         "decisions": decisions,
     }
@@ -590,8 +790,9 @@ async def get_maintenance_predictions():
         devices = _get_devices_cached()
         odometers = _get_fleet_odometers()
         engine_hours_map = _get_fleet_engine_hours()
-        faults_map = _get_fleet_faults()
-        intelligence = await get_maintenance_intelligence(days=FAULT_LOOKBACK_DAYS)
+        lookback_days = _fault_lookback_days()
+        faults_map = _get_fleet_faults(lookback_days)
+        intelligence = await get_maintenance_intelligence(days=lookback_days)
         decision_by_vehicle = {
             decision["vehicle_id"]: decision
             for decision in intelligence.get("decisions", [])
@@ -599,6 +800,8 @@ async def get_maintenance_predictions():
 
         predictions = []
         now = datetime.now(timezone.utc)
+        intervals = _maintenance_intervals()
+        costs = _maintenance_costs()
 
         for device in devices:
             device_id = device.get("id", "")
@@ -610,11 +813,11 @@ async def get_maintenance_predictions():
             active_fault_count = len([f for f in device_faults if _fault_is_active(f)])
             ai_decision = decision_by_vehicle.get(device_id)
 
-            base_date = now - timedelta(days=90)
-            base_odometer = max(0, current_odometer - 3000)
+            base_date = now - timedelta(days=_service_baseline_days())
+            base_odometer = max(0, current_odometer - _service_baseline_miles())
 
             upcoming_services = []
-            for service_type in MAINTENANCE_INTERVALS:
+            for service_type in intervals:
                 due_date, is_overdue = calculate_maintenance_due_date(
                     base_date, base_odometer, current_odometer, service_type
                 )
@@ -624,7 +827,7 @@ async def get_maintenance_predictions():
                     "due_date": due_date,
                     "is_overdue": is_overdue,
                     "urgency": urgency,
-                    "estimated_cost": MAINTENANCE_COSTS[service_type],
+                    "estimated_cost": costs.get(service_type, 0),
                 })
 
             predictions.append(MaintenancePrediction(
@@ -658,12 +861,13 @@ async def get_vehicle_maintenance_detail(vehicle_id: str):
         device_name = device.get("name", "Unknown Vehicle")
         odometers = _get_fleet_odometers()
         engine_hours_map = _get_fleet_engine_hours()
-        faults_map = _get_fleet_faults()
+        lookback_days = _fault_lookback_days()
+        faults_map = _get_fleet_faults(lookback_days)
 
         current_odometer = odometers.get(vehicle_id, 0)
         engine_hours = engine_hours_map.get(vehicle_id, 0)
         device_faults = faults_map.get(vehicle_id, [])
-        intelligence = await get_maintenance_intelligence(days=FAULT_LOOKBACK_DAYS)
+        intelligence = await get_maintenance_intelligence(days=lookback_days)
         ai_decision = next(
             (
                 decision
@@ -684,22 +888,14 @@ async def get_vehicle_maintenance_detail(vehicle_id: str):
                 })
 
         now = datetime.now(timezone.utc)
-        base_date = now - timedelta(days=90)
-        base_odometer = max(0, current_odometer - 3000)
-
+        base_date = now - timedelta(days=_service_baseline_days())
+        base_odometer = max(0, current_odometer - _service_baseline_miles())
+        intervals = _maintenance_intervals()
+        costs = _maintenance_costs()
         maintenance_history = []
-        for i, service_type in enumerate(MAINTENANCE_INTERVALS):
-            past_date = now - timedelta(days=90 + i * 30)
-            maintenance_history.append({
-                "service_type": service_type,
-                "date": past_date,
-                "odometer_at_service": max(0, current_odometer - (3000 - i * 500)),
-                "cost": MAINTENANCE_COSTS[service_type],
-                "notes": f"Completed {service_type.replace('_', ' ')} service",
-            })
 
         upcoming_services = []
-        for service_type in MAINTENANCE_INTERVALS:
+        for service_type in intervals:
             due_date, is_overdue = calculate_maintenance_due_date(
                 base_date, base_odometer, current_odometer, service_type
             )
@@ -707,7 +903,7 @@ async def get_vehicle_maintenance_detail(vehicle_id: str):
             upcoming_services.append({
                 "service_type": service_type, "due_date": due_date,
                 "is_overdue": is_overdue, "urgency": urgency,
-                "estimated_cost": MAINTENANCE_COSTS[service_type],
+                "estimated_cost": costs.get(service_type, 0),
             })
 
         result = VehicleMaintenanceDetail(
@@ -716,7 +912,7 @@ async def get_vehicle_maintenance_detail(vehicle_id: str):
             upcoming_services=upcoming_services,
             maintenance_history=maintenance_history,
             active_fault_codes=active_faults,
-            last_service_date=base_date,
+            last_service_date=None,
             ai_health_score=ai_decision.get("health_score", 100) if ai_decision else 100,
             ai_decision=ai_decision,
         )
@@ -736,38 +932,48 @@ async def get_maintenance_costs():
         return cached
     try:
         devices = _get_devices_cached()
+        odometers = _get_fleet_odometers()
         now = datetime.now(timezone.utc)
-        next_month = now + timedelta(days=30)
-        next_3_months = now + timedelta(days=90)
+        primary_days = _forecast_primary_days()
+        secondary_days = _forecast_secondary_days()
+        next_primary = now + timedelta(days=primary_days)
+        next_secondary = now + timedelta(days=secondary_days)
+        intervals = _maintenance_intervals()
+        costs = _maintenance_costs()
 
         total_cost_next_month = 0
         total_cost_next_3_months = 0
         cost_breakdown: dict[str, dict] = {}
 
         for device in devices:
-            current_odometer = 15000
-            base_date = now - timedelta(days=90)
-            base_odometer = current_odometer - 3000
+            device_id = device.get("id", "")
+            current_odometer = odometers.get(device_id, 0)
+            base_date = now - timedelta(days=_service_baseline_days())
+            base_odometer = max(0, current_odometer - _service_baseline_miles())
 
-            for service_type in MAINTENANCE_INTERVALS:
+            for service_type in intervals:
                 due_date, _ = calculate_maintenance_due_date(
                     base_date, base_odometer, current_odometer, service_type
                 )
-                cost = MAINTENANCE_COSTS[service_type]
-                if due_date <= next_month:
+                cost = costs.get(service_type, 0)
+                if due_date <= next_primary:
                     total_cost_next_month += cost
                     if service_type not in cost_breakdown:
                         cost_breakdown[service_type] = {"count": 0, "total_cost": 0}
                     cost_breakdown[service_type]["count"] += 1
                     cost_breakdown[service_type]["total_cost"] += cost
-                if due_date <= next_3_months:
+                if due_date <= next_secondary:
                     total_cost_next_3_months += cost
 
+        average_monthly_cost = total_cost_next_3_months / max(secondary_days / _days_per_month(), 1)
         result = MaintenanceCost(
             total_cost_next_month=total_cost_next_month,
             total_cost_next_3_months=total_cost_next_3_months,
             cost_breakdown=cost_breakdown,
-            average_monthly_cost=total_cost_next_3_months / 3,
+            average_monthly_cost=average_monthly_cost,
+            forecast_primary_days=primary_days,
+            forecast_secondary_days=secondary_days,
+            cost_source="geotab_odometer_configured_service_intervals",
         )
         set_cached("maintenance_costs", result)
         return result
@@ -783,7 +989,10 @@ async def get_urgent_maintenance():
         return cached
     try:
         devices = _get_devices_cached()
-        faults_map = _get_fleet_faults()
+        faults_map = _get_fleet_faults(_fault_lookback_days())
+        odometers = _get_fleet_odometers()
+        intervals = _maintenance_intervals()
+        costs = _maintenance_costs()
         urgent_alerts = []
         now = datetime.now(timezone.utc)
 
@@ -792,14 +1001,14 @@ async def get_urgent_maintenance():
             device_name = device.get("name", "Unknown Vehicle")
             active_faults = [f for f in faults_map.get(device_id, []) if _fault_is_active(f)]
 
-            current_odometer = 15000
-            base_date = now - timedelta(days=90)
-            base_odometer = current_odometer - 3000
+            current_odometer = odometers.get(device_id, 0)
+            base_date = now - timedelta(days=_service_baseline_days())
+            base_odometer = max(0, current_odometer - _service_baseline_miles())
 
             overdue_services = []
             urgent_services = []
 
-            for service_type in MAINTENANCE_INTERVALS:
+            for service_type in intervals:
                 due_date, is_overdue = calculate_maintenance_due_date(
                     base_date, base_odometer, current_odometer, service_type
                 )
@@ -823,7 +1032,7 @@ async def get_urgent_maintenance():
                     overdue_services=overdue_services,
                     urgent_services=urgent_services,
                     estimated_repair_cost=sum(
-                        MAINTENANCE_COSTS.get(s["service_type"], 0)
+                        costs.get(s["service_type"], 0)
                         for s in overdue_services + urgent_services
                     ),
                 )

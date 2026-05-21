@@ -98,11 +98,13 @@ const formatDecision = (decision: string) => {
   return decision.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
-const getRiskColor = (score: number) => {
-  if (score >= 85) return 'text-red-300 bg-red-500/10 border-red-400/25'
-  if (score >= 70) return 'text-orange-300 bg-orange-500/10 border-orange-400/25'
-  if (score >= 50) return 'text-amber-300 bg-amber-500/10 border-amber-400/25'
-  return 'text-emerald-300 bg-emerald-500/10 border-emerald-400/25'
+const getRiskColor = (urgency?: string) => {
+  switch (urgency) {
+    case 'critical': return 'text-red-300 bg-red-500/10 border-red-400/25'
+    case 'high': return 'text-orange-300 bg-orange-500/10 border-orange-400/25'
+    case 'medium': return 'text-amber-300 bg-amber-500/10 border-amber-400/25'
+    default: return 'text-emerald-300 bg-emerald-500/10 border-emerald-400/25'
+  }
 }
 
 const getDecisionTone = (urgency: string) => {
@@ -114,6 +116,10 @@ const getDecisionTone = (urgency: string) => {
   }
 }
 
+const formatDayWindow = (days?: number | null) => {
+  return Number.isFinite(days) && days ? `${days} days` : 'configured window'
+}
+
 export default function MaintenancePredictor() {
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null)
   const predictions = useMaintenancePredictions()
@@ -122,6 +128,8 @@ export default function MaintenancePredictor() {
   const urgentAlerts = useUrgentMaintenance()
   const decisions = (intelligence.data?.decisions || []) as MaintenanceDecision[]
   const intelligenceSummary = intelligence.data?.summary || {}
+  const primaryForecastDays = costs.data?.forecast_primary_days as number | undefined
+  const secondaryForecastDays = costs.data?.forecast_secondary_days as number | undefined
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -190,7 +198,7 @@ export default function MaintenancePredictor() {
               {intelligence.data?.automation_mode || 'ai_recommends_human_executes'}
             </span>
             <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-              Previous {intelligence.data?.period_days || 30} days
+              Previous {formatDayWindow(intelligence.data?.period_days)}
             </span>
           </div>
         </div>
@@ -245,7 +253,7 @@ export default function MaintenancePredictor() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-base font-semibold text-white">{decision.vehicle_name}</h3>
-                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${getRiskColor(decision.risk_score)}`}>
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${getRiskColor(decision.urgency)}`}>
                         Risk {decision.risk_score}
                       </span>
                     </div>
@@ -297,7 +305,7 @@ export default function MaintenancePredictor() {
         <div className="bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700/50">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Next 30 Days</p>
+              <p className="text-gray-400 text-sm">Next {formatDayWindow(primaryForecastDays)}</p>
               <p className="text-2xl font-bold text-white">
                 ${costs.data?.total_cost_next_month?.toLocaleString() || '0'}
               </p>
@@ -309,7 +317,7 @@ export default function MaintenancePredictor() {
         <div className="bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700/50">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-sm">Next 3 Months</p>
+              <p className="text-gray-400 text-sm">Next {formatDayWindow(secondaryForecastDays)}</p>
               <p className="text-2xl font-bold text-white">
                 ${costs.data?.total_cost_next_3_months?.toLocaleString() || '0'}
               </p>
@@ -415,7 +423,7 @@ export default function MaintenancePredictor() {
                   </div>
                   <div className="flex items-center gap-2">
                     {prediction.ai_decision && (
-                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${getRiskColor(aiRiskScore)}`}>
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${getRiskColor(prediction.ai_decision.urgency)}`}>
                         AI {aiRiskScore}
                       </span>
                     )}

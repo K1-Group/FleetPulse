@@ -252,6 +252,9 @@ class MaintenanceCost(BaseModel):
     total_cost_next_3_months: float
     cost_breakdown: dict[str, dict[str, float]]  # service_type -> {count, total_cost}
     average_monthly_cost: float
+    forecast_primary_days: int = 30
+    forecast_secondary_days: int = 90
+    cost_source: str = "geotab_odometer_configured_service_intervals"
 
 
 class UrgentMaintenanceAlert(BaseModel):
