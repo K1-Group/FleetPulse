@@ -1,252 +1,611 @@
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import CountUp from 'react-countup'
-import { LineChart, Line, ResponsiveContainer } from 'recharts'
-import type { DashboardValidationResponse, FleetOverview } from '../types/fleet'
-import K1OperatingCostKpi from './K1OperatingCostKpi'
-import ValidationBadge from './ValidationBadge'
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  BadgeCheck,
+  BarChart3,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  DollarSign,
+  Gauge,
+  Hand,
+  Map,
+  MoveRight,
+  PauseCircle,
+  Route,
+  Shield,
+  Timer,
+  Truck,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
+import type {
+  DashboardValidationItem,
+  DashboardValidationResponse,
+  DashboardValidationStatus,
+  FleetOverview,
+  VehicleSafetyScore,
+} from '../types/fleet'
+
+type KpiStatus = 'verified' | 'pending' | 'no-data' | 'stale' | 'error'
+type KpiTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+type KpiGroup = 'Fleet' | 'Operations' | 'Safety' | 'Service Levels' | 'Finance'
+type KpiIcon =
+  | 'activity'
+  | 'alert-circle'
+  | 'alert-triangle'
+  | 'badge-check'
+  | 'bar-chart-3'
+  | 'check-circle'
+  | 'circle'
+  | 'clock-3'
+  | 'dollar-sign'
+  | 'gauge'
+  | 'hand'
+  | 'map'
+  | 'move-right'
+  | 'pause-circle'
+  | 'route'
+  | 'shield'
+  | 'timer'
+  | 'truck'
+  | 'wrench'
+
+type KpiCard = {
+  id: string
+  label: string
+  value: string | number | null
+  unit?: string
+  status: KpiStatus
+  stateLabel?: string
+  tone?: KpiTone
+  icon: KpiIcon
+  source?: string
+  updatedAt?: string
+  delta?: string | number | null
+  company?: 'K1L' | 'K1G' | null
+  group: KpiGroup
+  decimals?: number
+}
 
 interface Props {
   overview: FleetOverview | null
   loading: boolean
+  safetyScores?: VehicleSafetyScore[] | null
+  safetyLoading?: boolean
   validation?: DashboardValidationResponse | null
 }
 
-const cards = [
-  { 
-    key: 'total_vehicles', 
-    label: 'Total Vehicles', 
-    icon: '🚗', 
-    color: 'from-blue-500 to-blue-700',
-    sparkline: [48, 49, 50, 49, 50, 50],
-    trend: 'stable',
-    decimals: 0
-  },
-  { 
-    key: 'active', 
-    label: 'Active', 
-    icon: '🟢', 
-    color: 'from-emerald-500 to-emerald-700',
-    sparkline: [32, 35, 28, 42, 38, 40],
-    trend: 'up',
-    decimals: 0
-  },
-  { 
-    key: 'idle', 
-    label: 'Idle', 
-    icon: '🟡', 
-    color: 'from-amber-500 to-amber-700',
-    sparkline: [8, 6, 12, 4, 7, 5],
-    trend: 'down',
-    decimals: 0
-  },
-  { 
-    key: 'parked', 
-    label: 'Parked', 
-    icon: '🔵', 
-    color: 'from-slate-500 to-slate-700',
-    sparkline: [10, 9, 10, 4, 5, 5],
-    trend: 'stable',
-    decimals: 0
-  },
-  { 
-    key: 'total_trips_today', 
-    label: 'Driver Trips',
-    icon: '📊', 
-    color: 'from-purple-500 to-purple-700',
-    sparkline: [125, 138, 142, 155, 167, 172],
-    trend: 'up',
-    decimals: 0
-  },
-  {
-    key: 'total_stops_today',
-    label: 'Stops >5m',
-    icon: '🛑',
-    color: 'from-orange-500 to-orange-700',
-    sparkline: [18, 16, 21, 19, 24, 22],
-    trend: 'stable',
-    decimals: 0
-  },
-  { 
-    key: 'total_distance_miles', 
-    label: 'Distance (mi)', 
-    icon: '🛣️', 
-    color: 'from-cyan-500 to-cyan-700',
-    sparkline: [1200, 1350, 1450, 1380, 1520, 1680],
-    trend: 'up',
-    decimals: 1
-  },
-  { 
-    key: 'avg_trip_duration_hours',
-    label: 'Avg Trip Hrs',
-    icon: '⏱️', 
-    color: 'from-rose-500 to-rose-700',
-    sparkline: [9.8, 10.4, 11.2, 10.7, 11.5, 12.1],
-    trend: 'up',
-    decimals: 1
-  },
-  { 
-    key: 'avg_trip_distance_miles', 
-    label: 'Avg Distance (mi)', 
-    icon: '📏', 
-    color: 'from-indigo-500 to-indigo-700',
-    sparkline: [12, 11, 13, 12, 14, 13],
-    trend: 'stable',
-    decimals: 1
-  },
-  {
-    key: 'trips_meeting_target',
-    label: 'Trips 12h+',
-    icon: '✅',
-    color: 'from-teal-500 to-teal-700',
-    sparkline: [4, 5, 6, 5, 7, 8],
-    trend: 'up',
-    decimals: 0
-  },
-  {
-    key: 'trips_under_target',
-    label: 'Under 12h',
-    icon: '⚠️',
-    color: 'from-red-500 to-red-700',
-    sparkline: [11, 10, 9, 8, 7, 6],
-    trend: 'down',
-    decimals: 0
-  },
-] as const
+const KPI_GROUPS: KpiGroup[] = ['Fleet', 'Operations', 'Safety', 'Service Levels', 'Finance']
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.05
-    }
-  }
+const iconMap: Record<KpiIcon, LucideIcon> = {
+  activity: Activity,
+  'alert-circle': AlertCircle,
+  'alert-triangle': AlertTriangle,
+  'badge-check': BadgeCheck,
+  'bar-chart-3': BarChart3,
+  'check-circle': CheckCircle2,
+  circle: Circle,
+  'clock-3': Clock3,
+  'dollar-sign': DollarSign,
+  gauge: Gauge,
+  hand: Hand,
+  map: Map,
+  'move-right': MoveRight,
+  'pause-circle': PauseCircle,
+  route: Route,
+  shield: Shield,
+  timer: Timer,
+  truck: Truck,
+  wrench: Wrench,
 }
 
-const cardVariants = {
-  hidden: { opacity: 0, y: 20, scale: 0.95 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
-    scale: 1,
-    transition: {
-      type: "spring" as const,
-      stiffness: 400,
-      damping: 25
-    }
-  }
+const toneStyles: Record<KpiTone, string> = {
+  neutral: 'text-slate-300 bg-slate-500/10 border-slate-400/15',
+  info: 'text-sky-300 bg-sky-500/10 border-sky-400/20',
+  success: 'text-emerald-300 bg-emerald-500/10 border-emerald-400/20',
+  warning: 'text-amber-300 bg-amber-500/10 border-amber-400/20',
+  danger: 'text-red-300 bg-red-500/10 border-red-400/20',
+}
+
+const accentStyles: Record<KpiTone, string> = {
+  neutral: 'from-slate-400/60 to-slate-400/0',
+  info: 'from-sky-400/80 to-sky-400/0',
+  success: 'from-emerald-400/80 to-emerald-400/0',
+  warning: 'from-amber-400/80 to-amber-400/0',
+  danger: 'from-red-400/80 to-red-400/0',
+}
+
+const statusStyles: Record<KpiStatus, string> = {
+  verified: 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200 light:text-emerald-700',
+  pending: 'border-amber-400/25 bg-amber-500/10 text-amber-200 light:text-amber-700',
+  'no-data': 'border-slate-400/20 bg-slate-500/10 text-slate-300 light:text-slate-600',
+  stale: 'border-amber-400/25 bg-amber-500/10 text-amber-200 light:text-amber-700',
+  error: 'border-red-400/30 bg-red-500/10 text-red-200 light:text-red-700',
+}
+
+const statusLabels: Record<KpiStatus, string> = {
+  verified: 'Verified',
+  pending: 'Pending',
+  'no-data': 'No Data',
+  stale: 'Stale',
+  error: 'Error',
+}
+
+const statusIcons: Record<KpiStatus, LucideIcon> = {
+  verified: CheckCircle2,
+  pending: Clock3,
+  'no-data': Circle,
+  stale: AlertTriangle,
+  error: AlertCircle,
 }
 
 const metricValidationKeys: Record<string, string> = {
   active: 'active',
-  avg_trip_distance_miles: 'avg_trip_distance_miles',
-  avg_trip_duration_hours: 'avg_trip_duration_hours',
+  avgDistance: 'avg_trip_distance_miles',
+  avgDriverHrs: 'avg_trip_duration_hours',
   idle: 'idle',
+  mileage24h: 'total_distance_miles',
   parked: 'parked',
-  total_distance_miles: 'total_distance_miles',
-  total_stops_today: 'total_stops_today',
-  total_trips_today: 'total_trips_today',
-  total_vehicles: 'total_vehicles',
-  trips_meeting_target: 'trips_meeting_target',
-  trips_under_target: 'trips_under_target',
+  routes24h: 'total_trips_today',
+  stops5m: 'total_stops_today',
+  totalFleet: 'total_vehicles',
+  trips12h: 'trips_meeting_target',
+  under12h: 'trips_under_target',
 }
 
-export default function Dashboard({ overview, loading, validation }: Props) {
-  const sparklineData = (data: readonly number[] | number[]) => [...data].map((value, index) => ({ x: index, y: value }))
+const validationStateLabels: Partial<Record<DashboardValidationStatus, string>> = {
+  failed: 'Error',
+  pending_no_audit: 'No Audit',
+  pending_no_data: 'No Data',
+}
 
-  const getTrendIcon = (trend: string) => {
-    switch (trend) {
-      case 'up': return '📈'
-      case 'down': return '📉'
-      default: return '➡️'
-    }
-  }
+function validationItem(validation: DashboardValidationResponse | null | undefined, metricKey?: string) {
+  if (!metricKey) return null
+  return validation?.metrics?.[metricKey] || validation?.sections?.fleet_overview || null
+}
 
-  const getTrendColor = (trend: string) => {
-    switch (trend) {
-      case 'up': return 'text-emerald-400'
-      case 'down': return 'text-red-400'
-      default: return 'text-gray-400'
-    }
+function mapValidationStatus(
+  item: DashboardValidationItem | null,
+  hasValue: boolean,
+  loading: boolean,
+): KpiStatus {
+  if (loading) return 'pending'
+  if (!item) return hasValue ? 'verified' : 'no-data'
+  if (item.status === 'verified') return hasValue ? 'verified' : 'no-data'
+  if (item.status === 'failed') return 'error'
+  if (item.status === 'stale') return hasValue ? 'stale' : 'no-data'
+  if (item.status === 'pending_no_data' || item.status === 'pending_no_audit') return 'no-data'
+  return hasValue ? 'pending' : 'pending'
+}
+
+function relativeTime(value?: string | null) {
+  if (!value) return null
+  const parsed = new Date(value).getTime()
+  if (!Number.isFinite(parsed)) return null
+  const diffSeconds = Math.max(0, Math.round((Date.now() - parsed) / 1000))
+  if (diffSeconds < 60) return 'Updated now'
+  const diffMinutes = Math.round(diffSeconds / 60)
+  if (diffMinutes < 60) return `Updated ${diffMinutes}m ago`
+  const diffHours = Math.round(diffMinutes / 60)
+  if (diffHours < 24) return `Updated ${diffHours}h ago`
+  const diffDays = Math.round(diffHours / 24)
+  return `Updated ${diffDays}d ago`
+}
+
+function formatNumber(value: string | number | null, decimals = 0) {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'string') return value
+  if (!Number.isFinite(value)) return '—'
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  })
+}
+
+function formattedValue(card: KpiCard) {
+  if (card.status === 'pending' && card.value === null) return 'Pending'
+  if (card.status === 'error') return 'Error'
+  if (card.status === 'no-data' && card.value === null) return '—'
+  return formatNumber(card.value, card.decimals)
+}
+
+function footerText(card: KpiCard) {
+  const source = card.source || 'Source pending'
+  if (card.status === 'pending') return `${source} · Pending`
+  if (card.status === 'no-data') return `${source} · ${card.stateLabel || 'No data'}`
+  if (card.status === 'error') return `${source} · Diagnostic needed`
+  if (card.delta !== null && card.delta !== undefined) return `${source} · ${card.delta}`
+  return `${source} · ${relativeTime(card.updatedAt) || 'Updated'}`
+}
+
+function asNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function averageSafetyScore(scores: VehicleSafetyScore[] | null | undefined) {
+  const values = (scores || []).map(score => asNumber(score.score)).filter((score): score is number => score !== null)
+  if (!values.length) return null
+  return values.reduce((sum, score) => sum + score, 0) / values.length
+}
+
+function overviewKpi(
+  validation: DashboardValidationResponse | null | undefined,
+  loading: boolean,
+  overview: FleetOverview | null,
+  config: Omit<KpiCard, 'status' | 'value' | 'updatedAt'> & {
+    key: keyof FleetOverview
+    metricId: keyof typeof metricValidationKeys
+  },
+): KpiCard {
+  const item = validationItem(validation, metricValidationKeys[config.metricId])
+  const value = asNumber(overview?.[config.key])
+  const status = mapValidationStatus(item, value !== null, loading)
+  return {
+    ...config,
+    value,
+    status,
+    stateLabel: item?.status ? validationStateLabels[item.status] : undefined,
+    source: item?.source_authority || config.source,
+    updatedAt: item?.checked_at || validation?.generated_at,
   }
+}
+
+function placeholderKpi(card: Omit<KpiCard, 'value'> & { value?: null }): KpiCard {
+  return { value: null, ...card }
+}
+
+function buildCards(
+  overview: FleetOverview | null,
+  loading: boolean,
+  validation: DashboardValidationResponse | null | undefined,
+  safetyScores: VehicleSafetyScore[] | null | undefined,
+  safetyLoading: boolean,
+): KpiCard[] {
+  const safetyItem = validation?.sections?.safety_scorecard || null
+  const safetyValue = averageSafetyScore(safetyScores)
+  const safetyStatus = mapValidationStatus(safetyItem, safetyValue !== null, safetyLoading)
+
+  return [
+    overviewKpi(validation, loading, overview, {
+      group: 'Fleet',
+      icon: 'truck',
+      id: 'total-fleet',
+      key: 'total_vehicles',
+      label: 'Total Fleet',
+      metricId: 'totalFleet',
+      source: 'Geotab',
+      tone: 'info',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Fleet',
+      icon: 'activity',
+      id: 'active',
+      key: 'active',
+      label: 'Active',
+      metricId: 'active',
+      source: 'Geotab',
+      tone: 'success',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Fleet',
+      icon: 'circle',
+      id: 'parked',
+      key: 'parked',
+      label: 'Parked',
+      metricId: 'parked',
+      source: 'Geotab',
+      tone: 'neutral',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Fleet',
+      icon: 'pause-circle',
+      id: 'idle',
+      key: 'idle',
+      label: 'Idle',
+      metricId: 'idle',
+      source: 'Geotab',
+      tone: 'warning',
+    }),
+    placeholderKpi({
+      group: 'Fleet',
+      icon: 'alert-triangle',
+      id: 'oos-vehicles',
+      label: 'OOS Vehicles',
+      source: 'Geotab diagnostics',
+      stateLabel: 'No Data',
+      status: 'no-data',
+      tone: 'danger',
+    }),
+    placeholderKpi({
+      group: 'Fleet',
+      icon: 'wrench',
+      id: 'downtime',
+      label: 'Downtime',
+      source: 'Maintenance feed',
+      stateLabel: 'No Data',
+      status: 'no-data',
+      tone: 'warning',
+    }),
+    placeholderKpi({
+      group: 'Fleet',
+      icon: 'gauge',
+      id: 'utilization',
+      label: 'Utilization %',
+      source: 'Geotab Data Connector',
+      status: 'pending',
+      tone: 'info',
+      unit: '%',
+    }),
+    overviewKpi(validation, loading, overview, {
+      decimals: 1,
+      group: 'Operations',
+      icon: 'route',
+      id: 'mileage-24h',
+      key: 'total_distance_miles',
+      label: 'Mileage 24h',
+      metricId: 'mileage24h',
+      source: 'Geotab trips',
+      tone: 'info',
+      unit: 'mi',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Operations',
+      icon: 'map',
+      id: 'routes-24h',
+      key: 'total_trips_today',
+      label: 'Routes 24h',
+      metricId: 'routes24h',
+      source: 'Geotab trips proxy',
+      tone: 'info',
+    }),
+    overviewKpi(validation, loading, overview, {
+      decimals: 1,
+      group: 'Operations',
+      icon: 'timer',
+      id: 'avg-driver-hrs',
+      key: 'avg_trip_duration_hours',
+      label: 'Avg Driver Hrs',
+      metricId: 'avgDriverHrs',
+      source: 'Geotab trips',
+      tone: 'info',
+      unit: 'hrs',
+    }),
+    overviewKpi(validation, loading, overview, {
+      decimals: 1,
+      group: 'Operations',
+      icon: 'move-right',
+      id: 'avg-distance',
+      key: 'avg_trip_distance_miles',
+      label: 'Avg Distance',
+      metricId: 'avgDistance',
+      source: 'Geotab trips',
+      tone: 'info',
+      unit: 'mi',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Operations',
+      icon: 'hand',
+      id: 'stops-5m',
+      key: 'total_stops_today',
+      label: 'Stops >5m',
+      metricId: 'stops5m',
+      source: 'Geotab trips',
+      tone: 'warning',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Operations',
+      icon: 'check-circle',
+      id: 'trips-12h',
+      key: 'trips_meeting_target',
+      label: 'Trips 12h+',
+      metricId: 'trips12h',
+      source: 'Geotab trips',
+      tone: 'success',
+    }),
+    overviewKpi(validation, loading, overview, {
+      group: 'Operations',
+      icon: 'alert-circle',
+      id: 'under-12h',
+      key: 'trips_under_target',
+      label: 'Under 12h',
+      metricId: 'under12h',
+      source: 'Geotab trips',
+      tone: 'warning',
+    }),
+    {
+      group: 'Safety',
+      icon: 'shield',
+      id: 'safety-percent',
+      label: 'Safety %',
+      source: safetyItem?.source_authority || 'Geotab safety',
+      status: safetyStatus,
+      stateLabel: safetyItem?.status ? validationStateLabels[safetyItem.status] : undefined,
+      tone: 'success',
+      unit: '%',
+      updatedAt: safetyItem?.checked_at || validation?.generated_at,
+      value: safetyValue,
+      decimals: 1,
+    },
+    placeholderKpi({
+      group: 'Safety',
+      icon: 'bar-chart-3',
+      id: 'stability',
+      label: 'Stability',
+      source: 'Xcelerator/Fabric',
+      status: 'pending',
+      tone: 'neutral',
+    }),
+    placeholderKpi({
+      group: 'Service Levels',
+      icon: 'badge-check',
+      id: 'maintenance-done-wtd',
+      label: 'Maint. Done WTD',
+      source: 'Geotab + SharePoint',
+      status: 'pending',
+      tone: 'success',
+    }),
+    placeholderKpi({
+      company: 'K1L',
+      group: 'Service Levels',
+      icon: 'clock-3',
+      id: 'otp-k1l',
+      label: 'OTP K1L',
+      source: 'Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+    placeholderKpi({
+      company: 'K1G',
+      group: 'Service Levels',
+      icon: 'clock-3',
+      id: 'otp-k1g',
+      label: 'OTP K1G',
+      source: 'Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+    placeholderKpi({
+      company: 'K1L',
+      group: 'Service Levels',
+      icon: 'clock-3',
+      id: 'otd-k1l',
+      label: 'OTD K1L',
+      source: 'Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+    placeholderKpi({
+      company: 'K1G',
+      group: 'Service Levels',
+      icon: 'clock-3',
+      id: 'otd-k1g',
+      label: 'OTD K1G',
+      source: 'Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+    placeholderKpi({
+      company: 'K1L',
+      group: 'Finance',
+      icon: 'dollar-sign',
+      id: 'gm-k1l',
+      label: 'GM% K1L',
+      source: 'QBO + Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+    placeholderKpi({
+      company: 'K1G',
+      group: 'Finance',
+      icon: 'dollar-sign',
+      id: 'gm-k1g',
+      label: 'GM% K1G',
+      source: 'QBO + Xcelerator',
+      status: 'pending',
+      tone: 'neutral',
+      unit: '%',
+    }),
+  ]
+}
+
+function ExecutiveKpiCard({ card, index }: { card: KpiCard; index: number }) {
+  const Icon = iconMap[card.icon]
+  const StatusIcon = statusIcons[card.status]
+  const tone = card.tone || 'neutral'
 
   return (
-    <motion.div 
-      className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10 gap-4"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
+    <motion.article
+      aria-label={`${card.label}: ${formattedValue(card)} ${card.unit || ''}. ${card.stateLabel || statusLabels[card.status]}`}
+      className="group relative min-h-[116px] overflow-hidden rounded-[18px] border border-white/10 bg-gray-900/70 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm transition duration-200 hover:-translate-y-0.5 hover:border-white/20 hover:bg-gray-900/80 light:border-gray-200 light:bg-white light:shadow-sm light:hover:border-gray-300"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.015, duration: 0.25 }}
     >
-      <K1OperatingCostKpi
-        compact
-        className="col-span-2 sm:col-span-2 lg:col-span-2 xl:col-span-2"
-        validation={validation?.sections?.k1l_final_cpm}
-      />
+      <div className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r ${accentStyles[tone]}`} />
+      <div className="flex items-start justify-between gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${toneStyles[tone]}`}>
+          <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+        </div>
+        <span className={`inline-flex max-w-[7.5rem] shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold leading-none ${statusStyles[card.status]}`}>
+          <StatusIcon className="h-3 w-3" aria-hidden="true" />
+          <span className="truncate">{card.stateLabel || statusLabels[card.status]}</span>
+        </span>
+      </div>
 
-      {cards.map((c, index) => {
-        const metricValidation = validation?.metrics?.[metricValidationKeys[c.key] || c.key] || validation?.sections?.fleet_overview
+      <div className="mt-3 flex items-baseline gap-1.5" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
+        <span className="min-w-0 truncate text-[1.62rem] font-semibold leading-none tracking-normal text-white light:text-gray-950">
+          {formattedValue(card)}
+        </span>
+        {card.unit && card.status !== 'pending' && card.status !== 'error' && (
+          <span className="text-xs font-medium text-gray-400 light:text-gray-500">{card.unit}</span>
+        )}
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="truncate text-[12px] font-semibold leading-none text-gray-300 light:text-gray-700">
+          {card.label}
+        </p>
+        {card.company && (
+          <span className="rounded-md border border-white/10 px-1.5 py-0.5 text-[9px] font-bold text-gray-400 light:border-gray-200 light:text-gray-500">
+            {card.company}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 truncate border-t border-white/5 pt-2 text-[10.5px] text-gray-500 light:border-gray-100 light:text-gray-500" title={footerText(card)}>
+        {footerText(card)}
+      </div>
+    </motion.article>
+  )
+}
+
+export default function Dashboard({
+  overview,
+  loading,
+  safetyScores,
+  safetyLoading = false,
+  validation,
+}: Props) {
+  const cards = useMemo(
+    () => buildCards(overview, loading, validation, safetyScores, safetyLoading),
+    [loading, overview, safetyLoading, safetyScores, validation],
+  )
+
+  return (
+    <div className="space-y-5">
+      {KPI_GROUPS.map(group => {
+        const groupCards = cards.filter(card => card.group === group)
+        const verifiedCount = groupCards.filter(card => card.status === 'verified').length
+
         return (
-          <motion.div
-          key={c.key}
-          variants={cardVariants}
-          whileHover={{ 
-            scale: 1.02,
-            transition: { type: "spring" as const, stiffness: 400, damping: 25 }
-          }}
-          className={`relative bg-gradient-to-br ${c.color} rounded-xl p-4 shadow-lg hover:shadow-xl transition-shadow duration-300 border border-white/10 dark:border-white/10 light:border-black/10 backdrop-blur-sm group overflow-hidden`}
-        >
-          {/* Background gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-          
-          {/* Content */}
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-lg">{c.icon}</span>
-              <span className={`text-xs ${getTrendColor(c.trend)}`}>
-                {getTrendIcon(c.trend)}
+          <section key={group} aria-label={`${group} KPI group`} className="space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 light:text-gray-500">
+                {group}
+              </h2>
+              <span className="text-[11px] text-gray-600 light:text-gray-500" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
+                {verifiedCount}/{groupCards.length} verified
               </span>
             </div>
-            
-            <div className="text-2xl font-bold mb-1">
-              {loading ? (
-                <div className="animate-pulse bg-white/20 rounded h-6 w-12" />
-              ) : (
-                <CountUp
-                  end={Number((overview as any)?.[c.key] ?? 0)}
-                  decimals={c.decimals}
-                  duration={1.2}
-                  delay={index * 0.1}
-                  preserveValue
-                />
-              )}
+            <div className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
+              {groupCards.map((card, index) => (
+                <ExecutiveKpiCard key={card.id} card={card} index={index} />
+              ))}
             </div>
-            
-            <div className="mb-2 flex items-center justify-between gap-2 text-xs text-white/70">
-              <span className="min-w-0 truncate">{c.label}</span>
-              <ValidationBadge compact item={metricValidation} />
-            </div>
-            
-            {/* Sparkline */}
-            <div className="h-6 w-full mt-2">
-              {!loading && (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={sparklineData(c.sparkline)}>
-                    <Line 
-                      type="monotone" 
-                      dataKey="y" 
-                      stroke="rgba(255,255,255,0.6)" 
-                      strokeWidth={1.5}
-                      dot={false}
-                      activeDot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-          </motion.div>
+          </section>
         )
       })}
-    </motion.div>
+    </div>
   )
 }

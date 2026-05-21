@@ -305,7 +305,13 @@ export default function App() {
           <div className="space-y-6">
         {/* KPI Cards */}
         <section>
-          <Dashboard overview={overview.data} loading={overview.loading} validation={dashboardValidation.data} />
+          <Dashboard
+            overview={overview.data}
+            loading={overview.loading}
+            safetyScores={safety.data}
+            safetyLoading={safety.loading}
+            validation={dashboardValidation.data}
+          />
         </section>
 
         <section>
