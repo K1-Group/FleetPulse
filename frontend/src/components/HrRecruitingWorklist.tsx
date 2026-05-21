@@ -5,7 +5,6 @@ import {
   BarChart3,
   Clock,
   Database,
-  PhoneCall,
   RefreshCw,
   ShieldCheck,
   TrendingUp,
@@ -22,11 +21,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { useHrCallAnalysis, useHrRecruitingWorklist } from '../hooks/useGeotab'
+import { useHrRecruitingWorklist } from '../hooks/useGeotab'
+import DepartmentCallAnalysisPanel from './DepartmentCallAnalysisPanel'
 import type {
-  HrCallAnalysisDataset,
-  HrCallCoachingFlag,
-  HrCallEmployeeProductivity,
   HrRecruitingDailyRow,
   HrRecruitingHardTarget,
   HrRecruitingStatusCount,
@@ -53,27 +50,6 @@ const ZERO_SUMMARY: HrRecruitingSummary = {
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US')
-
-const ZERO_CALL_SUMMARY: HrCallAnalysisDataset['summary'] = {
-  total_call_legs: 0,
-  total_minutes: 0,
-  avg_call_seconds: 0,
-  outbound_attempts: 0,
-  connected_calls: 0,
-  connect_rate_pct: null,
-  voicemails: 0,
-  hangups: 0,
-  active_employee_count: 0,
-  analysis_reports: 0,
-  coaching_flags: 0,
-  urgent_flags: 0,
-  unresolved_calls: 0,
-  human_error_reports: 0,
-  first_call_eligible_leads: 0,
-  first_call_within_24h: 0,
-  first_call_24h_pct: null,
-  stale_no_call_48h: 0,
-}
 
 const FALLBACK_HARD_TARGETS: Record<string, HrRecruitingHardTarget> = {
   new_hires_7d: {
@@ -423,82 +399,13 @@ function DailyVolumeTable({ rows }: { rows: HrRecruitingDailyRow[] }) {
   )
 }
 
-function CallProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
-  if (!rows.length) {
-    return <EmptyPanel message="HR call productivity will appear after call-log detail rows are imported." />
-  }
-
-  return (
-    <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
-      <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
-        <thead className="bg-gray-900/80 light:bg-gray-100">
-          <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
-            <th className="px-4 py-3 font-medium">Employee</th>
-            <th className="px-4 py-3 font-medium">Score</th>
-            <th className="px-4 py-3 font-medium">Calls</th>
-            <th className="px-4 py-3 font-medium">Outbound</th>
-            <th className="px-4 py-3 font-medium">Connected</th>
-            <th className="px-4 py-3 font-medium">Minutes</th>
-            <th className="px-4 py-3 font-medium">Voicemail</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
-          {rows.map(row => (
-            <tr key={`${row.extension_id}-${row.employee_name}`} className="bg-gray-900/35 light:bg-white">
-              <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.employee_name}</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{Number(row.productivity_score_0_100).toFixed(1)}%</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_legs)}</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.connected_rate_pct)}</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
-              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.voicemail_rate_pct)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function CoachingFlagsTable({ rows }: { rows: HrCallCoachingFlag[] }) {
-  const recent = rows.slice(0, 8)
-  if (!recent.length) {
-    return <EmptyPanel message="No coaching flags were found in the imported SharePoint call-analysis reports." />
-  }
-
-  return (
-    <div className="space-y-3">
-      {recent.map(row => (
-        <div key={row.analysis_file_key} className="rounded-xl border border-gray-800/70 bg-gray-900/50 p-4 light:border-gray-200 light:bg-white">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="font-medium text-white light:text-gray-900">{row.agent_name || 'Unknown agent'}</p>
-              <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{row.call_date || 'No date'} · {row.category || 'Unclassified'}</p>
-            </div>
-            <span className="rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-200 light:text-amber-700">
-              {row.flag_reasons}
-            </span>
-          </div>
-          <p className="mt-3 text-sm text-gray-300 light:text-gray-700">
-            Sentiment {row.sentiment || '--'} · resolution {row.resolution_quality || '--'} · actions {formatCount(row.action_items_count)}
-          </p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export default function HrRecruitingWorklist() {
   const { data, loading, error, refresh } = useHrRecruitingWorklist()
-  const callAnalysis = useHrCallAnalysis()
   const summary = data?.summary || ZERO_SUMMARY
-  const callSummary = callAnalysis.data?.summary || ZERO_CALL_SUMMARY
   const byWorklist = data?.by_worklist || []
   const trend = data?.trend || []
   const statusCounts = data?.status_counts || []
   const daily = data?.daily || []
-  const callEmployees = callAnalysis.data?.employee_productivity || []
-  const coachingFlags = callAnalysis.data?.coaching_flags || []
   const hardTargets = [
     targetOrFallback(data?.hard_targets, 'new_hires_7d', summary.new_hires_7d),
     targetOrFallback(data?.hard_targets, 'active_qualified_pipeline', summary.active_qualified_pipeline),
@@ -566,48 +473,7 @@ export default function HrRecruitingWorklist() {
         <KpiCard icon={<ShieldCheck className="h-5 w-5 text-violet-200" />} label={hardTargets[4].label} value={targetValue(hardTargets[4])} detail={`Target ${hardTargets[4].display_target}`} tone="bg-violet-500/15" status={hardTargets[4].status} />
       </div>
 
-      <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
-        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex items-center gap-2">
-            <PhoneCall className="h-5 w-5 text-emerald-300" />
-            <h3 className="font-semibold text-white light:text-gray-900">HR Call Analysis</h3>
-          </div>
-          <span className="text-xs text-gray-500 light:text-gray-600">
-            {callAnalysis.data?.source_status || 'loading'} · {callAnalysis.data?.coverage?.start ? `${new Date(callAnalysis.data.coverage.start).toLocaleDateString()} - ${callAnalysis.data.coverage.end ? new Date(callAnalysis.data.coverage.end).toLocaleDateString() : 'now'}` : 'awaiting call-log state'}
-          </span>
-        </div>
-
-        {callAnalysis.error && (
-          <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-            HR call-analysis source unavailable: {callAnalysis.error}
-          </div>
-        )}
-
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <KpiCard icon={<PhoneCall className="h-5 w-5 text-emerald-200" />} label="Call Legs" value={formatCount(callSummary.total_call_legs)} detail={`${formatMinutes(callSummary.total_minutes)} total talk time`} tone="bg-emerald-500/15" />
-          <KpiCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Connect Rate" value={formatPercentFromPct(callSummary.connect_rate_pct)} detail={`${formatCount(callSummary.connected_calls)} connected of ${formatCount(callSummary.outbound_attempts)} outbound`} tone="bg-blue-500/15" />
-          <KpiCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="First Call 24h" value={formatPercentValue(callSummary.first_call_24h_pct)} detail={`${formatCount(callSummary.first_call_within_24h)} of ${formatCount(callSummary.first_call_eligible_leads)} matched leads`} tone="bg-cyan-500/15" />
-          <KpiCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Coaching Flags" value={formatCount(callSummary.coaching_flags)} detail={`${formatCount(callSummary.urgent_flags)} urgent · ${formatCount(callSummary.unresolved_calls)} unresolved`} tone="bg-amber-500/15" />
-          <KpiCard icon={<Users className="h-5 w-5 text-violet-200" />} label="Employees" value={formatCount(callSummary.active_employee_count)} detail="Active HR extensions scored" tone="bg-violet-500/15" />
-        </div>
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-          <div className="xl:col-span-2">
-            <div className="mb-3 flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-emerald-300" />
-              <h4 className="font-semibold text-white light:text-gray-900">Employee Productivity</h4>
-            </div>
-            <CallProductivityTable rows={callEmployees} />
-          </div>
-          <div>
-            <div className="mb-3 flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-amber-300" />
-              <h4 className="font-semibold text-white light:text-gray-900">Coaching Flags</h4>
-            </div>
-            <CoachingFlagsTable rows={coachingFlags} />
-          </div>
-        </div>
-      </section>
+      <DepartmentCallAnalysisPanel department="HR" title="HR Call Analysis" />
 
       {empty && <EmptyPanel message={sourceMessage} />}
 

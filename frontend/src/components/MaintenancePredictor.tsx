@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { useState } from 'react'
 import { Calendar, Clock, DollarSign, AlertTriangle, CheckCircle, XCircle, Wrench, TrendingUp, BrainCircuit, ClipboardCheck, ShieldCheck, Gauge } from 'lucide-react'
 import { useMaintenancePredictions, useMaintenanceCosts, useUrgentMaintenance, useMaintenanceIntelligence } from '../hooks/useGeotab'
+import DepartmentCallAnalysisPanel from './DepartmentCallAnalysisPanel'
 
 interface MaintenanceService {
   service_type: string
@@ -195,6 +196,10 @@ export default function MaintenancePredictor() {
           </h1>
           <p className="text-gray-400">AI-powered fleet maintenance forecasting</p>
         </div>
+      </motion.div>
+
+      <motion.div variants={itemVariants}>
+        <DepartmentCallAnalysisPanel department="Maintenance" title="Maintenance Call Analysis" />
       </motion.div>
 
       {/* AI Decision Layer */}

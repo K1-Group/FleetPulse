@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 import csv
 import hashlib
@@ -21,12 +21,29 @@ from integrations.sharepoint.graph_drive_client import SharePointDriveClient, Sh
 logger = logging.getLogger(__name__)
 
 SOURCE_AUTHORITY = "Grasshopper call logs + SharePoint HR call-analysis reports"
+DEPARTMENT_SOURCE_AUTHORITY = "Grasshopper call logs + SharePoint department call-analysis reports"
 SOURCE_SYSTEM = "Grasshopper / Microsoft SharePoint"
 PROJECTION_MODE = "read_only"
 
 PHONE_PATTERN = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}|\b\d{3}[-.]\d{3}[-.]\d{4}\b")
 ACTIVE_LEAD_STATUSES = {"new", "assigned", "active", "recruiterreview", "qualified"}
 COMPLETED_LEAD_STATUSES = {"complete", "completed", "closed", "hired", "rejected", "declined", "withdrawn"}
+DEPARTMENT_ALIASES = {
+    "all": "All",
+    "ops": "Operations",
+    "operation": "Operations",
+    "operations": "Operations",
+    "dispatch": "Operations",
+    "fleetops": "Operations",
+    "fleetoperations": "Operations",
+    "hr": "HR",
+    "humanresources": "HR",
+    "recruiting": "HR",
+    "recruitment": "HR",
+    "maintenance": "Maintenance",
+    "shop": "Maintenance",
+    "service": "Maintenance",
+}
 
 
 @dataclass(frozen=True)
@@ -154,6 +171,66 @@ def _normalize_key(value: str) -> str:
     return "".join(ch for ch in value.casefold() if ch.isalnum())
 
 
+def _normalize_department(value: Any, default: str = "HR") -> str:
+    text = _text(value).replace("_", " ").replace("-", " ").strip()
+    if not text:
+        return default
+    key = _normalize_key(text)
+    if key in DEPARTMENT_ALIASES:
+        return DEPARTMENT_ALIASES[key]
+    if key.startswith("callanalysisreports"):
+        tail = text.split("/")[-1].strip()
+        return _normalize_department(tail, default=default)
+    if key in {"k1", "k1group", "k1logistics"}:
+        return default
+    return " ".join(part[:1].upper() + part[1:].lower() for part in text.split())
+
+
+def _department_key(value: Any) -> str:
+    return _normalize_key(_normalize_department(value))
+
+
+def _department_from_values(values: tuple[Any, ...], default: str = "HR") -> str:
+    for value in values:
+        text = _text(value)
+        if not text:
+            continue
+        tokens = {_normalize_key(part) for part in re.split(r"[^A-Za-z0-9]+", text) if part}
+        for token in tokens:
+            if token in DEPARTMENT_ALIASES:
+                return DEPARTMENT_ALIASES[token]
+        parts = [part.strip() for part in re.split(r"[\\/]", text) if part.strip()]
+        for part in reversed(parts):
+            department = _normalize_department(part, default="")
+            if department:
+                return department
+        if len(text) > 40:
+            continue
+        department = _normalize_department(text, default="")
+        if department:
+            return department
+    return default
+
+
+def _row_department(row: dict[str, Any], default: str = "HR") -> str:
+    return _normalize_department(row.get("department") or row.get("source_department"), default=default)
+
+
+def _department_matches(row: dict[str, Any], department: str) -> bool:
+    normalized = _normalize_department(department, default="All")
+    return normalized == "All" or _row_department(row) == normalized
+
+
+def _active_extensions_for_department(config: HrCallAnalysisConfig, department: str) -> set[str]:
+    env_key = f"CALL_ANALYSIS_{_department_key(department).upper()}_ACTIVE_EXTENSIONS"
+    configured = os.getenv(env_key, "").strip()
+    if configured:
+        return {part.strip() for part in configured.split(",") if part.strip()}
+    if _normalize_department(department) == "HR":
+        return set(config.active_extensions)
+    return set()
+
+
 def _find_value(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
     normalized_aliases = {_normalize_key(alias) for alias in aliases}
     for key, value in row.items():
@@ -238,28 +315,35 @@ def _records_from_csv(content: str) -> list[dict[str, Any]]:
     ]
 
 
-def _extract_payload(content: str, *, filename: str | None = None) -> dict[str, list[dict[str, Any]]]:
+def _extract_payload(content: str, *, filename: str | None = None) -> dict[str, Any]:
     stripped = content.lstrip("\ufeff").strip()
     if not stripped:
-        return {"call_rows": [], "analysis_reports": [], "lead_rows": []}
+        return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "department": ""}
     suffix = Path(filename or "").suffix.casefold()
     if suffix == ".txt" and "CALL INTELLIGENCE REPORT" in stripped:
-        return {"call_rows": [], "analysis_reports": [{"analysis_text": stripped, "filename": filename or ""}], "lead_rows": []}
+        return {"call_rows": [], "analysis_reports": [{"analysis_text": stripped, "filename": filename or ""}], "lead_rows": [], "department": ""}
     if suffix == ".json" or stripped[:1] in {"[", "{"}:
         payload = json.loads(stripped)
         if isinstance(payload, list):
-            return {"call_rows": payload, "analysis_reports": [], "lead_rows": []}
+            return {"call_rows": payload, "analysis_reports": [], "lead_rows": [], "department": ""}
         if not isinstance(payload, dict):
-            return {"call_rows": [], "analysis_reports": [], "lead_rows": []}
+            return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "department": ""}
         return {
             "call_rows": list(payload.get("call_rows") or payload.get("calls") or payload.get("rows") or []),
             "analysis_reports": list(payload.get("analysis_reports") or payload.get("call_analysis_reports") or []),
             "lead_rows": list(payload.get("lead_rows") or payload.get("leads") or []),
+            "department": _text(payload.get("department") or payload.get("source_department")),
         }
-    return {"call_rows": _records_from_csv(stripped), "analysis_reports": [], "lead_rows": []}
+    return {"call_rows": _records_from_csv(stripped), "analysis_reports": [], "lead_rows": [], "department": ""}
 
 
-def _normalize_call_row(row: dict[str, Any], config: HrCallAnalysisConfig, *, row_number: int = 0) -> dict[str, Any] | None:
+def _normalize_call_row(
+    row: dict[str, Any],
+    config: HrCallAnalysisConfig,
+    *,
+    row_number: int = 0,
+    default_department: str = "HR",
+) -> dict[str, Any] | None:
     started_at = _parse_datetime(
         _find_value(row, ("call_started_at", "call_start", "Date/Time", "date_time", "started_at"))
     )
@@ -288,8 +372,13 @@ def _normalize_call_row(row: dict[str, Any], config: HrCallAnalysisConfig, *, ro
     )
     type_key = re.sub(r"[^a-z0-9]+", "_", call_type.casefold()).strip("_")
     source_row_number = int(_find_value(row, ("source_row_number",)) or row_number or 0)
+    department = _normalize_department(
+        _find_value(row, ("department", "Department", "source_department", "team", "Team")),
+        default=default_department,
+    )
     call_id = _text(_find_value(row, ("call_id", "id"))) or _hash_key(
         (
+            department,
             _iso(started_at) or "",
             extension_id,
             employee_name,
@@ -301,6 +390,8 @@ def _normalize_call_row(row: dict[str, Any], config: HrCallAnalysisConfig, *, ro
     )
     return {
         "call_id": call_id,
+        "department": department,
+        "department_key": _department_key(department),
         "call_started_at": _iso(started_at),
         "call_date": started_at.date().isoformat(),
         "month": started_at.strftime("%Y-%m"),
@@ -350,12 +441,29 @@ def _section(text: str, start: str, end: str | None = None) -> str:
     return body.strip()
 
 
-def _normalize_analysis_report(row: dict[str, Any], config: HrCallAnalysisConfig) -> dict[str, Any] | None:
+def _normalize_analysis_report(
+    row: dict[str, Any],
+    config: HrCallAnalysisConfig,
+    *,
+    default_department: str = "HR",
+) -> dict[str, Any] | None:
     text = _text(row.get("analysis_text") or row.get("content") or row.get("text"))
     filename = _text(row.get("filename") or row.get("name") or row.get("source_file"))
     if not text and not filename:
         return None
-    file_key = _text(row.get("analysis_file_key")) or _hash_key((filename, _text(row.get("created_at")), _text(row.get("updated_at"))))
+    department = _department_from_values(
+        (
+            row.get("department"),
+            row.get("source_department"),
+            row.get("source_folder"),
+            row.get("folder_path"),
+            "HR" if "HR Manager" in filename else "",
+        ),
+        default=default_department,
+    )
+    file_key = _text(row.get("analysis_file_key")) or _hash_key(
+        (department, filename, _text(row.get("created_at")), _text(row.get("updated_at")))
+    )
     call_dt = _parse_datetime(_regex_line(text, "Date & Time") or row.get("call_started_at") or row.get("created_at"))
     sentiment = _regex_line(text, "Overall Sentiment") or _text(row.get("sentiment"))
     resolved = _parse_bool(_regex_line(text, "Was the issue resolved?") or row.get("resolved"))
@@ -365,6 +473,8 @@ def _normalize_analysis_report(row: dict[str, Any], config: HrCallAnalysisConfig
     action_items = len(re.findall(r"^\[\s*\]", text, flags=re.MULTILINE))
     return {
         "analysis_file_key": file_key,
+        "department": department,
+        "department_key": _department_key(department),
         "caller_phone_hash": _text(row.get("caller_phone_hash")) or _hash_text(filename, config),
         "call_date": _date_str(call_dt),
         "call_started_at": _iso(call_dt),
@@ -385,7 +495,12 @@ def _normalize_analysis_report(row: dict[str, Any], config: HrCallAnalysisConfig
     }
 
 
-def _normalize_lead_row(row: dict[str, Any], config: HrCallAnalysisConfig) -> dict[str, Any] | None:
+def _normalize_lead_row(
+    row: dict[str, Any],
+    config: HrCallAnalysisConfig,
+    *,
+    default_department: str = "HR",
+) -> dict[str, Any] | None:
     assigned_at = _parse_datetime(_find_value(row, ("first_assigned_at", "assigned_at", "receivedDateTime", "date")))
     if not assigned_at:
         return None
@@ -399,8 +514,14 @@ def _normalize_lead_row(row: dict[str, Any], config: HrCallAnalysisConfig) -> di
     lead_key = _text(_find_value(row, ("lead_key", "source_email_id", "message_id", "applicant_id"))) or _hash_key(
         (phone_hash, assigned_at.isoformat())
     )
+    department = _normalize_department(
+        _find_value(row, ("department", "Department", "source_department", "team", "Team")),
+        default=default_department,
+    )
     return {
         "lead_key": _hash_key((lead_key,)),
+        "department": department,
+        "department_key": _department_key(department),
         "phone_hash": phone_hash,
         "worklist": _text(_find_value(row, ("worklist", "queue", "Current Worklist")), "Unassigned"),
         "status": status,
@@ -473,6 +594,7 @@ def import_hr_call_analysis_snapshot(
     content: str,
     *,
     filename: str | None = None,
+    department: str | None = None,
     dry_run: bool = False,
     path: str | Path | None = None,
     config: HrCallAnalysisConfig | None = None,
@@ -495,10 +617,11 @@ def import_hr_call_analysis_snapshot(
             "state_path": str(target_path),
         }
 
+    default_department = _normalize_department(department or payload.get("department") or "HR")
     call_rows: list[dict[str, Any]] = []
     invalid_count = 0
     for index, row in enumerate(payload["call_rows"], start=1):
-        normalized = _normalize_call_row(row, config, row_number=index)
+        normalized = _normalize_call_row(row, config, row_number=index, default_department=default_department)
         if normalized:
             call_rows.append(normalized)
         else:
@@ -506,7 +629,7 @@ def import_hr_call_analysis_snapshot(
 
     analysis_reports: list[dict[str, Any]] = []
     for row in payload["analysis_reports"]:
-        normalized = _normalize_analysis_report(row, config)
+        normalized = _normalize_analysis_report(row, config, default_department=default_department)
         if normalized:
             analysis_reports.append(normalized)
         else:
@@ -514,7 +637,7 @@ def import_hr_call_analysis_snapshot(
 
     lead_rows: list[dict[str, Any]] = []
     for row in payload["lead_rows"]:
-        normalized = _normalize_lead_row(row, config)
+        normalized = _normalize_lead_row(row, config, default_department=default_department)
         if normalized:
             lead_rows.append(normalized)
 
@@ -550,6 +673,7 @@ def import_hr_call_analysis_snapshot(
         "projection_mode": PROJECTION_MODE,
         "dry_run": dry_run,
         "row_count": imported_count,
+        "department": default_department,
         "call_rows": len(call_rows),
         "analysis_reports": len(analysis_reports),
         "lead_rows": len(lead_rows),
@@ -559,10 +683,15 @@ def import_hr_call_analysis_snapshot(
     }
 
 
-def _employee_summary(call_rows: list[dict[str, Any]], config: HrCallAnalysisConfig) -> list[dict[str, Any]]:
+def _employee_summary(
+    call_rows: list[dict[str, Any]],
+    config: HrCallAnalysisConfig,
+    *,
+    department: str = "HR",
+) -> list[dict[str, Any]]:
     counters: dict[tuple[str, str], Counter] = defaultdict(Counter)
     parties: dict[tuple[str, str], set[str]] = defaultdict(set)
-    active = set(config.active_extensions)
+    active = _active_extensions_for_department(config, department)
     for row in call_rows:
         key = (_text(row.get("extension_id"), "unknown"), _text(row.get("employee_name"), "Unknown"))
         if active and key[0] not in active:
@@ -599,6 +728,7 @@ def _employee_summary(call_rows: list[dict[str, Any]], config: HrCallAnalysisCon
         )
         rows.append(
             {
+                "department": _normalize_department(department),
                 "extension_id": key[0],
                 "employee_name": key[1],
                 "productivity_score_0_100": score,
@@ -619,11 +749,16 @@ def _employee_summary(call_rows: list[dict[str, Any]], config: HrCallAnalysisCon
     return sorted(rows, key=lambda row: row["productivity_score_0_100"], reverse=True)
 
 
-def _monthly_employee_summary(call_rows: list[dict[str, Any]], config: HrCallAnalysisConfig) -> list[dict[str, Any]]:
+def _monthly_employee_summary(
+    call_rows: list[dict[str, Any]],
+    config: HrCallAnalysisConfig,
+    *,
+    department: str = "HR",
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for month in sorted({row.get("month") for row in call_rows if row.get("month")}):
         month_rows = [row for row in call_rows if row.get("month") == month]
-        for employee in _employee_summary(month_rows, config):
+        for employee in _employee_summary(month_rows, config, department=department):
             rows.append({"month": month, **employee})
     return rows
 
@@ -712,6 +847,7 @@ def _coaching_flags(analysis_reports: list[dict[str, Any]]) -> list[dict[str, An
             flags.append(
                 {
                     "analysis_file_key": row.get("analysis_file_key"),
+                    "department": _row_department(row),
                     "call_date": row.get("call_date"),
                     "agent_name": row.get("agent_name"),
                     "category": row.get("category"),
@@ -732,17 +868,24 @@ def build_hr_call_analysis_dataset(
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
+    department: str = "HR",
+    source_authority: str = SOURCE_AUTHORITY,
     source_status: str = "ok",
     source_message: str | None = None,
     last_imported_at: str | None = None,
 ) -> dict[str, Any]:
-    """Build dashboard-safe HR call analytics."""
+    """Build dashboard-safe call analytics for one department."""
 
     config = config or HrCallAnalysisConfig.from_env()
     now = now or _now_utc()
+    department = _normalize_department(department, default="HR")
     call_rows = _dedupe(call_rows, "call_id")
     analysis_reports = _dedupe(analysis_reports, "analysis_file_key")
     lead_rows = _dedupe(lead_rows, "lead_key")
+    if department != "All":
+        call_rows = [row for row in call_rows if _department_matches(row, department)]
+        analysis_reports = [row for row in analysis_reports if _department_matches(row, department)]
+        lead_rows = [row for row in lead_rows if _department_matches(row, department)]
 
     total_duration = sum(int(row.get("duration_seconds") or 0) for row in call_rows)
     outbound_attempts = sum(int(row.get("is_outbound_attempt") or 0) for row in call_rows)
@@ -760,7 +903,7 @@ def build_hr_call_analysis_dataset(
         if (now - assigned_at).total_seconds() >= 48 * 3600:
             stale_no_call_48h += 1
 
-    employee_productivity = _employee_summary(call_rows, config)
+    employee_productivity = _employee_summary(call_rows, config, department=department)
     coaching_flags = _coaching_flags(analysis_reports)
     coverage_dates = [_parse_datetime(row.get("call_started_at")) for row in call_rows]
     coverage_dates = [value for value in coverage_dates if value]
@@ -768,7 +911,9 @@ def build_hr_call_analysis_dataset(
         "generated_at": now.isoformat(),
         "projection_mode": PROJECTION_MODE,
         "source_system": SOURCE_SYSTEM,
-        "source_authority": SOURCE_AUTHORITY,
+        "source_authority": source_authority,
+        "department": department,
+        "department_key": _department_key(department),
         "source_status": source_status,
         "source_message": source_message,
         "last_imported_at": last_imported_at,
@@ -801,7 +946,7 @@ def build_hr_call_analysis_dataset(
             "stale_no_call_48h": stale_no_call_48h,
         },
         "employee_productivity": employee_productivity,
-        "monthly_employee_productivity": _monthly_employee_summary(call_rows, config),
+        "monthly_employee_productivity": _monthly_employee_summary(call_rows, config, department=department),
         "daily_volume": _daily_volume(call_rows),
         "follow_up": follow_up,
         "coaching_flags": coaching_flags,
@@ -839,6 +984,95 @@ async def get_hr_call_analysis_dataset(
     )
 
 
+def _configured_department_names(
+    config: HrCallAnalysisConfig,
+    call_rows: list[dict[str, Any]],
+    analysis_reports: list[dict[str, Any]],
+    lead_rows: list[dict[str, Any]],
+) -> list[str]:
+    departments = {_normalize_department(department) for department in config.departments}
+    for row in [*call_rows, *analysis_reports, *lead_rows]:
+        departments.add(_row_department(row))
+    return sorted(departments, key=lambda value: (value != "Operations", value != "HR", value))
+
+
+def _department_rollups(
+    call_rows: list[dict[str, Any]],
+    analysis_reports: list[dict[str, Any]],
+    lead_rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+    config: HrCallAnalysisConfig,
+    source_status: str,
+    source_message: str | None,
+    last_imported_at: str | None,
+) -> list[dict[str, Any]]:
+    rollups: list[dict[str, Any]] = []
+    for department in _configured_department_names(config, call_rows, analysis_reports, lead_rows):
+        dataset = build_hr_call_analysis_dataset(
+            call_rows,
+            analysis_reports,
+            lead_rows,
+            now=now,
+            config=config,
+            department=department,
+            source_authority=DEPARTMENT_SOURCE_AUTHORITY,
+            source_status=source_status,
+            source_message=source_message,
+            last_imported_at=last_imported_at,
+        )
+        rollups.append(
+            {
+                "department": department,
+                "department_key": _department_key(department),
+                "source_status": dataset["source_status"],
+                "coverage": dataset["coverage"],
+                "summary": dataset["summary"],
+                "row_counts": dataset["row_counts"],
+                "top_employees": dataset["employee_productivity"][:5],
+                "coaching_flags": dataset["coaching_flags"][:5],
+            }
+        )
+    return rollups
+
+
+async def get_department_call_analysis_dataset(
+    department: str | None = None,
+    *,
+    now: datetime | None = None,
+    config: HrCallAnalysisConfig | None = None,
+) -> dict[str, Any]:
+    config = config or HrCallAnalysisConfig.from_env()
+    now = now or _now_utc()
+    source = _read_state(Path(config.state_path))
+    selected_department = _normalize_department(department or "All", default="All")
+    dataset = build_hr_call_analysis_dataset(
+        source.call_rows,
+        source.analysis_reports,
+        source.lead_rows,
+        now=now,
+        config=config,
+        department=selected_department,
+        source_authority=DEPARTMENT_SOURCE_AUTHORITY,
+        source_status=source.status,
+        source_message=source.message,
+        last_imported_at=source.last_imported_at,
+    )
+    rollups = _department_rollups(
+        source.call_rows,
+        source.analysis_reports,
+        source.lead_rows,
+        now=now,
+        config=config,
+        source_status=source.status,
+        source_message=source.message,
+        last_imported_at=source.last_imported_at,
+    )
+    dataset["configured_departments"] = [rollup["department"] for rollup in rollups]
+    dataset["department_rollups"] = rollups
+    return dataset
+
+
 def validate_hr_call_analysis_import_api_key(provided: str | None, config: HrCallAnalysisConfig | None = None) -> None:
     config = config or HrCallAnalysisConfig.from_env()
     if config.import_api_key and provided != config.import_api_key:
@@ -866,11 +1100,31 @@ def hr_call_analysis_status(config: HrCallAnalysisConfig | None = None) -> dict[
     }
 
 
+def department_call_analysis_status(config: HrCallAnalysisConfig | None = None) -> dict[str, Any]:
+    config = config or HrCallAnalysisConfig.from_env()
+    state = _read_state(Path(config.state_path))
+    departments = _configured_department_names(config, state.call_rows, state.analysis_reports, state.lead_rows)
+    return {
+        **config.safe_status(),
+        "source_authority": DEPARTMENT_SOURCE_AUTHORITY,
+        "source_status": state.status,
+        "source_message": state.message,
+        "last_imported_at": state.last_imported_at,
+        "configured_departments": departments,
+        "row_counts": {
+            "call_rows": len(state.call_rows),
+            "analysis_reports": len(state.analysis_reports),
+            "lead_rows": len(state.lead_rows),
+        },
+    }
+
+
 def sync_hr_call_analysis_sharepoint_folder(
     config: HrCallAnalysisConfig | None = None,
     *,
     client: SharePointDriveClient | None = None,
     dry_run: bool = False,
+    department: str | None = None,
 ) -> HrCallAnalysisSyncResult:
     config = config or HrCallAnalysisConfig.from_env()
     if not config.sync_ready:
@@ -879,6 +1133,9 @@ def sync_hr_call_analysis_sharepoint_folder(
 
     graph_client = client or SharePointDriveClient(config)  # type: ignore[arg-type]
     files = graph_client.list_files()
+    selected_department = _normalize_department(
+        department or _department_from_values((config.folder_path,), default="HR")
+    )
     file_results: list[HrCallAnalysisFileSyncResult] = []
     errors: list[str] = []
     imported_count = 0
@@ -894,10 +1151,12 @@ def sync_hr_call_analysis_sharepoint_folder(
             result = import_hr_call_analysis_snapshot(
                 json.dumps(
                     {
+                        "department": selected_department,
                         "analysis_reports": [
                             {
                                 "analysis_text": content,
                                 "filename": file.name,
+                                "department": selected_department,
                                 "created_at": _iso(file.last_modified_at),
                                 "updated_at": _iso(file.last_modified_at),
                                 "size_bytes": file.size,
@@ -908,6 +1167,7 @@ def sync_hr_call_analysis_sharepoint_folder(
                 ),
                 filename="sharepoint-hr-call-analysis.json",
                 dry_run=dry_run,
+                department=selected_department,
                 config=config,
             )
             imported = int(result.get("analysis_reports") or 0)
@@ -944,3 +1204,70 @@ def sync_hr_call_analysis_sharepoint_folder(
         errors=errors,
         files=file_results,
     )
+
+
+def sync_department_call_analysis_sharepoint_folders(
+    config: HrCallAnalysisConfig | None = None,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    config = config or HrCallAnalysisConfig.from_env()
+    folder_map = config.department_folder_paths or {"HR": config.folder_path}
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    imported_count = 0
+    duplicate_count = 0
+    invalid_count = 0
+    fetched_count = 0
+
+    for department, folder_path in folder_map.items():
+        folder_config = replace(
+            config,
+            folder_path=folder_path,
+            source_file_urls=() if config.department_folder_paths else config.source_file_urls,
+        )
+        try:
+            result = sync_hr_call_analysis_sharepoint_folder(
+                folder_config,
+                dry_run=dry_run,
+                department=department,
+            )
+            payload = result.as_dict()
+            payload["department"] = _normalize_department(department)
+            results.append(payload)
+            imported_count += result.imported_count
+            duplicate_count += result.duplicate_count
+            invalid_count += result.invalid_count
+            fetched_count += result.fetched_count
+            errors.extend(result.errors)
+        except Exception as exc:  # noqa: BLE001
+            error = f"{_normalize_department(department)}:{type(exc).__name__}"
+            errors.append(error)
+            results.append(
+                {
+                    "status": "failed",
+                    "department": _normalize_department(department),
+                    "folder_path": folder_path,
+                    "errors": [error],
+                    "fetched_count": 0,
+                    "imported_count": 0,
+                    "duplicate_count": 0,
+                    "invalid_count": 1,
+                    "files": [],
+                }
+            )
+            invalid_count += 1
+
+    return {
+        "status": "ok" if not errors else "partial",
+        "source_authority": DEPARTMENT_SOURCE_AUTHORITY,
+        "projection_mode": PROJECTION_MODE,
+        "dry_run": dry_run,
+        "department_count": len(folder_map),
+        "fetched_count": fetched_count,
+        "imported_count": imported_count,
+        "duplicate_count": duplicate_count,
+        "invalid_count": invalid_count,
+        "errors": errors,
+        "departments": results,
+    }

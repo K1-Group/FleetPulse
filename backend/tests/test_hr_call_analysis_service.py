@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from configs.hr_call_analysis import HrCallAnalysisConfig  # noqa: E402
 from services.hr_call_analysis_service import (  # noqa: E402
+    get_department_call_analysis_dataset,
     get_hr_call_analysis_dataset,
     import_hr_call_analysis_snapshot,
 )
@@ -44,6 +45,8 @@ def _config(path: str = "/tmp/hr-call-analysis-test.json") -> HrCallAnalysisConf
         timeout_seconds=5,
         retry_count=0,
         retry_backoff_seconds=0,
+        departments=("Operations", "HR", "Maintenance"),
+        department_folder_paths={},
     )
 
 
@@ -183,3 +186,70 @@ ACTION ITEMS
     assert dataset["summary"]["coaching_flags"] == 1
     serialized = json.dumps(dataset)
     assert "(817) 807-2272" not in serialized
+
+
+def test_department_call_analysis_filters_rows_by_department(tmp_path) -> None:
+    state_path = tmp_path / "department-call-analysis.json"
+    config = _config(str(state_path))
+
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "department": "Ops",
+                        "call_started_at": "2026-05-02T10:00:00Z",
+                        "extension_id": "810",
+                        "employee_name": "Ops Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 180,
+                        "external_party_hash": "ops-party",
+                    },
+                    {
+                        "department": "Maintenance",
+                        "call_started_at": "2026-05-02T11:00:00Z",
+                        "extension_id": "820",
+                        "employee_name": "Shop Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 420,
+                        "external_party_hash": "shop-party",
+                    },
+                ],
+                "analysis_reports": [
+                    {
+                        "department": "Maintenance",
+                        "filename": "maintenance-analysis.txt",
+                        "content": "CALL INTELLIGENCE REPORT\n- Agent Name: Shop Agent\n- Overall Sentiment: Negative\n- Urgent: YES",
+                    }
+                ],
+            }
+        ),
+        filename="department-calls.json",
+        config=config,
+    )
+    assert result["status"] == "ok"
+
+    ops = asyncio.run(get_hr_call_analysis_dataset(config=config, now=datetime(2026, 5, 3, tzinfo=timezone.utc)))
+    all_departments = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="All",
+            now=datetime(2026, 5, 3, tzinfo=timezone.utc),
+        )
+    )
+    maintenance = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="Maintenance",
+            now=datetime(2026, 5, 3, tzinfo=timezone.utc),
+        )
+    )
+
+    assert ops["department"] == "HR"
+    assert ops["summary"]["total_call_legs"] == 0
+    assert all_departments["summary"]["total_call_legs"] == 2
+    assert "Operations" in all_departments["configured_departments"]
+    assert maintenance["summary"]["total_call_legs"] == 1
+    assert maintenance["summary"]["coaching_flags"] == 1

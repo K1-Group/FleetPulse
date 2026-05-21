@@ -11,6 +11,7 @@ import type {
   ControlTowerTrailersResponse,
   DataConnectorVehicleKpiResponse,
   DashboardValidationResponse,
+  DepartmentCallAnalysisDataset,
   DriverWorkforceResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
@@ -140,6 +141,11 @@ export function useHrRecruitingWorklist(enabled = true) {
 
 export function useHrCallAnalysis(enabled = true) {
   return useFetch<HrCallAnalysisDataset>(`${API}/hr-call-analysis/dashboard`, 60000, enabled, 60000)
+}
+
+export function useDepartmentCallAnalysis(department?: string, enabled = true) {
+  const query = department ? `?department=${encodeURIComponent(department)}` : ''
+  return useFetch<DepartmentCallAnalysisDataset>(`${API}/department-call-analysis/dashboard${query}`, 60000, enabled, 60000)
 }
 
 // Driver Coaching hooks

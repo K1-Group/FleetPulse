@@ -1,4 +1,4 @@
-"""Configuration for HR call-analysis imports and SharePoint sync."""
+"""Configuration for department call-analysis imports and SharePoint sync."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 DEFAULT_SITE_URL = "https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures"
 DEFAULT_FOLDER_PATH = "Grasshopper/Call Analysis Reports/HR"
 DEFAULT_STATE_PATH = "/home/data/fleetpulse_hr_call_analysis.json"
+DEFAULT_DEPARTMENTS = ("Operations", "HR", "Maintenance")
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -42,6 +43,46 @@ def _split_env_list(value: str) -> tuple[str, ...]:
         if cleaned:
             items.append(cleaned)
     return tuple(items)
+
+
+def _split_department_list(value: str) -> tuple[str, ...]:
+    departments: list[str] = []
+    for part in value.replace("\n", ",").split(","):
+        cleaned = part.strip()
+        if cleaned and cleaned not in departments:
+            departments.append(cleaned)
+    return tuple(departments or DEFAULT_DEPARTMENTS)
+
+
+def _split_department_folder_map(value: str) -> dict[str, str]:
+    """Parse Department=SharePoint/folder/path pairs from JSON or env text."""
+
+    cleaned = value.strip()
+    if not cleaned:
+        return {}
+    try:
+        import json
+
+        payload = json.loads(cleaned)
+        if isinstance(payload, dict):
+            return {
+                str(department).strip(): str(folder).strip("/ ")
+                for department, folder in payload.items()
+                if str(department).strip() and str(folder).strip()
+            }
+    except Exception:
+        pass
+
+    folder_map: dict[str, str] = {}
+    for part in cleaned.replace("\n", ";").split(";"):
+        if not part.strip() or "=" not in part:
+            continue
+        department, folder = part.split("=", 1)
+        department = department.strip()
+        folder = folder.strip("/ ")
+        if department and folder:
+            folder_map[department] = folder
+    return folder_map
 
 
 def _split_extensions(value: str) -> tuple[str, ...]:
@@ -101,6 +142,8 @@ class HrCallAnalysisConfig:
     timeout_seconds: float
     retry_count: int
     retry_backoff_seconds: float
+    departments: tuple[str, ...]
+    department_folder_paths: dict[str, str]
 
     @classmethod
     def from_env(cls) -> "HrCallAnalysisConfig":
@@ -117,7 +160,8 @@ class HrCallAnalysisConfig:
         )
         return cls(
             state_path=(
-                os.getenv("HR_CALL_ANALYSIS_STATE_PATH", "").strip()
+                os.getenv("DEPARTMENT_CALL_ANALYSIS_STATE_PATH", "").strip()
+                or os.getenv("HR_CALL_ANALYSIS_STATE_PATH", "").strip()
                 or DEFAULT_STATE_PATH
             ),
             import_api_key=os.getenv("HR_CALL_ANALYSIS_IMPORT_API_KEY", "").strip(),
@@ -164,6 +208,12 @@ class HrCallAnalysisConfig:
                 "HR_CALL_ANALYSIS_SHAREPOINT_RETRY_BACKOFF_SECONDS",
                 1.0,
                 minimum=0.0,
+            ),
+            departments=_split_department_list(
+                os.getenv("DEPARTMENT_CALL_ANALYSIS_DEPARTMENTS", ",".join(DEFAULT_DEPARTMENTS))
+            ),
+            department_folder_paths=_split_department_folder_map(
+                os.getenv("DEPARTMENT_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATHS", "")
             ),
         )
 
@@ -220,6 +270,7 @@ class HrCallAnalysisConfig:
             "projection_mode": "read_only",
             "source_authority": "Grasshopper call logs + SharePoint HR call-analysis reports",
             "state_path_configured": bool(self.state_path),
+            "departments": list(self.departments),
             "api_key_required": self.api_key_required,
             "hash_salt_configured": bool(self.hash_salt),
             "active_extensions": list(self.active_extensions),
@@ -229,6 +280,7 @@ class HrCallAnalysisConfig:
                 "site_configured": self.site_configured,
                 "drive_configured": bool(self.drive_id or self.drive_name),
                 "folder_path": self.folder_path,
+                "department_folder_paths": self.department_folder_paths,
                 "source_file_url_count": len(self.source_file_urls),
                 "file_extensions": list(self.file_extensions),
                 "file_limit": self.file_limit,

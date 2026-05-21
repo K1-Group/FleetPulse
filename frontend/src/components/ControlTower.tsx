@@ -50,6 +50,7 @@ import type {
   OperatingCostSnapshot,
   OperatingCostWeeklyRow,
 } from '../types/fleet'
+import DepartmentCallAnalysisPanel from './DepartmentCallAnalysisPanel'
 
 type SectionKey = 'attention' | 'trailers' | 'financial' | 'agents' | 'codex'
 
@@ -657,6 +658,8 @@ export default function ControlTower() {
           )
         })}
       </div>
+
+      <DepartmentCallAnalysisPanel department="Operations" title="Operations Call Analysis" showDepartmentRollups />
 
       <nav className="flex flex-wrap gap-2 rounded-lg border border-gray-700/50 bg-gray-900/70 p-2 light:bg-white light:border-gray-200">
         {sections.map(({ key, label, icon: Icon }) => (

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from services.hr_call_analysis_service import get_hr_call_analysis_dataset
+from services.hr_call_analysis_service import get_department_call_analysis_dataset, get_hr_call_analysis_dataset
 
 router = APIRouter()
 
@@ -102,6 +102,48 @@ async def powerbi_hr_call_analysis_snapshot() -> dict[str, Any]:
         "exported_at": _now_iso(),
         "source_system": "Grasshopper / Microsoft SharePoint",
         "source_authority": "Grasshopper call logs + SharePoint HR call-analysis reports",
+        "projection_mode": "read_only",
+        **snapshot,
+    }
+
+
+@router.get("/department-call-analysis/summary")
+async def powerbi_department_call_analysis_summary() -> list[dict[str, Any]]:
+    snapshot = await get_department_call_analysis_dataset(department="All")
+    rows: list[dict[str, Any]] = []
+    for rollup in snapshot.get("department_rollups", []):
+        rows.append(
+            _with_meta(
+                {
+                    "department": rollup["department"],
+                    "department_key": rollup["department_key"],
+                    **_period({**snapshot, "coverage": rollup["coverage"]}),
+                    **rollup["summary"],
+                },
+                "department_call_analysis_summary",
+            )
+        )
+    return rows
+
+
+@router.get("/department-call-analysis/employees")
+async def powerbi_department_call_analysis_employees() -> list[dict[str, Any]]:
+    snapshot = await get_department_call_analysis_dataset(department="All")
+    rows: list[dict[str, Any]] = []
+    for rollup in snapshot.get("department_rollups", []):
+        for employee in rollup.get("top_employees", []):
+            rows.append(_with_meta({**_period(snapshot), **employee}, "department_call_analysis_employees"))
+    return rows
+
+
+@router.get("/department-call-analysis-snapshot")
+async def powerbi_department_call_analysis_snapshot() -> dict[str, Any]:
+    snapshot = await get_department_call_analysis_dataset(department="All")
+    return {
+        "connection_name": "department_call_analysis_snapshot",
+        "exported_at": _now_iso(),
+        "source_system": "Grasshopper / Microsoft SharePoint",
+        "source_authority": "Grasshopper call logs + SharePoint department call-analysis reports",
         "projection_mode": "read_only",
         **snapshot,
     }

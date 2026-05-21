@@ -816,6 +816,7 @@ export interface HrCallAnalysisSummary {
 }
 
 export interface HrCallEmployeeProductivity {
+  department?: string
   extension_id: string
   employee_name: string
   productivity_score_0_100: number
@@ -844,6 +845,7 @@ export interface HrCallDailyVolume {
 
 export interface HrCallCoachingFlag {
   analysis_file_key: string
+  department?: string
   call_date: string | null
   agent_name: string
   category: string
@@ -859,6 +861,8 @@ export interface HrCallAnalysisDataset {
   projection_mode: 'read_only'
   source_system: string
   source_authority: string
+  department?: string
+  department_key?: string
   source_status: string
   source_message: string | null
   last_imported_at: string | null
@@ -878,4 +882,22 @@ export interface HrCallAnalysisDataset {
   coaching_flags: HrCallCoachingFlag[]
   row_counts: Record<string, number>
   validation_notes: string[]
+}
+
+export interface DepartmentCallAnalysisRollup {
+  department: string
+  department_key: string
+  source_status: string
+  coverage: HrCallAnalysisDataset['coverage']
+  summary: HrCallAnalysisSummary
+  row_counts: Record<string, number>
+  top_employees: HrCallEmployeeProductivity[]
+  coaching_flags: HrCallCoachingFlag[]
+}
+
+export interface DepartmentCallAnalysisDataset extends HrCallAnalysisDataset {
+  department: string
+  department_key: string
+  configured_departments: string[]
+  department_rollups: DepartmentCallAnalysisRollup[]
 }

@@ -135,10 +135,10 @@ def _hr_recruiting_contract() -> dict[str, Any]:
 def _hr_call_analysis_contract() -> dict[str, Any]:
     contract = _base_contract(
         key="hr_call_analysis",
-        label="HR Call Analysis and Voice Productivity Snapshot",
-        source_authority="Grasshopper call logs + SharePoint HR call-analysis reports",
-        status_route="/api/hr-call-analysis/status",
-        import_route="/api/hr-call-analysis/import",
+        label="Department Call Analysis and Voice Productivity Snapshot",
+        source_authority="Grasshopper call logs + SharePoint department call-analysis reports",
+        status_route="/api/department-call-analysis/status",
+        import_route="/api/department-call-analysis/import",
         auth_header="X-FleetPulse-HR-Call-Key",
         state_path_env="HR_CALL_ANALYSIS_STATE_PATH",
         import_key_env="HR_CALL_ANALYSIS_IMPORT_API_KEY",
@@ -152,8 +152,13 @@ def _hr_call_analysis_contract() -> dict[str, Any]:
     )
     contract["schedule"] = "every_15_minutes"
     contract["recommended_time"] = "Every 15 minutes America/Chicago"
-    contract["sharepoint_sync_route"] = "/api/hr-call-analysis/sharepoint/sync"
-    contract["sharepoint_folder_env"] = "SHAREPOINT_HR_CALL_ANALYSIS_FOLDER_URL"
+    contract["sharepoint_sync_route"] = "/api/department-call-analysis/sharepoint/sync"
+    contract["sharepoint_folder_env"] = "DEPARTMENT_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATHS"
+    contract["legacy_hr_routes"] = {
+        "status_route": "/api/hr-call-analysis/status",
+        "import_route": "/api/hr-call-analysis/import",
+        "sharepoint_sync_route": "/api/hr-call-analysis/sharepoint/sync",
+    }
     return contract
 
 
