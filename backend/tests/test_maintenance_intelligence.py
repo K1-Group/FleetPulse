@@ -134,4 +134,4 @@ def test_urgent_maintenance_collapses_unknown_fault_noise(monkeypatch):
     assert alerts[0].known_fault_count == 0
     assert alerts[0].unknown_fault_count == 30
     assert alerts[0].active_fault_codes[0]["code"] == "unmapped"
-    assert "unmapped Geotab diagnostic row" in alerts[0].active_fault_codes[0]["description"]
+    assert "unmapped Geotab diagnostic occurrence" in alerts[0].active_fault_codes[0]["description"]

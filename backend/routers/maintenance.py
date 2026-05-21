@@ -645,7 +645,7 @@ def _fault_code_summary(faults: list[dict], limit: int = 4) -> list[dict[str, An
             {
                 "code": "unmapped",
                 "description": (
-                    f"{unknown_count} unmapped Geotab diagnostic row(s)"
+                    f"{unknown_count:,} unmapped Geotab diagnostic occurrence(s)"
                     + (f" · examples: {examples}" if examples else "")
                 ),
                 "count": unknown_count,
