@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig, execute_sql_query
 from services.entity_margin_service import _coerce_date, _entity_from_delivery_center
 from services.operating_cost_service import _resolve_window
@@ -445,6 +446,18 @@ def get_delivery_center_performance_snapshot(
         "summary": None,
         "delivery_centers": [],
     }
+
+    if xcelerator_ceo_powerbi_only():
+        return {
+            **base_payload,
+            "source": {
+                **_source(
+                    "awaiting_feed",
+                    message="Delivery-center lifecycle performance is disabled until those timestamps are exposed by the Xcelerator CEO Dashboard semantic model.",
+                ),
+                "source_authority": xcelerator_source_label(),
+            },
+        }
 
     config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
     if not config.configured:

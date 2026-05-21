@@ -12,11 +12,14 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from geotab_client import GeotabClient
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig, execute_sql_query
+from integrations.powerbi.execute_queries import PowerBIExecuteQueriesConfig, execute_dax_query
 from services.entity_margin_service import K1L_ENTITY, _entity_from_delivery_center
 
 
 XCELERATOR_AUTHORITY = "K1 Group LLC / Xcelerator review orders"
+XCELERATOR_CEO_POWERBI_SOURCE = "xcelerator_ceo_powerbi"
 GEOTAB_AUTHORITY = "K1 Logistics Inc / Geotab trips"
 GEOTAB_WAREHOUSE_AUTHORITY = "K1 Logistics Inc / Geotab telemetry Fabric Warehouse projection"
 TARGET_REVENUE_PER_DRIVER_WEEK = 5000.0
@@ -240,6 +243,9 @@ def _load_xcelerator_productivity(
     period_start: date,
     period_end: date,
 ) -> dict[str, Any]:
+    if xcelerator_ceo_powerbi_only():
+        return _load_xcelerator_productivity_from_powerbi(period_start, period_end)
+
     config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
     if not config.configured:
         return {
@@ -369,6 +375,94 @@ def _load_xcelerator_productivity(
         "driver_source": "xcelerator_review_orders" if driver_keys else "unavailable",
         "sources": {"revenue": revenue_source, "drivers": driver_source},
         "table": f"{table_schema}.{table_name}",
+    }
+
+
+def _build_powerbi_productivity_dax(period_start: date, period_end: date) -> str:
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        ADDCOLUMNS(
+            'xcelerator_review_orders',
+            "PickupDate", DATEVALUE('xcelerator_review_orders'[pickup_target_from])
+        ),
+        NOT ISBLANK('xcelerator_review_orders'[pickup_target_from])
+            && [PickupDate] >= DATE({period_start.year}, {period_start.month}, {period_start.day})
+            && [PickupDate] <= DATE({period_end.year}, {period_end.month}, {period_end.day})
+    )
+RETURN
+GROUPBY(
+    BaseRows,
+    'xcelerator_review_orders'[delivery_center],
+    "Revenue", SUMX(CURRENTGROUP(), 'xcelerator_review_orders'[grand_total_amount]),
+    "DriverCount", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[driver_no]),
+    "Orders", COUNTX(CURRENTGROUP(), 'xcelerator_review_orders'[order_tracking_id])
+)
+ORDER BY 'xcelerator_review_orders'[delivery_center]
+""".strip()
+
+
+def _load_xcelerator_productivity_from_powerbi(
+    period_start: date,
+    period_end: date,
+) -> dict[str, Any]:
+    config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
+    authority = xcelerator_source_label()
+    if not config.configured:
+        source = _source(
+            "not_configured",
+            authority,
+            message="Xcelerator CEO Dashboard Power BI auth is not configured.",
+        )
+        return {
+            "revenue": None,
+            "driver_count": None,
+            "driver_source": "unavailable",
+            "sources": {"revenue": source, "drivers": source},
+            "table": XCELERATOR_CEO_POWERBI_SOURCE,
+        }
+
+    try:
+        rows = execute_dax_query(config, _build_powerbi_productivity_dax(period_start, period_end))
+    except Exception as exc:
+        source = _source("unavailable", authority, message=f"{type(exc).__name__}: {exc}")
+        return {
+            "revenue": None,
+            "driver_count": None,
+            "driver_source": "unavailable",
+            "sources": {"revenue": source, "drivers": source},
+            "table": XCELERATOR_CEO_POWERBI_SOURCE,
+        }
+
+    revenue = 0.0
+    driver_count = 0
+    included_orders = 0
+    for row in rows:
+        if _entity_from_delivery_center(_find_value(row, ("delivery_center", "Delivery Center", "DeliveryCenter"))) != K1L_ENTITY:
+            continue
+        revenue += float(_find_value(row, ("Revenue", "revenue", "GrandTotal", "grand_total")) or 0)
+        driver_count += int(float(_find_value(row, ("DriverCount", "driver_count", "drivers")) or 0))
+        included_orders += int(float(_find_value(row, ("Orders", "orders", "OrderCount", "order_count")) or 0))
+
+    revenue_source = _source(
+        "healthy" if included_orders else "awaiting_feed",
+        authority,
+        message="" if included_orders else "No K1 Logistics Inc rows matched the CEO Dashboard semantic model for this period.",
+        row_count=included_orders,
+    )
+    driver_source = _source(
+        "healthy" if driver_count else "awaiting_feed",
+        authority,
+        message="" if driver_count else "No dispatch driver values were available from the CEO Dashboard semantic model.",
+        row_count=driver_count,
+    )
+    return {
+        "revenue": _money(revenue) if included_orders else None,
+        "driver_count": driver_count or None,
+        "driver_source": XCELERATOR_CEO_POWERBI_SOURCE if driver_count else "unavailable",
+        "sources": {"revenue": revenue_source, "drivers": driver_source},
+        "table": XCELERATOR_CEO_POWERBI_SOURCE,
     }
 
 

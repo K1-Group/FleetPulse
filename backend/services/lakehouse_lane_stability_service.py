@@ -10,10 +10,15 @@ import re
 import time
 from typing import Any
 
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from integrations.fabric_warehouse.sql_client import (
     DEFAULT_ODBC_DRIVER,
     FabricWarehouseSqlConfig,
     execute_sql_query,
+)
+from integrations.powerbi.execute_queries import (
+    PowerBIExecuteQueriesConfig,
+    execute_dax_query,
 )
 
 
@@ -139,6 +144,32 @@ def _build_query(config: LakehouseLaneStabilityConfig, service: str) -> tuple[st
     return sql, tuple(params)
 
 
+def _build_powerbi_lane_stability_dax(window: int) -> str:
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        'lane_stability_daily_kpi',
+        'lane_stability_daily_kpi'[snapshot_date] >= TODAY() - {window}
+            && 'lane_stability_daily_kpi'[snapshot_date] <= TODAY()
+    )
+RETURN
+SELECTCOLUMNS(
+    BaseRows,
+    "snapshot_date", 'lane_stability_daily_kpi'[snapshot_date],
+    "stable_cov_pct", 'lane_stability_daily_kpi'[wtd_stable_cov_pct],
+    "critical_lanes", 'lane_stability_daily_kpi'[critical_lanes],
+    "cross_route_lanes", 'lane_stability_daily_kpi'[cross_route_lanes],
+    "total_orders", 'lane_stability_daily_kpi'[total_orders],
+    "scored_lanes", 'lane_stability_daily_kpi'[total_lanes],
+    "stable_lanes", 'lane_stability_daily_kpi'[stable_lanes],
+    "total_revenue", 'lane_stability_daily_kpi'[total_revenue],
+    "delta_cov_pp", 'lane_stability_daily_kpi'[delta_cov_pp]
+)
+ORDER BY [snapshot_date]
+""".strip()
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -232,12 +263,33 @@ def get_lane_stability_daily(
 
     window = validate_window(window)
     service_key = _normalize_service(service)
+    if xcelerator_ceo_powerbi_only() and service_key:
+        raise RuntimeError("lane_stability_service_filter_not_configured_for_ceo_powerbi")
     cache_key = (window, service_key)
     now = time.time()
     if not force_refresh:
         cached = _CACHE.get(cache_key)
         if cached and cached[0] > now:
             return cached[1]
+
+    if xcelerator_ceo_powerbi_only():
+        powerbi_config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
+        if not powerbi_config.configured:
+            raise RuntimeError("xcelerator_ceo_powerbi_not_configured")
+        rows = _normalize_rows(
+            execute_dax_query(powerbi_config, _build_powerbi_lane_stability_dax(window))
+        )
+        payload = {
+            "window": window,
+            "generated_at": _now_iso(),
+            "source_authority": xcelerator_source_label(),
+            "source_type": "powerbi_semantic_model",
+            "projection_mode": "read_only",
+            "rows": rows,
+            "summary": _summary(rows),
+        }
+        _CACHE[cache_key] = (now + CACHE_TTL_SECONDS, payload)
+        return payload
 
     config = config or LakehouseLaneStabilityConfig.from_env()
     sql, query_params = _build_query(config, service_key)

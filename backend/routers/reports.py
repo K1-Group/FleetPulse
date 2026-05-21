@@ -2,15 +2,42 @@
 
 from datetime import datetime, timedelta, timezone
 from html import escape
-from io import BytesIO
-from fastapi import APIRouter, Response
 from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from geotab_client import GeotabClient
 from _cache import get_cached, set_cached
 from services.trailer_tracking_service import get_live_trailer_tracking
+from services.fleet_report_delivery_service import (
+    get_report_schedule_status,
+    save_report_schedule,
+    send_report_email,
+)
 
 router = APIRouter()
+
+
+class ReportEmailRequest(BaseModel):
+    recipients: list[str] = Field(default_factory=list)
+    subject: str | None = None
+    message: str | None = None
+    period: str = "weekly"
+    html: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+    generated_at: str | None = None
+
+
+class ReportScheduleRequest(BaseModel):
+    enabled: bool = False
+    period: str = "weekly"
+    frequency: str = "weekly"
+    recipients: list[str] = Field(default_factory=list)
+    send_time: str = "07:00"
+    timezone: str = "America/Chicago"
+    weekday: int | None = None
+    day_of_month: int | None = None
 
 
 def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
@@ -276,3 +303,27 @@ async def generate_report(period: str = "weekly"):
             "summary": {},
             "error": str(e)
         }
+
+
+@router.post("/email")
+async def email_report(request: ReportEmailRequest):
+    """Send a generated report through the configured delivery webhook."""
+    try:
+        return send_report_email(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/schedule")
+async def get_report_schedule():
+    """Return saved report schedule settings and delivery readiness."""
+    return get_report_schedule_status()
+
+
+@router.post("/schedule")
+async def update_report_schedule(request: ReportScheduleRequest):
+    """Persist report schedule settings for the external scheduler/orchestrator."""
+    try:
+        return save_report_schedule(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

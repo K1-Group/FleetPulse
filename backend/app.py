@@ -2,9 +2,11 @@
 
 import logging
 import os
+from urllib.parse import quote
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
 
 logger = logging.getLogger("fleetpulse")
 
@@ -22,6 +24,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _entra_auth_required() -> bool:
+    return _env_bool("FLEETPULSE_ENTRA_AUTH_REQUIRED", False)
+
+
+def _entra_principal_present(request: Request) -> bool:
+    principal = request.headers.get("x-ms-client-principal", "").strip()
+    idp = request.headers.get("x-ms-client-principal-idp", "").strip().lower()
+    return bool(principal) and idp in {"aad", "azureactivedirectory"}
+
+
+def _auth_exempt_path(path: str) -> bool:
+    return path == "/api/health" or path.startswith("/.auth")
+
+
+@app.middleware("http")
+async def enforce_entra_sso(request: Request, call_next):
+    if not _entra_auth_required() or _auth_exempt_path(request.url.path):
+        return await call_next(request)
+
+    if _entra_principal_present(request):
+        return await call_next(request)
+
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Microsoft Entra SSO is required for FleetPulse."},
+        )
+
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    login_url = f"/.auth/login/aad?post_login_redirect_uri={quote(target, safe='')}"
+    return RedirectResponse(login_url, status_code=302)
+
 
 # Resilient router loading — skip any router with import errors
 _ROUTERS = [
@@ -42,6 +87,7 @@ _ROUTERS = [
     ("control_tower", "/api/control-tower", ["Control Tower"]),
     ("operating_system", "/api/operating-system", ["K1 Operating System"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
+    ("driver_workforce", "/api/driver-workforce", ["Driver Workforce"]),
     ("hr_recruiting", "/api/hr-recruiting", ["HR Recruiting"]),
     ("hr_recruiting_powerbi", "/api/powerbi", ["Power BI"]),
     ("powerbi", "/api/powerbi", ["Power BI"]),

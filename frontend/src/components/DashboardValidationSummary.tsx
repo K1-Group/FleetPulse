@@ -10,6 +10,7 @@ interface Props {
 const sectionOrder = [
   'k1l_final_cpm',
   'fleet_overview',
+  'driver_workforce',
   'fleet_analytics',
   'fleet_map',
   'alerts',

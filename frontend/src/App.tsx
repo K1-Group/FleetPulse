@@ -28,7 +28,8 @@ import HrRecruitingWorklist from './components/HrRecruitingWorklist'
 import DashboardValidationSummary from './components/DashboardValidationSummary'
 import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
-import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking } from './hooks/useGeotab'
+import DriverWorkforce from './components/DriverWorkforce'
+import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -57,6 +58,7 @@ function getInitialTab(): AppTab {
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab)
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
   
   const dashboardActive = activeTab === 'dashboard'
   const validationActive = dashboardActive || activeTab === 'operating-system'
@@ -70,6 +72,7 @@ export default function App() {
   const monitorAlerts = useMonitorAlerts(dashboardActive)
   const monitorStatus = useMonitorStatus(dashboardActive)
   const trailerTracking = useControlTowerTrailerTracking(dashboardActive)
+  const driverWorkforce = useDriverWorkforce(dashboardActive)
 
   const triggerCheck = useCallback(() => {
     fetch('/api/monitor/check', { method: 'POST' }).then(() => {
@@ -306,6 +309,14 @@ export default function App() {
         </section>
 
         <section>
+          <DriverWorkforce
+            data={driverWorkforce.data}
+            loading={driverWorkforce.loading}
+            onSelectVehicle={setSelectedVehicleId}
+          />
+        </section>
+
+        <section>
           <DashboardValidationSummary validation={dashboardValidation.data} loading={dashboardValidation.loading} />
         </section>
 
@@ -322,7 +333,12 @@ export default function App() {
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.3, duration: 0.5 }}
             >
-              <FleetMap vehicles={vehicles.data} locations={locations.data} trailers={trailerTracking.data?.trailers || null} />
+              <FleetMap
+                vehicles={vehicles.data}
+                locations={locations.data}
+                trailers={trailerTracking.data?.trailers || null}
+                selectedVehicleId={selectedVehicleId}
+              />
             </motion.div>
           </div>
           <motion.div
@@ -346,6 +362,7 @@ export default function App() {
               status={monitorStatus.data}
               loading={monitorAlerts.loading}
               onTriggerCheck={triggerCheck}
+              driverWorkforce={driverWorkforce.data}
             />
           </motion.div>
         </section>
@@ -375,7 +392,11 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.8, duration: 0.5 }}
           >
-            <VehicleList vehicles={vehicles.data} loading={vehicles.loading} />
+            <VehicleList
+              vehicles={vehicles.data}
+              loading={vehicles.loading}
+              selectedVehicleId={selectedVehicleId}
+            />
           </motion.div>
         </section>
 

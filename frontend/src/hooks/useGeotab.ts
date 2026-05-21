@@ -10,6 +10,7 @@ import type {
   ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
   DashboardValidationResponse,
+  DriverWorkforceResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
   DriverScore,
@@ -108,6 +109,10 @@ export function useLocations(enabled = true) {
 
 export function useDashboardValidation(enabled = true) {
   return useFetch<DashboardValidationResponse>(`${API}/dashboard/validation`, 60000, enabled)
+}
+
+export function useDriverWorkforce(enabled = true) {
+  return useFetch<DriverWorkforceResponse>(`${API}/driver-workforce`, 30000, enabled)
 }
 
 export function useMonitorAlerts(enabled = true) {

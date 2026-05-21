@@ -25,6 +25,7 @@ from integrations.powerbi.execute_queries import (
     PowerBIExecuteQueriesConfig,
     execute_dax_query,
 )
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from integrations.xcelerator.review_orders_feed import (
     ReviewOrdersFeedConfig,
     load_review_orders_rows,
@@ -453,6 +454,28 @@ def _load_xcelerator_entity_rows(
     *,
     config: EntityMarginConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    if xcelerator_ceo_powerbi_only():
+        if not config.powerbi.configured:
+            return [], _source(
+                "not_configured",
+                xcelerator_source_label(),
+                message="Xcelerator CEO Dashboard Power BI auth is not configured.",
+            ), POWERBI_ENTITY_SOURCE_TYPE
+        try:
+            rows = _load_powerbi_entity_rows(start, end, config=config.powerbi)
+            return rows, _source(
+                "healthy" if rows else "awaiting_feed",
+                xcelerator_source_label(),
+                message="" if rows else "Xcelerator CEO Dashboard semantic model returned no rows.",
+                row_count=len(rows),
+            ), POWERBI_ENTITY_SOURCE_TYPE
+        except Exception as exc:
+            return [], _source(
+                "unavailable",
+                xcelerator_source_label(),
+                message=f"{type(exc).__name__}: {exc}; Xcelerator fallback sources are disabled.",
+            ), POWERBI_ENTITY_SOURCE_TYPE
+
     if _prefer_review_orders_feed() and config.review_orders_feed.configured:
         rows, source, source_type = _load_review_orders_entity_rows(config=config.review_orders_feed)
         if rows or source.get("status") != "awaiting_feed":

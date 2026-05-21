@@ -8,15 +8,19 @@ and driver-pay facts.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
+from configs.xcelerator_source import xcelerator_refresh_seconds
+
 
 DEFAULT_XCELERATOR_CEO_WORKSPACE_ID = "b801f80d-5303-4121-abd1-1163639ef58b"
 DEFAULT_XCELERATOR_CEO_DATASET_ID = "891e7334-af84-4889-ba7f-ae89864777c0"
 POWERBI_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
+_QUERY_CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,12 @@ def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[d
     if not config.configured:
         raise RuntimeError("powerbi_execute_queries_not_configured")
 
+    cache_key = (config.workspace_id, config.dataset_id, query)
+    now = time.time()
+    cached = _QUERY_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return list(cached[1])
+
     token = _get_access_token(config)
     url = (
         "https://api.powerbi.com/v1.0/myorg/groups/"
@@ -132,4 +142,12 @@ def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[d
     if not tables:
         return []
     rows = (tables[0] or {}).get("rows") or []
-    return [row for row in rows if isinstance(row, dict)]
+    normalized = [row for row in rows if isinstance(row, dict)]
+    _QUERY_CACHE[cache_key] = (now + xcelerator_refresh_seconds(), normalized)
+    return list(normalized)
+
+
+def clear_execute_queries_cache() -> None:
+    """Clear cached Power BI semantic-model results."""
+
+    _QUERY_CACHE.clear()
