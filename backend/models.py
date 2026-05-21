@@ -192,6 +192,8 @@ class MaintenancePrediction(BaseModel):
     upcoming_services: list[UpcomingService]
     has_active_fault_codes: bool = False
     active_fault_count: int = 0
+    ai_health_score: float = Field(default=100, ge=0, le=100)
+    ai_decision: Optional["MaintenanceDecisionPlan"] = None
 
 
 class MaintenanceHistoryItem(BaseModel):
@@ -209,6 +211,29 @@ class FaultCode(BaseModel):
     severity: str
 
 
+class MaintenanceFaultInsight(BaseModel):
+    code: str
+    description: str
+    count: int = 1
+    severity: str = "low"
+    component: Optional[str] = None
+    last_seen: Optional[datetime] = None
+
+
+class MaintenanceDecisionPlan(BaseModel):
+    decision: str
+    urgency: UrgencyLevel
+    risk_score: int = Field(ge=0, le=100)
+    confidence: float = Field(ge=0, le=1)
+    predicted_issue: str
+    recommended_action: str
+    execution_plan: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    fault_insights: list[MaintenanceFaultInsight] = Field(default_factory=list)
+    source_authority: str = "K1 Logistics Inc / Geotab"
+    automation_mode: str = "ai_recommends_human_executes"
+
+
 class VehicleMaintenanceDetail(BaseModel):
     vehicle_id: str
     vehicle_name: str
@@ -218,6 +243,8 @@ class VehicleMaintenanceDetail(BaseModel):
     maintenance_history: list[MaintenanceHistoryItem]
     active_fault_codes: list[FaultCode]
     last_service_date: Optional[datetime] = None
+    ai_health_score: float = Field(default=100, ge=0, le=100)
+    ai_decision: Optional[MaintenanceDecisionPlan] = None
 
 
 class MaintenanceCost(BaseModel):

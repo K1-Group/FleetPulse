@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { useState } from 'react'
-import { Calendar, Clock, DollarSign, AlertTriangle, CheckCircle, XCircle, Wrench, TrendingUp } from 'lucide-react'
-import { useMaintenancePredictions, useMaintenanceCosts, useUrgentMaintenance } from '../hooks/useGeotab'
+import { Calendar, Clock, DollarSign, AlertTriangle, CheckCircle, XCircle, Wrench, TrendingUp, BrainCircuit, ClipboardCheck, ShieldCheck, Gauge } from 'lucide-react'
+import { useMaintenancePredictions, useMaintenanceCosts, useUrgentMaintenance, useMaintenanceIntelligence } from '../hooks/useGeotab'
 
 interface MaintenanceService {
   service_type: string
@@ -19,6 +19,31 @@ interface MaintenancePrediction {
   upcoming_services: MaintenanceService[]
   has_active_fault_codes: boolean
   active_fault_count: number
+  ai_health_score?: number
+  ai_decision?: MaintenanceDecision | null
+}
+
+interface MaintenanceDecision {
+  vehicle_id: string
+  vehicle_name: string
+  decision: string
+  urgency: 'low' | 'medium' | 'high' | 'critical'
+  risk_score: number
+  health_score: number
+  confidence: number
+  predicted_issue: string
+  recommended_action: string
+  execution_plan: string[]
+  evidence: string[]
+  fault_insights: Array<{
+    code: string
+    description: string
+    count: number
+    severity: string
+    component?: string
+  }>
+  source_authority: string
+  automation_mode: string
 }
 
 interface UrgentAlert {
@@ -69,11 +94,34 @@ const formatDate = (dateStr: string) => {
   }
 }
 
+const formatDecision = (decision: string) => {
+  return decision.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
+
+const getRiskColor = (score: number) => {
+  if (score >= 85) return 'text-red-300 bg-red-500/10 border-red-400/25'
+  if (score >= 70) return 'text-orange-300 bg-orange-500/10 border-orange-400/25'
+  if (score >= 50) return 'text-amber-300 bg-amber-500/10 border-amber-400/25'
+  return 'text-emerald-300 bg-emerald-500/10 border-emerald-400/25'
+}
+
+const getDecisionTone = (urgency: string) => {
+  switch (urgency) {
+    case 'critical': return 'border-red-500/35 bg-red-950/20'
+    case 'high': return 'border-orange-500/35 bg-orange-950/20'
+    case 'medium': return 'border-amber-500/30 bg-amber-950/15'
+    default: return 'border-emerald-500/20 bg-emerald-950/10'
+  }
+}
+
 export default function MaintenancePredictor() {
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null)
   const predictions = useMaintenancePredictions()
+  const intelligence = useMaintenanceIntelligence()
   const costs = useMaintenanceCosts()
   const urgentAlerts = useUrgentMaintenance()
+  const decisions = (intelligence.data?.decisions || []) as MaintenanceDecision[]
+  const intelligenceSummary = intelligence.data?.summary || {}
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -121,6 +169,127 @@ export default function MaintenancePredictor() {
           </h1>
           <p className="text-gray-400">AI-powered fleet maintenance forecasting</p>
         </div>
+      </motion.div>
+
+      {/* AI Decision Layer */}
+      <motion.div variants={itemVariants} className="rounded-xl border border-cyan-500/20 bg-cyan-950/10 p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-500/10">
+              <BrainCircuit className="h-5 w-5 text-cyan-200" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">AI Diagnostic Decision Layer</h2>
+              <p className="mt-1 max-w-3xl text-sm text-gray-400">
+                Geotab fault codes are scored into a maintenance execution queue. FleetPulse recommends; the maintenance team executes and confirms outcomes.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {intelligence.data?.automation_mode || 'ai_recommends_human_executes'}
+            </span>
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+              Previous {intelligence.data?.period_days || 30} days
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            {
+              label: 'Codes Read',
+              value: intelligence.loading ? 'Pending' : (intelligenceSummary.total_fault_rows ?? 0).toLocaleString(),
+              icon: Gauge,
+              color: 'text-cyan-300',
+            },
+            {
+              label: 'Assets Scored',
+              value: intelligence.loading ? 'Pending' : (intelligenceSummary.vehicles_with_faults ?? 0).toLocaleString(),
+              icon: BrainCircuit,
+              color: 'text-blue-300',
+            },
+            {
+              label: 'Critical / High',
+              value: intelligence.loading ? 'Pending' : `${intelligenceSummary.critical ?? 0} / ${intelligenceSummary.high ?? 0}`,
+              icon: AlertTriangle,
+              color: 'text-red-300',
+            },
+            {
+              label: 'Execution Queue',
+              value: intelligence.loading ? 'Pending' : decisions.length.toLocaleString(),
+              icon: ClipboardCheck,
+              color: 'text-emerald-300',
+            },
+          ].map(({ label, value, icon: Icon, color }) => (
+            <div key={label} className="rounded-lg border border-white/10 bg-gray-900/50 p-4">
+              <div className="mb-2 flex items-center gap-2 text-xs text-gray-400">
+                <Icon className={`h-4 w-4 ${color}`} />
+                {label}
+              </div>
+              <p className="text-2xl font-semibold text-white" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
+                {value}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {decisions.length > 0 && (
+          <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {decisions.slice(0, 6).map(decision => (
+              <div
+                key={`${decision.vehicle_id}-${decision.decision}`}
+                className={`rounded-xl border p-4 ${getDecisionTone(decision.urgency)}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-semibold text-white">{decision.vehicle_name}</h3>
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${getRiskColor(decision.risk_score)}`}>
+                        Risk {decision.risk_score}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-300">{decision.predicted_issue}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs uppercase tracking-wide text-gray-500">Confidence</p>
+                    <p className="text-sm font-semibold text-white">{Math.round(decision.confidence * 100)}%</p>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-lg border border-white/10 bg-black/15 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{formatDecision(decision.decision)}</p>
+                  <p className="mt-1 text-sm text-gray-200">{decision.recommended_action}</p>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Human Plan</p>
+                    <ul className="space-y-1 text-xs text-gray-300">
+                      {decision.execution_plan.slice(0, 3).map(step => (
+                        <li key={step} className="flex gap-2">
+                          <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                          <span>{step}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Evidence</p>
+                    <div className="space-y-1 text-xs text-gray-400">
+                      {decision.fault_insights.slice(0, 3).map(fault => (
+                        <div key={`${decision.vehicle_id}-${fault.code}`} className="flex items-center justify-between gap-2">
+                          <span className="truncate font-mono text-gray-200">{fault.code}</span>
+                          <span className="shrink-0 text-gray-500">x{fault.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </motion.div>
 
       {/* Cost Forecast Cards */}
@@ -227,6 +396,7 @@ export default function MaintenancePredictor() {
               const urgencyOrder = { critical: 4, high: 3, medium: 2, low: 1 }
               return urgencyOrder[current.urgency as keyof typeof urgencyOrder] > urgencyOrder[prev.urgency as keyof typeof urgencyOrder] ? current : prev
             })
+            const aiRiskScore = prediction.ai_decision?.risk_score ?? Math.max(0, 100 - (prediction.ai_health_score ?? 100))
 
             return (
               <motion.div
@@ -244,6 +414,11 @@ export default function MaintenancePredictor() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {prediction.ai_decision && (
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${getRiskColor(aiRiskScore)}`}>
+                        AI {aiRiskScore}
+                      </span>
+                    )}
                     {getUrgencyIcon(mostUrgentService.urgency)}
                     {prediction.has_active_fault_codes && (
                       <div className="flex items-center gap-1 text-red-400 text-xs">
@@ -257,6 +432,16 @@ export default function MaintenancePredictor() {
                 {/* Status Bar */}
                 <div className={`w-full h-2 rounded-full mb-4 bg-gradient-to-r ${getUrgencyColor(mostUrgentService.urgency)}`}>
                 </div>
+
+                {prediction.ai_decision && (
+                  <div className="mb-4 rounded-lg border border-cyan-400/15 bg-cyan-950/10 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                      {formatDecision(prediction.ai_decision.decision)}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-300">{prediction.ai_decision.predicted_issue}</p>
+                    <p className="mt-1 text-xs text-gray-500">{prediction.ai_decision.recommended_action}</p>
+                  </div>
+                )}
 
                 {/* Upcoming Services */}
                 <div className="space-y-3">
