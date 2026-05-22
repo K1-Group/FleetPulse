@@ -29,7 +29,7 @@ import DashboardValidationSummary from './components/DashboardValidationSummary'
 import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
-import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis } from './hooks/useGeotab'
+import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -74,6 +74,7 @@ export default function App() {
   const trailerTracking = useControlTowerTrailerTracking(dashboardActive)
   const driverWorkforce = useDriverWorkforce(dashboardActive)
   const utilization7d = useDataConnectorVehicleKpis(7, dashboardActive)
+  const safety7d = useDataConnectorSafetyScores(7, dashboardActive)
 
   const triggerCheck = useCallback(() => {
     fetch('/api/monitor/check', { method: 'POST' }).then(() => {
@@ -311,6 +312,9 @@ export default function App() {
             loading={overview.loading}
             safetyScores={safety.data}
             safetyLoading={safety.loading}
+            safety7d={safety7d.data}
+            safety7dError={safety7d.error}
+            safety7dLoading={safety7d.loading}
             utilization7d={utilization7d.data}
             utilization7dError={utilization7d.error}
             utilization7dLoading={utilization7d.loading}

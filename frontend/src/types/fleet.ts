@@ -205,6 +205,26 @@ export interface VehicleSafetyScore {
   event_count: number
 }
 
+export interface DataConnectorSafetySummary {
+  safety_rank_pct: number | null
+  latest_date: string | null
+  fleet_row_count: number
+  vehicle_score_count: number
+  total_collision_count: number | null
+  predicted_collisions_per_1m_miles: number | null
+}
+
+export interface DataConnectorSafetyResponse {
+  fleet_daily: Record<string, unknown>[]
+  vehicle_scores: Record<string, unknown>[]
+  summary: DataConnectorSafetySummary
+  period_days: number
+  feed_status?: string
+  source_authority?: string
+  projection_mode?: 'read_only'
+  message?: string
+}
+
 export interface Badge {
   id: string
   name: string

@@ -9,6 +9,7 @@ import type {
   ControlTowerSeatKpiCoverageResponse,
   ControlTowerTrailerTrackingResponse,
   ControlTowerTrailersResponse,
+  DataConnectorSafetyResponse,
   DataConnectorVehicleKpiResponse,
   DashboardValidationResponse,
   DepartmentCallAnalysisDataset,
@@ -117,6 +118,15 @@ export function useDashboardValidation(enabled = true) {
 export function useDataConnectorVehicleKpis(days = 7, enabled = true) {
   return useFetch<DataConnectorVehicleKpiResponse>(
     `${API}/data-connector/vehicle-kpis?days=${days}`,
+    300000,
+    enabled,
+    25000,
+  )
+}
+
+export function useDataConnectorSafetyScores(days = 7, enabled = true) {
+  return useFetch<DataConnectorSafetyResponse>(
+    `${API}/data-connector/safety-scores?days=${days}`,
     300000,
     enabled,
     25000,

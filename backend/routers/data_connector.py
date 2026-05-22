@@ -482,6 +482,18 @@ def _number(row: dict, *names: str) -> float:
     return 0.0
 
 
+def _optional_number(row: dict, *names: str) -> float | None:
+    for name in names:
+        value = row.get(name)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _text(row: dict, *names: str) -> str | None:
     for name in names:
         value = row.get(name)
@@ -634,6 +646,57 @@ def _fault_date(row: dict) -> str | None:
     return value[:10] if value else None
 
 
+def _safety_date(row: dict) -> str | None:
+    value = _text(row, "Date", "Day", "Local_Date")
+    return value[:10] if value else None
+
+
+def _rank_percent(value: float | None) -> float | None:
+    if value is None:
+        return None
+    percent = value * 100 if 0 <= value <= 1 else value
+    return round(percent, 1)
+
+
+def _latest_safety_row(rows: list[dict]) -> dict | None:
+    usable = [row for row in rows if _safety_date(row)]
+    if not usable:
+        return rows[-1] if rows else None
+    return max(usable, key=lambda row: _safety_date(row) or "")
+
+
+def _safety_summary(fleet_rows: list[dict], vehicle_rows: list[dict]) -> dict[str, Any]:
+    latest = _latest_safety_row(fleet_rows)
+    safety_rank_pct = None
+    predicted_collisions = None
+    collision_count = None
+    latest_date = None
+    if latest:
+        latest_date = _safety_date(latest)
+        safety_rank_pct = _rank_percent(
+            _optional_number(latest, "Safety_Rank", "SafetyRank", "SafetyScore", "Safety_Score")
+        )
+        predicted_collisions = _optional_number(
+            latest,
+            "PredictedCollisionsPer1MillionM",
+            "PredictedCollisionsPer1MillionMi",
+            "PredictedCollisionsPer1MillionMiles",
+        )
+        raw_collision_count = _optional_number(latest, "TotalCollisionCount_Daily", "CollisionCount")
+        collision_count = int(raw_collision_count) if raw_collision_count is not None else None
+
+    return {
+        "safety_rank_pct": safety_rank_pct,
+        "latest_date": latest_date,
+        "fleet_row_count": len(fleet_rows),
+        "vehicle_score_count": len(vehicle_rows),
+        "total_collision_count": collision_count,
+        "predicted_collisions_per_1m_miles": (
+            round(predicted_collisions, 3) if predicted_collisions is not None else None
+        ),
+    }
+
+
 def _annotate_fault_rows(rows: list[dict], vehicle_names: dict[str, str] | None = None) -> list[dict]:
     vehicle_names = vehicle_names or {}
     annotated: list[dict] = []
@@ -760,14 +823,18 @@ async def safety_scores(days: int = Query(14, ge=1, le=90)):
         return {
             "fleet_daily": [],
             "vehicle_scores": [],
+            "summary": _safety_summary([], []),
             **_degraded_source_payload(days, exc),
         }
 
     return _set_data_connector_cached(cache_key, {
         "fleet_daily": fleet_rows[:30],
         "vehicle_scores": vehicle_rows[:100],
+        "summary": _safety_summary(fleet_rows, vehicle_rows),
         "period_days": days,
         "feed_status": "ok",
+        "source_authority": "K1 Logistics Inc / Geotab Data Connector",
+        "projection_mode": "read_only",
     })
 
 

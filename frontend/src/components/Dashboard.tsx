@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type {
+  DataConnectorSafetyResponse,
   DataConnectorVehicleKpiResponse,
   DashboardValidationItem,
   DashboardValidationResponse,
@@ -77,6 +78,9 @@ interface Props {
   loading: boolean
   safetyScores?: VehicleSafetyScore[] | null
   safetyLoading?: boolean
+  safety7d?: DataConnectorSafetyResponse | null
+  safety7dError?: string | null
+  safety7dLoading?: boolean
   utilization7d?: DataConnectorVehicleKpiResponse | null
   utilization7dError?: string | null
   utilization7dLoading?: boolean
@@ -232,12 +236,6 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
-function averageSafetyScore(scores: VehicleSafetyScore[] | null | undefined) {
-  const values = (scores || []).map(score => asNumber(score.score)).filter((score): score is number => score !== null)
-  if (!values.length) return null
-  return values.reduce((sum, score) => sum + score, 0) / values.length
-}
-
 function overviewKpi(
   validation: DashboardValidationResponse | null | undefined,
   loading: boolean,
@@ -277,19 +275,41 @@ function utilizationStatus(
   return asNumber(data.summary?.utilization_pct) !== null ? 'verified' : 'no-data'
 }
 
+function dataConnectorSafetyStatus(
+  data: DataConnectorSafetyResponse | null | undefined,
+  loading: boolean,
+  error?: string | null,
+): KpiStatus {
+  if (loading) return 'pending'
+  if (error) return 'error'
+  if (!data) return 'no-data'
+  if (data.feed_status === 'degraded' || data.feed_status === 'table_unavailable') return 'error'
+  if (data.feed_status === 'empty') return 'no-data'
+  return asNumber(data.summary?.safety_rank_pct) !== null ? 'verified' : 'no-data'
+}
+
+function safetyTone(value: number | null): KpiTone {
+  if (value === null) return 'neutral'
+  if (value < 50) return 'danger'
+  if (value < 75) return 'warning'
+  return 'success'
+}
+
 function buildCards(
   overview: FleetOverview | null,
   loading: boolean,
   validation: DashboardValidationResponse | null | undefined,
-  safetyScores: VehicleSafetyScore[] | null | undefined,
-  safetyLoading: boolean,
+  safety7d: DataConnectorSafetyResponse | null | undefined,
+  safety7dLoading: boolean,
+  safety7dError: string | null | undefined,
   utilization7d: DataConnectorVehicleKpiResponse | null | undefined,
   utilization7dLoading: boolean,
   utilization7dError?: string | null,
 ): KpiCard[] {
-  const safetyItem = validation?.sections?.safety_scorecard || null
-  const safetyValue = averageSafetyScore(safetyScores)
-  const safetyStatus = mapValidationStatus(safetyItem, safetyValue !== null, safetyLoading)
+  const safetyValue = asNumber(safety7d?.summary?.safety_rank_pct)
+  const safetyStatus = dataConnectorSafetyStatus(safety7d, safety7dLoading, safety7dError)
+  const safetyPeriod = safety7d?.period_days || 7
+  const safetyLatestDate = safety7d?.summary?.latest_date
   const utilization7dValue = asNumber(utilization7d?.summary?.utilization_pct)
   const utilization7dPeriod = utilization7d?.period_days || 7
   const utilization7dStatus = utilizationStatus(utilization7d, utilization7dLoading, utilization7dError)
@@ -450,14 +470,17 @@ function buildCards(
       icon: 'shield',
       id: 'safety-percent',
       label: 'Safety %',
-      source: safetyItem?.source_authority || 'Geotab safety',
+      source: safety7d?.source_authority || 'Geotab Data Connector',
       status: safetyStatus,
-      stateLabel: safetyItem?.status ? validationStateLabels[safetyItem.status] : undefined,
-      tone: 'success',
+      stateLabel: safetyStatus === 'no-data' ? 'No Data' : undefined,
+      tone: safetyTone(safetyValue),
       unit: '%',
-      updatedAt: safetyItem?.checked_at || validation?.generated_at,
+      updatedAt: safetyLatestDate || validation?.generated_at,
       value: safetyValue,
       decimals: 1,
+      delta: safetyLatestDate
+        ? `Latest ${safetyLatestDate} · previous ${safetyPeriod} days`
+        : safety7d?.message || `Previous ${safetyPeriod} days`,
     },
     placeholderKpi({
       group: 'Safety',
@@ -602,6 +625,9 @@ export default function Dashboard({
   loading,
   safetyScores,
   safetyLoading = false,
+  safety7d,
+  safety7dError,
+  safety7dLoading = false,
   utilization7d,
   utilization7dError,
   utilization7dLoading = false,
@@ -612,13 +638,14 @@ export default function Dashboard({
       overview,
       loading,
       validation,
-      safetyScores,
-      safetyLoading,
+      safety7d,
+      safety7dLoading,
+      safety7dError,
       utilization7d,
       utilization7dLoading,
       utilization7dError,
     ),
-    [loading, overview, safetyLoading, safetyScores, utilization7d, utilization7dError, utilization7dLoading, validation],
+    [loading, overview, safety7d, safety7dError, safety7dLoading, utilization7d, utilization7dError, utilization7dLoading, validation],
   )
 
   return (

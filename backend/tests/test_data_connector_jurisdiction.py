@@ -420,8 +420,48 @@ def test_safety_scores_returns_degraded_payload_on_timeout(monkeypatch):
 
     assert result["fleet_daily"] == []
     assert result["vehicle_scores"] == []
+    assert result["summary"]["safety_rank_pct"] is None
     assert result["feed_status"] == "degraded"
     assert "timeout" in result["message"].lower()
+
+
+def test_safety_scores_returns_latest_fleet_rank_summary(monkeypatch):
+    mod = _import_router_fresh()
+
+    async def _rows(table, *_args, **_kwargs):
+        if table == "FleetSafety_Daily":
+            return [
+                {
+                    "Date": "2026-05-18",
+                    "Safety_Rank": 0.37,
+                    "TotalCollisionCount_Daily": 1,
+                    "PredictedCollisionsPer1MillionM": 0.8979829,
+                },
+                {
+                    "Date": "2026-05-19",
+                    "Safety_Rank": 0.29,
+                    "TotalCollisionCount_Daily": 0,
+                    "PredictedCollisionsPer1MillionM": 0.9631474,
+                },
+            ]
+        if table == "VehicleSafety_Daily":
+            return [{"Date": "2026-05-19", "DeviceId": "b11A", "Safety_Rank": 0.092}]
+        return []
+
+    monkeypatch.setattr(mod, "_odata_get", _rows)
+
+    import asyncio
+
+    result = asyncio.run(mod.safety_scores(days=7))
+
+    assert result["feed_status"] == "ok"
+    assert result["source_authority"] == "K1 Logistics Inc / Geotab Data Connector"
+    assert result["summary"]["safety_rank_pct"] == 29.0
+    assert result["summary"]["latest_date"] == "2026-05-19"
+    assert result["summary"]["fleet_row_count"] == 2
+    assert result["summary"]["vehicle_score_count"] == 1
+    assert result["summary"]["total_collision_count"] == 0
+    assert result["summary"]["predicted_collisions_per_1m_miles"] == 0.963
 
 
 @pytest.mark.parametrize("route_name", ["vehicle_kpis", "safety_scores", "fault_trends"])
