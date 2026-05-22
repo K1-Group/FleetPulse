@@ -24,6 +24,7 @@ DEFAULT_EXCLUDED_DEVICE_GROUP_IDS = "GroupTrailerId"
 DEFAULT_STATUS_STALE_HOURS = 24
 DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_CACHE_FALLBACK_SECONDS = 300
+DEFAULT_CACHE_REFRESH_WAIT_SECONDS = 30.0
 EARTH_RADIUS_MILES = 3958.7613
 
 _CACHE: dict[str, tuple[float, Any]] = {}
@@ -66,6 +67,10 @@ def _cache_fallback_seconds() -> int:
     return max(_cache_ttl_seconds(), _int_env("FLEETPULSE_CACHE_FALLBACK_SECONDS", DEFAULT_CACHE_FALLBACK_SECONDS))
 
 
+def _cache_refresh_wait_seconds() -> float:
+    return max(0.0, _float_env("FLEETPULSE_CACHE_REFRESH_WAIT_SECONDS", DEFAULT_CACHE_REFRESH_WAIT_SECONDS))
+
+
 def _cache_get(key: str, max_age_seconds: int) -> Any | None:
     if max_age_seconds <= 0:
         return None
@@ -80,6 +85,16 @@ def _cache_get(key: str, max_age_seconds: int) -> Any | None:
 
 def _cache_set(key: str, value: Any) -> None:
     _CACHE[key] = (time.time(), deepcopy(value))
+
+
+def _cache_wait_for_value(key: str, max_wait_seconds: float) -> Any | None:
+    deadline = time.time() + max_wait_seconds
+    while time.time() < deadline:
+        cached = _cache_get(key, _cache_fallback_seconds())
+        if cached is not None:
+            return cached
+        time.sleep(0.25)
+    return None
 
 
 def _acquire_cache_lock(key: str) -> threading.Lock | None:
@@ -552,7 +567,10 @@ def get_vehicles() -> list[Vehicle]:
     lock = _acquire_cache_lock("vehicles")
     if lock is None:
         fallback = _cache_get("vehicles", _cache_fallback_seconds())
-        return fallback if fallback is not None else []
+        if fallback is not None:
+            return fallback
+        waited = _cache_wait_for_value("vehicles", _cache_refresh_wait_seconds())
+        return waited if waited is not None else []
 
     try:
         cached = _cache_get("vehicles", _cache_ttl_seconds())
