@@ -16,9 +16,11 @@ import {
   ResponsiveContainer,
   Legend
 } from 'recharts'
+import type { LocationStats } from '../types/fleet'
 
 interface Props {
   loading?: boolean
+  locations?: LocationStats[] | null
 }
 
 const fuelEfficiencyData = [
@@ -29,17 +31,6 @@ const fuelEfficiencyData = [
   { date: 'Fri', efficiency: 7.9, trend: 8.0 },
   { date: 'Sat', efficiency: 8.3, trend: 8.2 },
   { date: 'Sun', efficiency: 8.6, trend: 8.4 },
-]
-
-const safetyScoreData = [
-  { location: 'Justin TX', score: 92, incidents: 2 },
-  { location: 'Fort Worth', score: 87, incidents: 4 },
-  { location: 'Fort Worth', score: 94, incidents: 1 },
-  { location: 'OKC', score: 89, incidents: 3 },
-  { location: 'Kansas City', score: 91, incidents: 2 },
-  { location: 'OKC', score: 85, incidents: 5 },
-  { location: 'Fort Worth', score: 93, incidents: 1 },
-  { location: 'Justin TX', score: 88, incidents: 4 },
 ]
 
 const utilizationData = [
@@ -99,7 +90,22 @@ const chartVariants = {
   }
 }
 
-export default function FleetAnalytics({ loading = false }: Props) {
+function hubLabel(name: string) {
+  return name
+    .replace(/\s+(Yard|Terminal|Hub)$/i, '')
+    .replace('Kansas City', 'KC')
+    .replace('San Antonio', 'SA')
+    .replace('Little Rock', 'LR')
+    .replace('Fort Worth', 'FTW')
+}
+
+export default function FleetAnalytics({ loading = false, locations = null }: Props) {
+  const hubAssetData = (locations || []).map(location => ({
+    location: hubLabel(location.name),
+    vehicles: location.vehicle_count,
+    active: location.active,
+  }))
+
   if (loading) {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -167,7 +173,7 @@ export default function FleetAnalytics({ loading = false }: Props) {
           </ResponsiveContainer>
         </motion.div>
 
-        {/* Safety Score Distribution */}
+        {/* Hub Asset Coverage */}
         <motion.div
           variants={chartVariants}
           initial="hidden"
@@ -176,27 +182,35 @@ export default function FleetAnalytics({ loading = false }: Props) {
           className="bg-gray-900/70 backdrop-blur-sm rounded-xl p-6 border border-gray-800 hover:border-gray-700 transition-colors duration-300"
         >
           <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
-            🛡️ Safety Scores by Location
+            📍 Assets by Hub
             <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded-full">
-              Live
+              Geotab
             </span>
           </h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={safetyScoreData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-              <XAxis dataKey="location" stroke="#9ca3af" fontSize={10} angle={-45} textAnchor="end" height={60} />
-              <YAxis stroke="#9ca3af" fontSize={12} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="score" name="Score" radius={[4, 4, 0, 0]}>
-                {safetyScoreData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-${index}`} 
-                    fill={entry.score >= 90 ? '#10b981' : entry.score >= 85 ? '#f59e0b' : '#ef4444'} 
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {hubAssetData.length ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={hubAssetData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+                <XAxis dataKey="location" stroke="#9ca3af" fontSize={10} angle={-45} textAnchor="end" height={60} />
+                <YAxis stroke="#9ca3af" fontSize={12} allowDecimals={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend />
+                <Bar dataKey="vehicles" name="Vehicles" radius={[4, 4, 0, 0]}>
+                  {hubAssetData.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={entry.vehicles > 0 ? '#38bdf8' : '#475569'}
+                    />
+                  ))}
+                </Bar>
+                <Bar dataKey="active" name="Active" fill="#10b981" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed border-gray-800 text-sm text-gray-500">
+              No hub data returned
+            </div>
+          )}
         </motion.div>
 
         {/* Fleet Utilization Over Time */}

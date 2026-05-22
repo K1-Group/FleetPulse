@@ -306,7 +306,7 @@ export default function App() {
 
         {/* Fleet Analytics */}
         <section>
-          <FleetAnalytics loading={overview.loading} />
+          <FleetAnalytics loading={overview.loading} locations={locations.data} />
         </section>
 
         {/* Map + Alerts row */}
