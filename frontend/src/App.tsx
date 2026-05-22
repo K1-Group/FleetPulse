@@ -12,6 +12,7 @@ import AlertFeed from './components/AlertFeed'
 import LocationCard from './components/LocationCard'
 import AgenticMonitor from './components/AgenticMonitor'
 import MaintenancePredictor from './components/MaintenancePredictor'
+import MaintenanceKpiDashboard from './components/MaintenanceKpiDashboard'
 import ThemeToggle from './components/ThemeToggle'
 import DriverCoaching from './components/DriverCoaching'
 import RouteReplay from './components/RouteReplay'
@@ -445,7 +446,10 @@ export default function App() {
         )}
 
         {activeTab === 'maintenance' && (
-          <MaintenancePredictor />
+          <div className="space-y-6">
+            <MaintenanceKpiDashboard />
+            <MaintenancePredictor />
+          </div>
         )}
 
         {activeTab === 'control-tower' && (
