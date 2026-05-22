@@ -46,7 +46,7 @@ def _entra_principal_present(request: Request) -> bool:
 
 
 def _auth_exempt_path(path: str) -> bool:
-    return path == "/api/health" or path.startswith("/.auth")
+    return path in {"/api/health", "/api/auth/session"} or path.startswith("/.auth")
 
 
 @app.middleware("http")
@@ -85,6 +85,7 @@ async def add_dashboard_cache_headers(request: Request, call_next):
 
 # Resilient router loading — skip any router with import errors
 _ROUTERS = [
+    ("auth", "/api/auth", ["Authentication"]),
     ("dashboard", "/api/dashboard", ["Dashboard"]),
     ("vehicles", "/api/vehicles", ["Vehicles"]),
     ("safety", "/api/safety", ["Safety"]),

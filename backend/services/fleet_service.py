@@ -26,12 +26,16 @@ DEFAULT_CACHE_FALLBACK_SECONDS = 300
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_LOCKS: dict[str, threading.Lock] = {}
 
-# K1 Logistics / K1 Group locations (FTW, Justin, OKC, Kansas City)
+# K1 Logistics / K1 Group configured operating hubs.
 LOCATIONS = [
     {"name": "Fort Worth Yard", "address": "4200 Gravel Dr, Fort Worth, TX 76118", "lat": 32.8012, "lon": -97.2197},
     {"name": "Justin Terminal", "address": "17176 FM156, Justin, TX 76247", "lat": 33.0848, "lon": -97.2961},
     {"name": "OKC Terminal", "address": "4012 S Purdue Ave, Oklahoma City, OK 73179", "lat": 35.3922, "lon": -97.5900},
     {"name": "Kansas City Terminal", "address": "11200 N Congress Ave, Kansas City, MO 64153", "lat": 39.2967, "lon": -94.6680},
+    {"name": "Austin Hub", "address": "Austin, TX", "lat": 30.2672, "lon": -97.7431},
+    {"name": "San Antonio Hub", "address": "San Antonio, TX", "lat": 29.4241, "lon": -98.4936},
+    {"name": "Atlanta Hub", "address": "Atlanta, GA", "lat": 33.7490, "lon": -84.3880},
+    {"name": "Little Rock Hub", "address": "Little Rock, AR", "lat": 34.7465, "lon": -92.2896},
 ]
 
 

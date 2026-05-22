@@ -5,7 +5,7 @@ continuously analyzes fleet telemetry, detects anomalies, identifies patterns,
 and generates proactive alerts with severity levels and recommendations.
 
 The monitor runs periodic checks and maintains an in-memory alert history
-with pattern tracking across the 4 K1 Logistics locations (FTW, Justin, OKC, Kansas City).
+with pattern tracking across the configured K1 Logistics operating hubs.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any
 
 from geotab_client import GeotabClient
 from models import Alert, AlertSeverity
+from services.fleet_service import LOCATIONS
 
 # ── In-memory state ────────────────────────────────────────────
 _alert_history: list[Alert] = []
@@ -28,16 +29,16 @@ _pattern_data: dict[str, Any] = {}
 _monitor_running = False
 _monitor_thread: threading.Thread | None = None
 
-# K1 Logistics location centers for geofence checks
-LOCATION_CENTERS = {
-    "Fort Worth Yard": (32.8012, -97.2197),
-    "Justin Terminal": (33.0848, -97.2961),
-    "OKC Terminal": (35.3922, -97.5900),
-    "Kansas City Terminal": (39.2967, -94.6680),
-    }
+# K1 Logistics location centers for geofence checks.
+LOCATION_CENTERS = {location["name"]: (location["lat"], location["lon"]) for location in LOCATIONS}
 
-# K1 operations bounding box (DFW to Kansas City, rough)
-OPS_BOUNDS = {"lat_min": 32.00, "lat_max": 40.00, "lon_min": -98.00, "lon_max": -94.00}
+# K1 operations bounding box around configured operating hubs.
+OPS_BOUNDS = {
+    "lat_min": min(lat for lat, _lon in LOCATION_CENTERS.values()) - 0.5,
+    "lat_max": max(lat for lat, _lon in LOCATION_CENTERS.values()) + 0.5,
+    "lon_min": min(lon for _lat, lon in LOCATION_CENTERS.values()) - 0.5,
+    "lon_max": max(lon for _lat, lon in LOCATION_CENTERS.values()) + 0.5,
+}
 
 # K1 speeding threshold: 6 mph (~10 km/h) over posted speed limit
 SPEEDING_THRESHOLD_MPH = 6

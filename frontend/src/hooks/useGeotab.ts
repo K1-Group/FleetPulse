@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type {
   Alert,
+  AuthSession,
   ControlTowerAgentsResponse,
   ControlTowerAttentionResponse,
   ControlTowerCodexResponse,
@@ -32,6 +33,11 @@ import type {
 } from '../types/fleet'
 
 const API = '/api'
+
+function currentReturnTo() {
+  if (typeof window === 'undefined') return '/'
+  return `${window.location.pathname}${window.location.search}${window.location.hash || ''}`
+}
 
 // Fetch with timeout to prevent infinite loading
 const fetchWithTimeout = async (url: string, timeout = 10000) => {
@@ -89,6 +95,11 @@ function useFetch<T>(url: string, interval = 30000, enabled = true, timeout = 10
 
 export function useFleetOverview(enabled = true) {
   return useFetch<FleetOverview>(`${API}/dashboard/overview`, 30000, enabled)
+}
+
+export function useAuthSession(enabled = true) {
+  const returnTo = encodeURIComponent(currentReturnTo())
+  return useFetch<AuthSession>(`${API}/auth/session?return_to=${returnTo}`, 60000, enabled)
 }
 
 export function useVehicles(enabled = true) {

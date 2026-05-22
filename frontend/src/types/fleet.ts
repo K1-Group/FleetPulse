@@ -37,6 +37,25 @@ export interface FleetOverview {
   trip_definition: string
 }
 
+export interface AuthSessionUser {
+  display_name: string
+  email: string | null
+  principal_id: string | null
+}
+
+export interface AuthSession {
+  auth_mode: 'required' | 'optional' | 'disabled'
+  auth_required: boolean
+  login_enabled: boolean
+  authenticated: boolean
+  identity_provider: string | null
+  user: AuthSessionUser | null
+  login_url: string | null
+  logout_url: string | null
+  source_authority: string
+  projection_mode: 'read_only'
+}
+
 export interface DataConnectorVehicleKpiSummary {
   total_vehicles: number
   total_distance_miles?: number

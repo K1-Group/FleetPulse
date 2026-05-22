@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign } from 'lucide-react'
+import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign, Truck, type LucideIcon } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import FleetAnalytics from './components/FleetAnalytics'
 import FleetChat from './components/FleetChat'
@@ -29,7 +29,8 @@ import DashboardValidationSummary from './components/DashboardValidationSummary'
 import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
-import { useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores } from './hooks/useGeotab'
+import UserLoginStatus from './components/UserLoginStatus'
+import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -50,9 +51,80 @@ const appTabs: AppTab[] = [
   'data-connector',
 ]
 
+type NavItem = {
+  tab: AppTab
+  label: string
+  shortLabel: string
+  Icon: LucideIcon
+}
+
+const navigationItems: NavItem[] = [
+  { tab: 'dashboard', label: 'Dashboard', shortLabel: 'Dash', Icon: BarChart3 },
+  { tab: 'control-tower', label: 'Control Tower', shortLabel: 'Tower', Icon: Activity },
+  { tab: 'finance', label: 'Finance', shortLabel: 'Fin', Icon: DollarSign },
+  { tab: 'operating-system', label: 'Org OS', shortLabel: 'Org', Icon: Users },
+  { tab: 'hr-recruiting', label: 'HR Recruiting', shortLabel: 'HR', Icon: Users },
+  { tab: 'maintenance', label: 'Maintenance', shortLabel: 'Maint', Icon: Wrench },
+  { tab: 'coaching', label: 'Coaching', shortLabel: 'Coach', Icon: GraduationCap },
+  { tab: 'replay', label: 'Routes', shortLabel: 'Routes', Icon: Route },
+  { tab: 'stability', label: 'Stability', shortLabel: 'Stable', Icon: LineChart },
+  { tab: 'fuel', label: 'Fuel', shortLabel: 'Fuel', Icon: Fuel },
+  { tab: 'geofences', label: 'Zones', shortLabel: 'Zones', Icon: MapPin },
+  { tab: 'compliance', label: 'ELD', shortLabel: 'ELD', Icon: Shield },
+  { tab: 'reports', label: 'Reports', shortLabel: 'Reports', Icon: FileText },
+  { tab: 'data-connector', label: 'Connector', shortLabel: 'Data', Icon: Database },
+]
+
 function getInitialTab(): AppTab {
   const hash = window.location.hash.replace('#', '') as AppTab
   return appTabs.includes(hash) ? hash : 'dashboard'
+}
+
+function FleetNav({
+  activeTab,
+  onSelect,
+  variant,
+}: {
+  activeTab: AppTab
+  onSelect: (tab: AppTab) => void
+  variant: 'sidebar' | 'mobile'
+}) {
+  const sidebar = variant === 'sidebar'
+
+  return (
+    <nav
+      aria-label="FleetPulse sections"
+      className={sidebar ? 'space-y-1.5' : 'flex min-w-max gap-1.5'}
+    >
+      {navigationItems.map(({ tab, label, shortLabel, Icon }) => {
+        const active = activeTab === tab
+        return (
+          <button
+            key={tab}
+            aria-current={active ? 'page' : undefined}
+            aria-label={label}
+            onClick={() => onSelect(tab)}
+            className={
+              sidebar
+                ? `group flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition ${
+                    active
+                      ? 'bg-white text-gray-950 shadow-sm light:bg-gray-950 light:text-white'
+                      : 'text-gray-400 hover:bg-gray-900 hover:text-white light:text-gray-600 light:hover:bg-gray-100 light:hover:text-gray-950'
+                  } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950`
+                : `flex h-11 min-w-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition ${
+                    active
+                      ? 'bg-sky-500 text-white shadow-sm'
+                      : 'text-gray-400 hover:bg-gray-900 hover:text-white light:text-gray-600 light:hover:bg-gray-100 light:hover:text-gray-950'
+                  } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950`
+            }
+          >
+            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className={sidebar ? 'truncate' : 'hidden sm:inline'}>{sidebar ? label : shortLabel}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
 }
 
 export default function App() {
@@ -75,6 +147,22 @@ export default function App() {
   const driverWorkforce = useDriverWorkforce(dashboardActive)
   const utilization7d = useDataConnectorVehicleKpis(7, dashboardActive)
   const safety7d = useDataConnectorSafetyScores(7, dashboardActive)
+  const authSession = useAuthSession(true)
+
+  const activeLocationCount = locations.data?.length ?? null
+  const headerSubtitle = activeLocationCount !== null
+    ? `K1 Logistics · ${activeLocationCount.toLocaleString()} active location${activeLocationCount === 1 ? '' : 's'}`
+    : 'K1 Logistics · location roster pending'
+  const liveStatus = overview.error || dashboardValidation.error
+    ? 'Degraded'
+    : overview.loading || dashboardValidation.loading
+    ? 'Syncing'
+    : 'Live'
+  const liveStatusClass = liveStatus === 'Degraded'
+    ? 'bg-amber-400'
+    : liveStatus === 'Syncing'
+    ? 'bg-sky-400'
+    : 'bg-emerald-400'
 
   const triggerCheck = useCallback(() => {
     fetch('/api/monitor/check', { method: 'POST' }).then(() => {
@@ -103,200 +191,82 @@ export default function App() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 light:from-gray-50 light:via-white light:to-gray-50 text-white dark:text-white light:text-gray-900">
       {/* Header */}
-      <motion.header 
-        className="border-b border-gray-800/50 dark:border-gray-800/50 light:border-gray-200/50 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4 backdrop-blur-xl bg-gray-950/80 dark:bg-gray-950/80 light:bg-white/80"
+      <motion.header
+        className="sticky top-0 z-40 border-b border-gray-800/50 bg-gray-950/95 px-4 py-3 backdrop-blur-xl light:border-gray-200/70 light:bg-white/95 sm:px-6"
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
       >
-        <div className="flex items-center gap-3">
-          <motion.span 
-            className="text-3xl"
-            animate={{ rotate: [0, 10, 0] }}
-            transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-          >
-            🚗
-          </motion.span>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">
-              FleetPulse
-            </h1>
-            <p className="text-xs text-gray-500 dark:text-gray-500 light:text-gray-600 hidden sm:block">K1 Logistics · FTW · Justin · OKC · Kansas City · 4 Locations</p>
+        <div className="mx-auto flex max-w-[1800px] flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3.5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-sky-400/25 bg-sky-500/10 text-sky-300 light:text-sky-700">
+                <Truck className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-xl font-semibold tracking-normal text-white light:text-gray-950 sm:text-2xl">
+                  FleetPulse
+                </h1>
+                <p className="hidden truncate text-xs text-gray-500 dark:text-gray-500 light:text-gray-600 sm:block">
+                  {headerSubtitle}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center md:hidden">
+              <span className={`inline-block h-2 w-2 rounded-full ${liveStatusClass}`} />
+            </div>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          {/* Navigation Tabs */}
-          <nav className="flex flex-wrap gap-1 bg-gray-800/50 dark:bg-gray-800/50 light:bg-gray-200/50 rounded-lg p-1">
-            <button
-              onClick={() => selectTab('dashboard')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'dashboard'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Dashboard</span>
-            </button>
-            <button
-              onClick={() => selectTab('control-tower')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'control-tower'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Activity className="w-4 h-4" />
-              <span className="hidden sm:inline">Tower</span>
-            </button>
-            <button
-              onClick={() => selectTab('finance')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'finance'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <DollarSign className="w-4 h-4" />
-              <span className="hidden sm:inline">Finance</span>
-            </button>
-            <button
-              onClick={() => selectTab('operating-system')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'operating-system'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span className="hidden sm:inline">Org OS</span>
-            </button>
-            <button
-              onClick={() => selectTab('hr-recruiting')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'hr-recruiting'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span className="hidden sm:inline">HR</span>
-            </button>
-            <button
-              onClick={() => selectTab('maintenance')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'maintenance'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Wrench className="w-4 h-4" />
-              <span className="hidden sm:inline">Maintenance</span>
-            </button>
-            <button
-              onClick={() => selectTab('coaching')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'coaching'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <GraduationCap className="w-4 h-4" />
-              <span className="hidden sm:inline">Coaching</span>
-            </button>
-            <button
-              onClick={() => selectTab('replay')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'replay'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Route className="w-4 h-4" />
-              <span className="hidden sm:inline">Routes</span>
-            </button>
-            <button
-              onClick={() => selectTab('stability')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'stability'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <LineChart className="w-4 h-4" />
-              <span className="hidden sm:inline">Stability</span>
-            </button>
-            <button
-              onClick={() => selectTab('fuel')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'fuel'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Fuel className="w-4 h-4" />
-              <span className="hidden sm:inline">Fuel</span>
-            </button>
-            <button
-              onClick={() => selectTab('geofences')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'geofences'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <MapPin className="w-4 h-4" />
-              <span className="hidden sm:inline">Zones</span>
-            </button>
-            <button
-              onClick={() => selectTab('compliance')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'compliance'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span className="hidden sm:inline">ELD</span>
-            </button>
-            <button
-              onClick={() => selectTab('reports')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'reports'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">Reports</span>
-            </button>
-            <button
-              onClick={() => selectTab('data-connector')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
-                activeTab === 'data-connector'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700/50 light:text-gray-600 light:hover:text-gray-900 light:hover:bg-white'
-              }`}
-            >
-              <Database className="w-4 h-4" />
-              <span className="hidden sm:inline">Connector</span>
-            </button>
-          </nav>
-          
-          <ThemeToggle />
-          <div className="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-400 light:text-gray-600">
-            <motion.span 
-              className="inline-block w-2 h-2 rounded-full bg-emerald-400"
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-            <span className="hidden sm:inline">Live</span>
+
+          <div className="flex w-full min-w-0 items-center gap-2 overflow-x-auto sm:justify-end sm:gap-3 lg:w-auto lg:overflow-visible">
+            <div className="hidden items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2 text-sm text-gray-400 light:border-gray-200 light:bg-gray-50 light:text-gray-600 md:flex">
+              <motion.span
+                className={`inline-block h-2 w-2 rounded-full ${liveStatusClass}`}
+                animate={{ opacity: [1, 0.3, 1] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              />
+              <span>{liveStatus}</span>
+            </div>
+            <ThemeToggle />
+            <UserLoginStatus session={authSession.data} loading={authSession.loading} error={authSession.error} />
+          </div>
+
+          <div className="-mx-4 mt-3 overflow-x-auto border-t border-gray-900 px-4 pt-3 light:border-gray-200 sm:-mx-6 sm:px-6 lg:hidden">
+            <FleetNav activeTab={activeTab} onSelect={selectTab} variant="mobile" />
           </div>
         </div>
       </motion.header>
 
-      <motion.main 
-        className="p-4 sm:p-6 space-y-6 max-w-[1800px] mx-auto"
+      <div className="mx-auto flex max-w-[1800px]">
+        <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-64 shrink-0 border-r border-gray-900/80 px-4 py-5 light:border-gray-200 lg:block">
+          <FleetNav activeTab={activeTab} onSelect={selectTab} variant="sidebar" />
+          <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900/40 p-3 light:border-gray-200 light:bg-white">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Source Status</p>
+            <div className="mt-3 space-y-2 text-xs text-gray-400 light:text-gray-600">
+              <div className="flex items-center justify-between gap-3">
+                <span>Locations</span>
+                <span className="font-semibold text-gray-200 light:text-gray-900">
+                  {activeLocationCount === null ? 'Pending' : activeLocationCount.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Session</span>
+                <span className="font-semibold text-gray-200 light:text-gray-900">
+                  {authSession.data?.auth_mode || 'Pending'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>API</span>
+                <span className="inline-flex items-center gap-1.5 font-semibold text-gray-200 light:text-gray-900">
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${liveStatusClass}`} />
+                  {liveStatus}
+                </span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <motion.main
+        className="min-w-0 flex-1 space-y-6 p-4 sm:p-6"
         variants={pageVariants}
         initial="initial"
         animate="in"
@@ -424,7 +394,9 @@ export default function App() {
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               📍 Locations
               <span className="text-xs bg-gray-800 px-2 py-1 rounded-full text-gray-400">
-                5 Active
+                {locations.loading
+                  ? 'Loading'
+                  : `${(locations.data?.length ?? 0).toLocaleString()} Active`}
               </span>
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -478,7 +450,8 @@ export default function App() {
         {activeTab === 'fuel' && <FuelAnalytics />}
         {activeTab === 'compliance' && <ComplianceDashboard />}
         {activeTab === 'data-connector' && <DataConnector />}
-      </motion.main>
+        </motion.main>
+      </div>
 
       {/* PWA Components */}
       <InstallPrompt />
