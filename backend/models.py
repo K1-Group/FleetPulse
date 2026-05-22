@@ -79,6 +79,8 @@ class LocationStats(BaseModel):
     address: str
     latitude: float
     longitude: float
+    radius_miles: float = 0
+    radius_meters: float = 0
     vehicle_count: int = 0
     active: int = 0
     safety_score: float = 100.0

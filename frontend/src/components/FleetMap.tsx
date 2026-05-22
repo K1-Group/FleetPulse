@@ -464,7 +464,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
               <div key={loc.name}>
                 <Circle
                   center={[loc.latitude, loc.longitude]}
-                  radius={300}
+                  radius={loc.radius_meters || 300}
                   pathOptions={{ 
                     color: loc.safety_score >= 90 ? '#10b981' : loc.safety_score >= 85 ? '#f59e0b' : '#ef4444',
                     fillOpacity: 0.1, 

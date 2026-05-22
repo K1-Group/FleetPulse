@@ -89,6 +89,8 @@ export interface LocationStats {
   address: string
   latitude: number
   longitude: number
+  radius_miles: number
+  radius_meters: number
   vehicle_count: number
   active: number
   safety_score: number

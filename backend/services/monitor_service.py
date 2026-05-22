@@ -34,10 +34,10 @@ LOCATION_CENTERS = {location["name"]: (location["lat"], location["lon"]) for loc
 
 # K1 operations bounding box around configured operating hubs.
 OPS_BOUNDS = {
-    "lat_min": min(lat for lat, _lon in LOCATION_CENTERS.values()) - 0.5,
-    "lat_max": max(lat for lat, _lon in LOCATION_CENTERS.values()) + 0.5,
-    "lon_min": min(lon for _lat, lon in LOCATION_CENTERS.values()) - 0.5,
-    "lon_max": max(lon for _lat, lon in LOCATION_CENTERS.values()) + 0.5,
+    "lat_min": min(location["lat"] - (location["radius_miles"] / 69.0) for location in LOCATIONS),
+    "lat_max": max(location["lat"] + (location["radius_miles"] / 69.0) for location in LOCATIONS),
+    "lon_min": min(location["lon"] - (location["radius_miles"] / 69.0) for location in LOCATIONS),
+    "lon_max": max(location["lon"] + (location["radius_miles"] / 69.0) for location in LOCATIONS),
 }
 
 # K1 speeding threshold: 6 mph (~10 km/h) over posted speed limit

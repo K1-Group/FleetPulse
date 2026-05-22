@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import math
 import os
 import threading
 import time
@@ -12,6 +13,7 @@ from typing import Any
 
 from geotab_client import GeotabClient
 from models import FleetOverview, LocationStats, Vehicle, VehiclePosition, VehicleStatus
+from services.hub_config_service import get_fleet_hubs
 
 KM_TO_MILES = 0.621371
 DEFAULT_STOP_THRESHOLD_MINUTES = 5
@@ -22,21 +24,13 @@ DEFAULT_EXCLUDED_DEVICE_GROUP_IDS = "GroupTrailerId"
 DEFAULT_STATUS_STALE_HOURS = 24
 DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_CACHE_FALLBACK_SECONDS = 300
+EARTH_RADIUS_MILES = 3958.7613
 
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_LOCKS: dict[str, threading.Lock] = {}
 
 # K1 Logistics / K1 Group configured operating hubs.
-LOCATIONS = [
-    {"name": "Fort Worth Yard", "address": "4200 Gravel Dr, Fort Worth, TX 76118", "lat": 32.8012, "lon": -97.2197},
-    {"name": "Justin Terminal", "address": "17176 FM156, Justin, TX 76247", "lat": 33.0848, "lon": -97.2961},
-    {"name": "OKC Terminal", "address": "4012 S Purdue Ave, Oklahoma City, OK 73179", "lat": 35.3922, "lon": -97.5900},
-    {"name": "Kansas City Terminal", "address": "11200 N Congress Ave, Kansas City, MO 64153", "lat": 39.2967, "lon": -94.6680},
-    {"name": "Austin Hub", "address": "Austin, TX", "lat": 30.2672, "lon": -97.7431},
-    {"name": "San Antonio Hub", "address": "San Antonio, TX", "lat": 29.4241, "lon": -98.4936},
-    {"name": "Atlanta Hub", "address": "Atlanta, GA", "lat": 33.7490, "lon": -84.3880},
-    {"name": "Little Rock Hub", "address": "Little Rock, AR", "lat": 34.7465, "lon": -92.2896},
-]
+LOCATIONS = get_fleet_hubs()
 
 
 def _classify_status(device_status: dict[str, Any]) -> VehicleStatus:
@@ -408,12 +402,24 @@ def summarize_driver_trip_sessions(
     }
 
 
+def _distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    haversine = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_MILES * math.asin(math.sqrt(haversine))
+
+
 def _nearest_location(lat: float, lon: float) -> str | None:
-    """Return nearest K1 location name if within ~500 m."""
-    best, best_dist = None, 0.005  # ~500 m in degrees
+    """Return nearest configured K1 hub name if inside that hub radius."""
+    best, best_dist = None, float("inf")
     for loc in LOCATIONS:
-        d = ((lat - loc["lat"]) ** 2 + (lon - loc["lon"]) ** 2) ** 0.5
-        if d < best_dist:
+        d = _distance_miles(lat, lon, loc["lat"], loc["lon"])
+        if d <= loc["radius_miles"] and d < best_dist:
             best, best_dist = loc["name"], d
     return best
 
@@ -574,6 +580,8 @@ def get_location_stats() -> list[LocationStats]:
                 address=loc["address"],
                 latitude=loc["lat"],
                 longitude=loc["lon"],
+                radius_miles=loc["radius_miles"],
+                radius_meters=loc["radius_meters"],
                 vehicle_count=len(at_loc),
                 active=sum(1 for v in at_loc if v.status == VehicleStatus.ACTIVE),
             )
