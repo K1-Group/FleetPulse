@@ -425,7 +425,7 @@ def test_safety_scores_returns_degraded_payload_on_timeout(monkeypatch):
     assert "timeout" in result["message"].lower()
 
 
-def test_safety_scores_returns_latest_fleet_rank_summary(monkeypatch):
+def test_safety_scores_returns_period_fleet_daily_rank_summary(monkeypatch):
     mod = _import_router_fresh()
 
     async def _rows(table, *_args, **_kwargs):
@@ -456,12 +456,16 @@ def test_safety_scores_returns_latest_fleet_rank_summary(monkeypatch):
 
     assert result["feed_status"] == "ok"
     assert result["source_authority"] == "K1 Logistics Inc / Geotab Data Connector"
-    assert result["summary"]["safety_rank_pct"] == 29.0
+    assert result["summary"]["safety_rank_pct"] == 33.0
+    assert result["summary"]["latest_safety_rank_pct"] == 29.0
     assert result["summary"]["latest_date"] == "2026-05-19"
+    assert result["summary"]["period_start_date"] == "2026-05-18"
+    assert result["summary"]["period_end_date"] == "2026-05-19"
     assert result["summary"]["fleet_row_count"] == 2
     assert result["summary"]["vehicle_score_count"] == 1
-    assert result["summary"]["total_collision_count"] == 0
-    assert result["summary"]["predicted_collisions_per_1m_miles"] == 0.963
+    assert result["summary"]["total_collision_count"] == 1
+    assert result["summary"]["predicted_collisions_per_1m_miles"] == 0.931
+    assert result["summary"]["calculation"] == "average_fleet_daily_safety_rank"
 
 
 @pytest.mark.parametrize("route_name", ["vehicle_kpis", "safety_scores", "fault_trends"])

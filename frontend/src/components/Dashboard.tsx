@@ -310,6 +310,8 @@ function buildCards(
   const safetyStatus = dataConnectorSafetyStatus(safety7d, safety7dLoading, safety7dError)
   const safetyPeriod = safety7d?.period_days || 7
   const safetyLatestDate = safety7d?.summary?.latest_date
+  const safetyPeriodStart = safety7d?.summary?.period_start_date
+  const safetyPeriodEnd = safety7d?.summary?.period_end_date
   const utilization7dValue = asNumber(utilization7d?.summary?.utilization_pct)
   const utilization7dPeriod = utilization7d?.period_days || 7
   const utilization7dStatus = utilizationStatus(utilization7d, utilization7dLoading, utilization7dError)
@@ -478,8 +480,10 @@ function buildCards(
       updatedAt: safetyLatestDate || validation?.generated_at,
       value: safetyValue,
       decimals: 1,
-      delta: safetyLatestDate
-        ? `Latest ${safetyLatestDate} · previous ${safetyPeriod} days`
+      delta: safetyPeriodStart && safetyPeriodEnd
+        ? `Fleet daily avg ${safetyPeriodStart} to ${safetyPeriodEnd}`
+        : safetyLatestDate
+        ? `Fleet daily avg · latest ${safetyLatestDate} · previous ${safetyPeriod} days`
         : safety7d?.message || `Previous ${safetyPeriod} days`,
     },
     placeholderKpi({

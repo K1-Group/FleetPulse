@@ -207,11 +207,15 @@ export interface VehicleSafetyScore {
 
 export interface DataConnectorSafetySummary {
   safety_rank_pct: number | null
+  latest_safety_rank_pct?: number | null
   latest_date: string | null
+  period_start_date?: string | null
+  period_end_date?: string | null
   fleet_row_count: number
   vehicle_score_count: number
   total_collision_count: number | null
   predicted_collisions_per_1m_miles: number | null
+  calculation?: string
 }
 
 export interface DataConnectorSafetyResponse {

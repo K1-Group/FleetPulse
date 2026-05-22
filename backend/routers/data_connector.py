@@ -665,35 +665,69 @@ def _latest_safety_row(rows: list[dict]) -> dict | None:
     return max(usable, key=lambda row: _safety_date(row) or "")
 
 
+def _safety_rank_value(row: dict) -> float | None:
+    return _optional_number(row, "Safety_Rank", "SafetyRank", "SafetyScore", "Safety_Score")
+
+
+def _average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
 def _safety_summary(fleet_rows: list[dict], vehicle_rows: list[dict]) -> dict[str, Any]:
     latest = _latest_safety_row(fleet_rows)
-    safety_rank_pct = None
+    safety_rank_values = [
+        rank for row in fleet_rows if (rank := _safety_rank_value(row)) is not None
+    ]
+    safety_rank_pct = _rank_percent(_average(safety_rank_values))
+    latest_safety_rank_pct = None
     predicted_collisions = None
-    collision_count = None
+    predicted_collision_values = [
+        value
+        for row in fleet_rows
+        if (
+            value := _optional_number(
+                row,
+                "PredictedCollisionsPer1MillionM",
+                "PredictedCollisionsPer1MillionMi",
+                "PredictedCollisionsPer1MillionMiles",
+            )
+        )
+        is not None
+    ]
+    collision_values = [
+        value
+        for row in fleet_rows
+        if (value := _optional_number(row, "TotalCollisionCount_Daily", "CollisionCount")) is not None
+    ]
+    collision_count = int(sum(collision_values)) if collision_values else None
     latest_date = None
+    dated_rows = sorted(
+        [(date, row) for row in fleet_rows if (date := _safety_date(row))],
+        key=lambda item: item[0],
+    )
+    period_start_date = dated_rows[0][0] if dated_rows else None
+    period_end_date = dated_rows[-1][0] if dated_rows else None
+
     if latest:
         latest_date = _safety_date(latest)
-        safety_rank_pct = _rank_percent(
-            _optional_number(latest, "Safety_Rank", "SafetyRank", "SafetyScore", "Safety_Score")
-        )
-        predicted_collisions = _optional_number(
-            latest,
-            "PredictedCollisionsPer1MillionM",
-            "PredictedCollisionsPer1MillionMi",
-            "PredictedCollisionsPer1MillionMiles",
-        )
-        raw_collision_count = _optional_number(latest, "TotalCollisionCount_Daily", "CollisionCount")
-        collision_count = int(raw_collision_count) if raw_collision_count is not None else None
+        latest_safety_rank_pct = _rank_percent(_safety_rank_value(latest))
+    predicted_collisions = _average(predicted_collision_values)
 
     return {
         "safety_rank_pct": safety_rank_pct,
+        "latest_safety_rank_pct": latest_safety_rank_pct,
         "latest_date": latest_date,
+        "period_start_date": period_start_date,
+        "period_end_date": period_end_date,
         "fleet_row_count": len(fleet_rows),
         "vehicle_score_count": len(vehicle_rows),
         "total_collision_count": collision_count,
         "predicted_collisions_per_1m_miles": (
             round(predicted_collisions, 3) if predicted_collisions is not None else None
         ),
+        "calculation": "average_fleet_daily_safety_rank",
     }
 
 
