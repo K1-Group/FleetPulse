@@ -395,9 +395,12 @@ def test_operating_cost_snapshot_marks_partial_driver_pay_as_incomplete(monkeypa
     assert snapshot["sources"]["driver_pay"]["status"] == "partial"
     assert "driver_pay" in snapshot["unresolved_sources"]
     assert snapshot["summary"]["fuel_card_audit_cost"] == 100.0
+    assert snapshot["sources"]["fuel"]["status"] == "healthy"
+    assert snapshot["sources"]["fuel"]["source_authority"] == "AtoB manual fuel expense export"
+    assert snapshot["summary"]["fuel_cost"] == 100.0
     assert snapshot["summary"]["posted_insurance_cost"] == 50.0
     assert snapshot["summary"]["insurance_cost"] == 27.0
-    assert snapshot["summary"]["known_operating_cost"] == 277.0
+    assert snapshot["summary"]["known_operating_cost"] == 377.0
     assert snapshot["summary"]["true_cost_per_mile"] is None
 
 
@@ -472,3 +475,15 @@ def test_operating_cost_snapshot_reads_imported_qbo_expense_state(monkeypatch, t
     assert snapshot["summary"]["fuel_cost"] == 999.0
     assert snapshot["summary"]["other_expense_cost"] == 75.0
     assert snapshot["summary"]["known_operating_cost"] == 1101.0
+
+
+def test_qbo_feed_url_uses_requested_operating_cost_window():
+    url = service._qbo_feed_url(
+        "https://example.test/api/qbo_financial_snapshot?start=2026-01-01&expense_entity=K1L",
+        start=date(2025, 12, 31),
+        end=date(2026, 5, 23),
+    )
+
+    assert "expense_entity=K1L" in url
+    assert "start=2025-12-31" in url
+    assert "end=2026-05-23" in url

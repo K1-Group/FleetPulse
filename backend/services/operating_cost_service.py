@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -1211,13 +1212,18 @@ def _xcelerator_driver_pay_by_week(
     )
 
 
-def _load_qbo_feed(config: QboExpenseFeedConfig) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _load_qbo_feed(
+    config: QboExpenseFeedConfig,
+    *,
+    start: date | None = None,
+    end: date | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if config.url:
         headers = {"Accept": "application/json,text/csv"}
         if config.api_key:
             headers[config.api_key_header] = config.api_key
         with httpx.Client(timeout=config.timeout_seconds) as client:
-            response = client.get(config.url, headers=headers)
+            response = client.get(_qbo_feed_url(config.url, start=start, end=end), headers=headers)
         response.raise_for_status()
         return _coerce_feed(response.text, response.headers.get("content-type", ""))
     if config.path:
@@ -1226,6 +1232,26 @@ def _load_qbo_feed(config: QboExpenseFeedConfig) -> tuple[list[dict[str, Any]], 
             return [], {}
         return _coerce_feed(path.read_text(encoding="utf-8-sig"), "")
     return [], {}
+
+
+def _qbo_feed_url(url: str, *, start: date | None, end: date | None) -> str:
+    if not start and not end:
+        return url
+    parsed = urlsplit(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if start:
+        query["start"] = start.isoformat()
+    if end:
+        query["end"] = end.isoformat()
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
 
 
 def _coerce_feed(text: str, content_type: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1358,7 +1384,7 @@ def _qbo_weekly_costs(
                 message="QBO expense feed URL/path is not configured.",
             )
     else:
-        rows, metadata = _load_qbo_feed(config)
+        rows, metadata = _load_qbo_feed(config, start=start, end=end)
     source_authority = metadata.get("source_authority") or QBO_AUTHORITY
     if not rows:
         return {}, _source(
@@ -1433,6 +1459,41 @@ def _insurance_source(config: QboExpenseFeedConfig) -> dict[str, Any]:
         K1L_INSURANCE_RATE_AUTHORITY,
         message="K1L insurance per-mile allocation is disabled; using posted QBO insurance rows only.",
     )
+
+
+def _qbo_fuel_total(qbo_by_week: dict[str, dict[str, float]]) -> float:
+    return sum(float(value.get("fuel") or 0.0) for value in qbo_by_week.values())
+
+
+def _resolve_fuel_source(
+    *,
+    qbo_source: dict[str, Any],
+    atob_source: dict[str, Any],
+    qbo_fuel_total: float,
+    atob_fallback_applied: bool,
+) -> dict[str, Any]:
+    if qbo_fuel_total > 0:
+        return _source(
+            "healthy",
+            QBO_AUTHORITY,
+            message="QBO fuel bucket is live; AtoB is retained as card-audit evidence.",
+            row_count=int(qbo_source.get("row_count") or 0),
+        )
+    if atob_fallback_applied:
+        return _source(
+            "healthy",
+            ATOB_AUTHORITY,
+            message="Using AtoB approved fuel/DEF rows because QBO fuel bucket rows are not available.",
+            row_count=int(atob_source.get("row_count") or 0),
+        )
+    if qbo_source.get("status") == "healthy":
+        return _source(
+            "awaiting_feed",
+            QBO_AUTHORITY,
+            message="QBO expense rows are live, but no QBO fuel bucket rows are available for this period.",
+            row_count=int(qbo_source.get("row_count") or 0),
+        )
+    return qbo_source
 
 
 def _apply_insurance_allocation(
@@ -1605,12 +1666,23 @@ async def get_operating_cost_snapshot(
         bucket["posted_insurance_cost"] = value.get("insurance", 0.0)
         bucket["employee_cost"] = value.get("employee", 0.0)
         bucket["rental_trucks_trailers_cost"] = value.get("rental_trucks_trailers", 0.0)
+    qbo_fuel_total = _qbo_fuel_total(qbo_by_week)
+    atob_fallback_applied = False
+    if qbo_fuel_total <= 0 and fuel_by_week:
+        for key, value in fuel_by_week.items():
+            weekly.setdefault(key, _empty_week(date.fromisoformat(key), date.fromisoformat(key)))["fuel_cost"] = value
+        atob_fallback_applied = True
 
     _apply_insurance_allocation(weekly, config=qbo_config)
 
     sources = {
         "telemetry": telemetry_source,
-        "fuel": qbo_source,
+        "fuel": _resolve_fuel_source(
+            qbo_source=qbo_source,
+            atob_source=fuel_source,
+            qbo_fuel_total=qbo_fuel_total,
+            atob_fallback_applied=atob_fallback_applied,
+        ),
         "fuel_card_audit": fuel_source,
         "insurance": _insurance_source(qbo_config),
         "driver_pay": driver_source,

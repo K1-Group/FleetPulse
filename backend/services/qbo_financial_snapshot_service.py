@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -496,8 +497,9 @@ def _load_rows(
         headers = {"Accept": "application/json,text/csv"}
         if config.api_key:
             headers[config.api_key_header] = config.api_key
+        url = _feed_url_with_window(config.feed_url, start=start, end=end)
         with httpx.Client(timeout=config.timeout_seconds) as client:
-            response = client.get(config.feed_url, headers=headers)
+            response = client.get(url, headers=headers)
         response.raise_for_status()
         rows, metadata = _coerce_rows(response.text, response.headers.get("content-type", ""))
         metadata.setdefault("source_mode", "feed_url")
@@ -512,6 +514,16 @@ def _load_rows(
     if config.live_configured:
         return _load_live_qbo_rows(config, start=start, end=end)
     return [], {}
+
+
+def _feed_url_with_window(url: str, *, start: date | None, end: date | None) -> str:
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    if start:
+        query["start"] = start.isoformat()
+    if end:
+        query["end"] = end.isoformat()
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def _content_type_from_filename(filename: str | None) -> str:

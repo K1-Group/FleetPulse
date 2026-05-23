@@ -12,6 +12,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from services.qbo_financial_snapshot_service import (  # noqa: E402
     QboFinancialConfig,
+    _feed_url_with_window,
     get_qbo_financial_snapshot,
     load_qbo_k1l_expense_rows,
 )
@@ -121,6 +122,19 @@ def test_qbo_financial_snapshot_configured_empty_source_does_not_fake_zero(tmp_p
     assert snapshot["row_count"] == 0
     assert snapshot["cash_flow"]["k1l_expense_total"] is None
     assert snapshot["expense_summary"]["k1l_expense_total"] is None
+
+
+def test_qbo_financial_feed_url_uses_requested_window():
+    url = _feed_url_with_window(
+        "https://example.test/api/qbo_financial_snapshot?start=2026-01-01&expense_entity=K1L",
+        start=date(2025, 12, 31),
+        end=date(2026, 5, 23),
+    )
+
+    assert url == (
+        "https://example.test/api/qbo_financial_snapshot?"
+        "start=2025-12-31&expense_entity=K1L&end=2026-05-23"
+    )
 
 
 def test_qbo_expense_rows_for_operating_cost_are_k1l_only(tmp_path):
