@@ -310,6 +310,9 @@ for one lumpy posted insurance bill date. AtoB remains available as fuel-card
 audit evidence but is not double-counted when QBO fuel rows are live. Rental and
 lease matching includes Ryder, Bruckner, Idealease/Idlease, XTRA Lease, and
 Camarena rows when those names appear on the vendor/memo/description fields.
+When QBO fuel bucket rows are not available yet, FleetPulse uses imported AtoB
+fuel-card rows as the read-only fuel cost fallback and keeps QBO expenses as a
+separate source status so non-fuel operating costs are not hidden.
 FleetPulse prefers the live Fabric Warehouse SQL `xcelerator_review_orders`
 projection for Xcelerator driver pay and entity margin when configured. Set
 `FLEETPULSE_XCELERATOR_ENTITY_MARGIN_PREFER_FEED=true` only for a controlled
