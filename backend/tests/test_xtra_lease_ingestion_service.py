@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -41,8 +41,8 @@ def _configure_env(monkeypatch, tmp_path):
 
 def test_ingestion_ignores_duplicates_and_updates_last_email(monkeypatch, tmp_path):
     config = _configure_env(monkeypatch, tmp_path)
-    first_received = datetime(2026, 5, 12, 2, 0, tzinfo=timezone.utc)
-    second_received = datetime(2026, 5, 12, 3, 15, tzinfo=timezone.utc)
+    first_received = datetime.now(timezone.utc) - timedelta(hours=2)
+    second_received = first_received + timedelta(minutes=75)
     first = OutlookMessage(
         id="graph-1",
         internet_message_id="<xtra-1@example.com>",
