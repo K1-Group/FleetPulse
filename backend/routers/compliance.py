@@ -1,4 +1,4 @@
-"""Compliance & ELD (Electronic Logging Device) endpoints."""
+"""Compliance & ELD (Electronic Logging Device) read-only endpoints."""
 
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter
@@ -8,6 +8,10 @@ from geotab_client import GeotabClient
 from _cache import get_cached, set_cached
 
 router = APIRouter()
+
+SOURCE_AUTHORITY = "K1 Logistics Inc / Geotab trip and device telemetry"
+HOS_EVIDENCE_MODE = "geotab_trip_activity_proxy"
+DVIR_SOURCE_AUTHORITY = "K1 Logistics Inc / Geotab device telemetry + configured DVIR evidence feeds"
 
 # FMCSA HOS limits
 HOS_LIMITS = {
@@ -20,7 +24,12 @@ HOS_LIMITS = {
 
 @router.get("/hos-summary")
 async def hos_summary():
-    """Get Hours of Service compliance summary for the fleet."""
+    """Get a Geotab trip-activity HOS risk proxy for the fleet.
+
+    This endpoint deliberately does not claim certified ELD driver-log compliance.
+    If the Geotab read path is unavailable, it returns an explicit unavailable
+    state instead of demo driver counts or fabricated violations.
+    """
     cache_key = "compliance:hos"
     cached = get_cached(cache_key)
     if cached:
@@ -124,40 +133,32 @@ async def hos_summary():
             "violations": violations[:10],
             "drivers": driver_statuses[:30],
             "last_updated": now.isoformat(),
+            "source_authority": SOURCE_AUTHORITY,
+            "projection_mode": "read_only",
+            "evidence_mode": HOS_EVIDENCE_MODE,
+            "source_status": {
+                "status": "healthy",
+                "message": "Uses Geotab trip durations as a HOS risk proxy; certified ELD driver-log feed is not configured.",
+                "device_count": len(devices),
+                "trip_count_7d": len(trips_7d),
+                "trip_count_today": len(trips_today),
+            },
         }
         
         set_cached(cache_key, result, ttl=120)
         return result
         
     except Exception as e:
-        # Demo data
-        now = datetime.now(timezone.utc)
-        return {
-            "summary": {
-                "total_drivers": 42,
-                "compliant": 38,
-                "warnings": 3,
-                "violations": 1,
-                "compliance_rate": 90.5,
-            },
-            "limits": HOS_LIMITS,
-            "violations": [
-                {"vehicle": "Budget-LV-042", "type": "daily_driving_exceeded", "hours": 11.5, "limit": 11, "severity": "high"},
-            ],
-            "drivers": [
-                {"vehicle_id": "d1", "vehicle_name": "Budget-LV-042", "status": "violation", "today_hours": 11.5, "today_remaining": 0, "today_pct": 100, "week_hours": 52.3, "week_remaining": 7.7, "week_pct": 87},
-                {"vehicle_id": "d2", "vehicle_name": "Budget-LV-018", "status": "warning", "today_hours": 9.2, "today_remaining": 1.8, "today_pct": 84, "week_hours": 48.1, "week_remaining": 11.9, "week_pct": 80},
-                {"vehicle_id": "d3", "vehicle_name": "Budget-LV-073", "status": "compliant", "today_hours": 6.5, "today_remaining": 4.5, "today_pct": 59, "week_hours": 35.2, "week_remaining": 24.8, "week_pct": 59},
-            ],
-            "last_updated": now.isoformat(),
-            "demo": True,
-            "error": str(e),
-        }
+        return _hos_unavailable(e)
 
 
 @router.get("/inspection-readiness")
 async def inspection_readiness():
-    """Get DVIR (Driver Vehicle Inspection Report) readiness status."""
+    """Get source-backed inspection readiness coverage.
+
+    Items without a configured source feed are returned as awaiting_feed instead
+    of being counted as passed.
+    """
     cache_key = "compliance:dvir"
     cached = get_cached(cache_key)
     if cached:
@@ -166,52 +167,130 @@ async def inspection_readiness():
     try:
         client = GeotabClient.get()
         devices = client.get_devices()
-        
-        # Check maintenance-related data
         now = datetime.now(timezone.utc)
-        
+        device_status_error = None
+        trip_error = None
+
+        try:
+            device_status = client.get_device_status_info()
+        except Exception as exc:  # pragma: no cover - depends on live Geotab permissions
+            device_status = []
+            device_status_error = str(exc)
+
+        try:
+            trips_7d = client.get_trips(from_date=now - timedelta(days=7), to_date=now)
+        except Exception as exc:  # pragma: no cover - depends on live Geotab permissions
+            trips_7d = []
+            trip_error = str(exc)
+
+        device_count = len(devices)
+        status_device_ids = {
+            _device_id(item.get("device"))
+            for item in device_status
+            if _device_id(item.get("device"))
+        }
+        trip_device_ids = {
+            _device_id(item.get("device"))
+            for item in trips_7d
+            if _device_id(item.get("device"))
+        }
+
         checklist_items = [
-            {"item": "ELD Device Connected", "status": "pass", "icon": "📡"},
-            {"item": "GPS Signal Active", "status": "pass", "icon": "📍"},
-            {"item": "Driver Identification", "status": "pass", "icon": "🪪"},
-            {"item": "HOS Records (7-day)", "status": "pass", "icon": "📋"},
-            {"item": "Vehicle Registration", "status": "pass", "icon": "📄"},
-            {"item": "Insurance Documentation", "status": "pass", "icon": "🛡️"},
-            {"item": "Pre-trip Inspection Log", "status": "warning", "icon": "🔍"},
-            {"item": "Post-trip Inspection Log", "status": "warning", "icon": "✅"},
+            _checklist_item(
+                "ELD Device Connected",
+                "pass" if device_count else "warning",
+                "Geotab Device inventory",
+                f"{device_count} Geotab device(s) returned.",
+                "📡",
+            ),
+            _checklist_item(
+                "GPS Signal Active",
+                "pass" if status_device_ids else "warning",
+                "Geotab DeviceStatusInfo",
+                (
+                    f"{len(status_device_ids)} device(s) returned live status."
+                    if not device_status_error
+                    else f"DeviceStatusInfo unavailable: {device_status_error}"
+                ),
+                "📍",
+            ),
+            _checklist_item(
+                "HOS Records (7-day)",
+                "pass" if trip_device_ids else "warning",
+                "Geotab Trip activity proxy",
+                (
+                    f"{len(trips_7d)} trip row(s) across {len(trip_device_ids)} device(s)."
+                    if not trip_error
+                    else f"Trip activity unavailable: {trip_error}"
+                ),
+                "📋",
+            ),
+            _checklist_item(
+                "Driver Identification",
+                "awaiting_feed",
+                "Xcelerator driver assignment or certified ELD driver-log feed",
+                "No configured source-backed driver identification feed is connected to this readiness endpoint.",
+                "🪪",
+            ),
+            _checklist_item(
+                "Vehicle Registration",
+                "awaiting_feed",
+                "SharePoint document register",
+                "No configured registration document feed is connected to this readiness endpoint.",
+                "📄",
+            ),
+            _checklist_item(
+                "Insurance Documentation",
+                "awaiting_feed",
+                "SharePoint or insurance document register",
+                "No configured insurance document feed is connected to this readiness endpoint.",
+                "🛡️",
+            ),
+            _checklist_item(
+                "Pre-trip Inspection Log",
+                "awaiting_feed",
+                "DVIR inspection feed",
+                "No configured pre-trip DVIR completion feed is connected.",
+                "🔍",
+            ),
+            _checklist_item(
+                "Post-trip Inspection Log",
+                "awaiting_feed",
+                "DVIR inspection feed",
+                "No configured post-trip DVIR completion feed is connected.",
+                "✅",
+            ),
         ]
-        
-        pass_count = len([c for c in checklist_items if c["status"] == "pass"])
+
+        scored_items = [c for c in checklist_items if c["status"] in {"pass", "warning", "fail", "unavailable"}]
+        pass_count = len([c for c in scored_items if c["status"] == "pass"])
+        awaiting_count = len([c for c in checklist_items if c["status"] == "awaiting_feed"])
         
         result = {
-            "overall_score": round(pass_count / len(checklist_items) * 100, 0),
-            "status": "ready" if pass_count == len(checklist_items) else "needs_review",
+            "overall_score": round(pass_count / max(len(scored_items), 1) * 100, 0),
+            "status": "ready" if pass_count == len(scored_items) and awaiting_count == 0 else "needs_review",
             "checklist": checklist_items,
-            "total_vehicles": len(devices),
-            "vehicles_inspected_today": max(len(devices) - 5, 0),
-            "last_audit_date": (now - timedelta(days=45)).strftime("%Y-%m-%d"),
-            "next_audit_date": (now + timedelta(days=45)).strftime("%Y-%m-%d"),
+            "total_vehicles": device_count,
+            "vehicles_inspected_today": None,
+            "last_audit_date": None,
+            "next_audit_date": None,
+            "source_authority": DVIR_SOURCE_AUTHORITY,
+            "projection_mode": "read_only",
+            "source_status": {
+                "status": "partial" if awaiting_count else "healthy",
+                "message": "Geotab device telemetry is connected; DVIR/document feeds are awaiting source-backed integration.",
+                "device_count": device_count,
+                "device_status_count": len(status_device_ids),
+                "trip_count_7d": len(trips_7d),
+                "awaiting_feed_count": awaiting_count,
+            },
         }
         
         set_cached(cache_key, result, ttl=300)
         return result
         
     except Exception as e:
-        return {
-            "overall_score": 75,
-            "status": "needs_review",
-            "checklist": [
-                {"item": "ELD Device Connected", "status": "pass", "icon": "📡"},
-                {"item": "GPS Signal Active", "status": "pass", "icon": "📍"},
-                {"item": "HOS Records (7-day)", "status": "pass", "icon": "📋"},
-                {"item": "Pre-trip Inspection Log", "status": "warning", "icon": "🔍"},
-            ],
-            "total_vehicles": 85,
-            "vehicles_inspected_today": 80,
-            "last_audit_date": "2026-01-15",
-            "next_audit_date": "2026-03-15",
-            "demo": True,
-        }
+        return _inspection_unavailable(e)
 
 
 def _parse_date(date_str) -> datetime:
@@ -221,3 +300,103 @@ def _parse_date(date_str) -> datetime:
         return datetime.fromisoformat(str(date_str).replace("Z", "+00:00"))
     except:
         return datetime.now(timezone.utc) - timedelta(days=999)
+
+
+def _device_id(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("id") or "")
+    return ""
+
+
+def _checklist_item(
+    item: str,
+    status: str,
+    source: str,
+    detail: str,
+    icon: str,
+) -> dict[str, str]:
+    return {
+        "item": item,
+        "status": status,
+        "source": source,
+        "detail": detail,
+        "icon": icon,
+    }
+
+
+def _hos_unavailable(exc: Exception) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    return {
+        "summary": {
+            "total_drivers": 0,
+            "compliant": 0,
+            "warnings": 0,
+            "violations": 0,
+            "compliance_rate": 0.0,
+        },
+        "limits": HOS_LIMITS,
+        "violations": [],
+        "drivers": [],
+        "last_updated": now.isoformat(),
+        "source_authority": SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "evidence_mode": HOS_EVIDENCE_MODE,
+        "source_status": {
+            "status": "unavailable",
+            "message": f"Geotab trip activity is unavailable: {type(exc).__name__}: {exc}",
+            "device_count": 0,
+            "trip_count_7d": 0,
+            "trip_count_today": 0,
+        },
+    }
+
+
+def _inspection_unavailable(exc: Exception) -> dict[str, Any]:
+    return {
+        "overall_score": 0,
+        "status": "unavailable",
+        "checklist": [
+            _checklist_item(
+                "ELD Device Connected",
+                "unavailable",
+                "Geotab Device inventory",
+                f"Geotab device inventory is unavailable: {type(exc).__name__}: {exc}",
+                "📡",
+            ),
+            _checklist_item(
+                "GPS Signal Active",
+                "unavailable",
+                "Geotab DeviceStatusInfo",
+                "Device status cannot be validated until Geotab is reachable.",
+                "📍",
+            ),
+            _checklist_item(
+                "HOS Records (7-day)",
+                "unavailable",
+                "Geotab Trip activity proxy",
+                "Trip activity cannot be validated until Geotab is reachable.",
+                "📋",
+            ),
+            _checklist_item(
+                "Driver Identification",
+                "awaiting_feed",
+                "Xcelerator driver assignment or certified ELD driver-log feed",
+                "No configured source-backed driver identification feed is connected to this readiness endpoint.",
+                "🪪",
+            ),
+        ],
+        "total_vehicles": 0,
+        "vehicles_inspected_today": None,
+        "last_audit_date": None,
+        "next_audit_date": None,
+        "source_authority": DVIR_SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "source_status": {
+            "status": "unavailable",
+            "message": f"Inspection readiness source unavailable: {type(exc).__name__}: {exc}",
+            "device_count": 0,
+            "device_status_count": 0,
+            "trip_count_7d": 0,
+            "awaiting_feed_count": 1,
+        },
+    }

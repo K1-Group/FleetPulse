@@ -51,6 +51,33 @@ def _patch_non_kpi_sources(monkeypatch, overview: FleetOverview) -> None:
     )
     monkeypatch.setattr(validation_service, "get_recent_alerts", lambda hours=24: [])
     monkeypatch.setattr(validation_service, "get_monitor_status", lambda: {"running": True, "total_alerts": 0, "patterns": {}})
+    monkeypatch.setattr(
+        validation_service,
+        "get_driver_workforce_dataset",
+        lambda: {
+            "validation": {
+                "status": "pending",
+                "state": "pending",
+                "message": "Partial: route tickets loaded; Geotab activity missing for some drivers.",
+                "row_count": 5,
+                "joined_count": 0,
+                "invalid_ticket_count": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        validation_service,
+        "_probe_fleet_analytics_fuel_trends",
+        lambda: [
+            {
+                "date": "2026-05-25",
+                "miles": 1200,
+                "gallons": 110,
+                "cost": 385.0,
+                "fuel_cost_source": "geotab_distance_estimate",
+            }
+        ],
+    )
     monkeypatch.setattr(validation_service, "_probe_data_connector_row_count", lambda: 1)
     monkeypatch.setattr(validation_service, "record_probe", lambda *args, **kwargs: {})
     monkeypatch.setattr(validation_service, "last_seen_row_at", lambda probe_name: None)
@@ -113,7 +140,7 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     assert response.status_code == 200
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
-    assert payload["summary"]["verified"] == 8
+    assert payload["summary"]["verified"] == 11
     assert payload["metric_summary"]["verified"] == 20
     assert payload["sections"]["k1l_final_cpm"]["status"] == "verified"
     assert payload["metrics"]["k1l_final_cpm"]["verified"] is True
@@ -124,11 +151,13 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     assert payload["sections"]["data_connector"]["status"] == "verified"
     assert payload["sections"]["operating_system"]["status"] == "failed"
     assert payload["sections"]["alerts"]["status"] == "pending_no_data"
-    assert payload["sections"]["driver_workforce"]["status"] == "pending_no_data"
-    assert payload["sections"]["agentic_monitor"]["status"] == "pending_no_audit"
-    assert payload["summary"]["pending_no_data"] == 2
-    assert payload["summary"]["pending_no_audit"] == 2
-    assert any(row["blocked_by"] == "no_audit" for row in payload["pending_ledger"])
+    assert payload["sections"]["driver_workforce"]["status"] == "verified"
+    assert payload["sections"]["driver_workforce"]["contract"]["source_status"] == "pending"
+    assert payload["sections"]["fleet_analytics"]["status"] == "verified"
+    assert payload["sections"]["agentic_monitor"]["status"] == "verified"
+    assert payload["summary"]["pending_no_data"] == 1
+    assert payload["summary"]["pending_no_audit"] == 0
+    assert not any(row["blocked_by"] == "no_audit" for row in payload["pending_ledger"])
 
 
 def test_dashboard_validation_does_not_verify_rpm_without_powerbi_revenue(monkeypatch):

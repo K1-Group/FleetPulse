@@ -30,6 +30,16 @@ interface HOSSummary {
     week_pct: number
   }>
   last_updated: string
+  source_authority?: string
+  projection_mode?: 'read_only' | string
+  evidence_mode?: string
+  source_status?: {
+    status: string
+    message: string
+    device_count?: number
+    trip_count_7d?: number
+    trip_count_today?: number
+  }
 }
 
 interface InspectionReadiness {
@@ -38,12 +48,24 @@ interface InspectionReadiness {
   checklist: Array<{
     item: string
     status: string
+    source?: string
+    detail?: string
     icon: string
   }>
   total_vehicles: number
-  vehicles_inspected_today: number
-  last_audit_date: string
-  next_audit_date: string
+  vehicles_inspected_today: number | null
+  last_audit_date: string | null
+  next_audit_date: string | null
+  source_authority?: string
+  projection_mode?: 'read_only' | string
+  source_status?: {
+    status: string
+    message: string
+    device_count?: number
+    device_status_count?: number
+    trip_count_7d?: number
+    awaiting_feed_count?: number
+  }
 }
 
 export default function ComplianceDashboard() {
@@ -61,20 +83,15 @@ export default function ComplianceDashboard() {
     }).finally(() => setLoading(false))
   }, [])
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'compliant': return 'text-emerald-400'
-      case 'warning': return 'text-amber-400'
-      case 'violation': return 'text-red-400'
-      default: return 'text-gray-400'
-    }
-  }
-
   const statusBg = (status: string) => {
     switch (status) {
       case 'compliant': return 'bg-emerald-500/20 text-emerald-400'
+      case 'pass': return 'bg-emerald-500/20 text-emerald-400'
       case 'warning': return 'bg-amber-500/20 text-amber-400'
       case 'violation': return 'bg-red-500/20 text-red-400'
+      case 'fail': return 'bg-red-500/20 text-red-400'
+      case 'unavailable': return 'bg-red-500/20 text-red-400'
+      case 'awaiting_feed': return 'bg-sky-500/20 text-sky-300'
       default: return 'bg-gray-500/20 text-gray-400'
     }
   }
@@ -84,6 +101,30 @@ export default function ComplianceDashboard() {
     if (pct >= 75) return 'bg-amber-500'
     return 'bg-emerald-500'
   }
+
+  const sourceBadgeClass = (status?: string) => {
+    switch (status) {
+      case 'healthy': return 'bg-emerald-500/20 text-emerald-400'
+      case 'partial': return 'bg-amber-500/20 text-amber-300'
+      case 'unavailable': return 'bg-red-500/20 text-red-300'
+      default: return 'bg-gray-500/20 text-gray-300'
+    }
+  }
+
+  const checklistStatusIcon = (status: string) => {
+    if (status === 'pass') return <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+    if (status === 'unavailable' || status === 'fail') return <XCircle className="w-5 h-5 text-red-400" />
+    return <AlertTriangle className="w-5 h-5 text-amber-400" />
+  }
+
+  const inspectedLabel = inspection?.vehicles_inspected_today === null || inspection?.vehicles_inspected_today === undefined
+    ? 'Awaiting DVIR feed'
+    : `${inspection.vehicles_inspected_today}/${inspection.total_vehicles}`
+
+  const nextAuditLabel = inspection?.next_audit_date || 'Awaiting audit feed'
+  const complianceRateLabel = hos?.source_status?.status === 'healthy' && hos.summary.total_drivers > 0
+    ? `${hos.summary.compliance_rate}%`
+    : 'Pending'
 
   if (loading) {
     return (
@@ -101,9 +142,17 @@ export default function ComplianceDashboard() {
         animate={{ opacity: 1, y: 0 }}
         className="bg-gradient-to-r from-blue-900/50 to-purple-900/50 border border-blue-800/30 rounded-xl p-6"
       >
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <span className={`rounded-full px-2 py-1 font-medium ${sourceBadgeClass(hos?.source_status?.status)}`}>
+            HOS source: {hos?.source_status?.status || 'pending'}
+          </span>
+          <span className="rounded-full bg-gray-800/70 px-2 py-1 text-gray-300">
+            {hos?.evidence_mode?.replace(/_/g, ' ') || 'Geotab trip activity proxy'}
+          </span>
+        </div>
         <div className="flex flex-col md:flex-row items-center gap-6">
           <div className="text-center">
-            <div className="text-5xl font-bold text-white">{hos?.summary.compliance_rate}%</div>
+            <div className="text-5xl font-bold text-white">{complianceRateLabel}</div>
             <div className="text-sm text-blue-300 mt-1">Fleet Compliance Rate</div>
           </div>
           <div className="flex-1 grid grid-cols-3 gap-4">
@@ -144,8 +193,11 @@ export default function ComplianceDashboard() {
             <Clock className="w-5 h-5 text-blue-400" />
             Hours of Service Status
           </h3>
+          <p className="mb-4 text-xs text-gray-500">
+            {hos?.source_status?.message || 'Awaiting source status from Geotab.'}
+          </p>
           <div className="space-y-3">
-            {hos?.drivers.slice(0, 10).map((driver, i) => (
+            {hos?.drivers.length ? hos.drivers.slice(0, 10).map((driver, i) => (
               <motion.div
                 key={driver.vehicle_id}
                 initial={{ opacity: 0, x: -10 }}
@@ -183,7 +235,11 @@ export default function ComplianceDashboard() {
                   <span className="text-xs text-gray-400 w-12 text-right">{driver.week_hours}h</span>
                 </div>
               </motion.div>
-            ))}
+            )) : (
+              <div className="rounded-lg border border-dashed border-gray-800 px-4 py-8 text-center text-sm text-gray-500">
+                No source-backed HOS proxy rows returned.
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -198,6 +254,14 @@ export default function ComplianceDashboard() {
             <ClipboardCheck className="w-5 h-5 text-emerald-400" />
             Inspection Readiness
           </h3>
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className={`rounded-full px-2 py-1 font-medium ${sourceBadgeClass(inspection?.source_status?.status)}`}>
+              Source: {inspection?.source_status?.status || 'pending'}
+            </span>
+            <span className="rounded-full bg-gray-800/70 px-2 py-1 text-gray-300">
+              Read-only
+            </span>
+          </div>
           
           {/* Score Circle */}
           <div className="flex items-center gap-6 mb-6">
@@ -223,10 +287,13 @@ export default function ComplianceDashboard() {
             </div>
             <div>
               <div className="text-sm text-gray-400">Vehicles inspected today</div>
-              <div className="text-lg font-semibold">{inspection?.vehicles_inspected_today}/{inspection?.total_vehicles}</div>
-              <div className="text-xs text-gray-500 mt-1">Next audit: {inspection?.next_audit_date}</div>
+              <div className="text-lg font-semibold">{inspectedLabel}</div>
+              <div className="text-xs text-gray-500 mt-1">Next audit: {nextAuditLabel}</div>
             </div>
           </div>
+          <p className="mb-4 text-xs text-gray-500">
+            {inspection?.source_status?.message || 'Awaiting inspection source status.'}
+          </p>
 
           {/* Checklist */}
           <div className="space-y-2">
@@ -239,12 +306,14 @@ export default function ComplianceDashboard() {
                 className="flex items-center gap-3 py-2 px-3 bg-gray-800/20 rounded-lg"
               >
                 <span className="text-lg">{item.icon}</span>
-                <span className="flex-1 text-sm">{item.item}</span>
-                {item.status === 'pass' ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-amber-400" />
-                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm">{item.item}</span>
+                  <span className="block truncate text-xs text-gray-500">{item.detail || item.source}</span>
+                </span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${statusBg(item.status)}`}>
+                  {item.status.replace(/_/g, ' ')}
+                </span>
+                {checklistStatusIcon(item.status)}
               </motion.div>
             ))}
           </div>
