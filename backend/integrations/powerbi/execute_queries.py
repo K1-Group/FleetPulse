@@ -7,6 +7,7 @@ and driver-pay facts.
 
 from __future__ import annotations
 
+import io
 import os
 import time
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ _QUERY_CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {
 
 @dataclass(frozen=True)
 class PowerBIExecuteQueriesConfig:
-    """Runtime config for Power BI executeQueries calls."""
+    """Runtime config for Power BI semantic-model query calls."""
 
     workspace_id: str = ""
     dataset_id: str = ""
@@ -106,19 +107,41 @@ def _get_access_token(config: PowerBIExecuteQueriesConfig) -> str:
     return str(token)
 
 
-def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[dict[str, Any]]:
-    """Run one DAX query against a Power BI semantic model and return table rows."""
+def _parse_arrow_rows(content: bytes) -> list[dict[str, Any]]:
+    """Decode Power BI executeDaxQueries Arrow stream rows."""
 
-    if not config.configured:
-        raise RuntimeError("powerbi_execute_queries_not_configured")
+    try:
+        import pyarrow as pa  # type: ignore[import-not-found]
+        import pyarrow.ipc as pa_ipc  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("pyarrow_not_installed_for_powerbi_execute_dax_queries") from exc
 
-    cache_key = (config.workspace_id, config.dataset_id, query)
-    now = time.time()
-    cached = _QUERY_CACHE.get(cache_key)
-    if cached and cached[0] > now:
-        return list(cached[1])
+    stream = io.BytesIO(content)
+    rows: list[dict[str, Any]] = []
+    while stream.tell() < len(content):
+        try:
+            with pa_ipc.open_stream(stream) as reader:
+                table = reader.read_all()
+                metadata = {
+                    key.decode(): value.decode()
+                    for key, value in (reader.schema.metadata or {}).items()
+                }
+        except pa.ArrowInvalid:
+            break
+        if metadata.get("IsError") == "true":
+            fault_code = metadata.get("FaultCode") or "unknown"
+            fault_string = metadata.get("FaultString") or "Power BI DAX query failed"
+            raise RuntimeError(f"powerbi_execute_dax_queries_error[{fault_code}]: {fault_string}")
+        rows.extend(row for row in table.to_pylist() if isinstance(row, dict))
+    return rows
 
-    token = _get_access_token(config)
+
+def _execute_queries_json(
+    *,
+    config: PowerBIExecuteQueriesConfig,
+    token: str,
+    query: str,
+) -> list[dict[str, Any]]:
     url = (
         "https://api.powerbi.com/v1.0/myorg/groups/"
         f"{config.workspace_id}/datasets/{config.dataset_id}/executeQueries"
@@ -142,7 +165,54 @@ def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[d
     if not tables:
         return []
     rows = (tables[0] or {}).get("rows") or []
-    normalized = [row for row in rows if isinstance(row, dict)]
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _execute_dax_queries_arrow(
+    *,
+    config: PowerBIExecuteQueriesConfig,
+    token: str,
+    query: str,
+) -> list[dict[str, Any]]:
+    url = (
+        "https://api.powerbi.com/v1.0/myorg/groups/"
+        f"{config.workspace_id}/datasets/{config.dataset_id}/executeDaxQueries"
+    )
+    payload = {
+        "query": query,
+        "schemaOnly": False,
+        "resultSetRowCountLimit": 100000,
+    }
+    headers = {
+        "Accept": "application/vnd.apache.arrow.stream",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=config.timeout_seconds) as client:
+        response = client.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    return _parse_arrow_rows(response.content)
+
+
+def execute_dax_query(config: PowerBIExecuteQueriesConfig, query: str) -> list[dict[str, Any]]:
+    """Run one DAX query against a Power BI semantic model and return table rows."""
+
+    if not config.configured:
+        raise RuntimeError("powerbi_execute_queries_not_configured")
+
+    cache_key = (config.workspace_id, config.dataset_id, query)
+    now = time.time()
+    cached = _QUERY_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return list(cached[1])
+
+    token = _get_access_token(config)
+    try:
+        normalized = _execute_queries_json(config=config, token=token, query=query)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code not in {401, 403}:
+            raise
+        normalized = _execute_dax_queries_arrow(config=config, token=token, query=query)
     _QUERY_CACHE[cache_key] = (now + xcelerator_refresh_seconds(), normalized)
     return list(normalized)
 
