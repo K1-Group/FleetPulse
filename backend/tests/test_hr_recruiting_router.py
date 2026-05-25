@@ -36,9 +36,11 @@ def _dataset() -> dict:
     return {
         "generated_at": "2026-05-15T12:00:00+00:00",
         "projection_mode": "read_only",
+        "source_profile": "worklist_snapshot",
         "source_system": "TenStreet Outlook/Zapier",
         "source_authority": "Zapier Table + approved TenStreet Outlook emails",
         "source": "zapier_table",
+        "source_artifact": None,
         "table_id": "01KR00WV4YHCB6BMYDE1EG7HEM",
         "source_status": "ok",
         "source_message": None,
@@ -196,6 +198,7 @@ def test_hr_recruiting_worklist_endpoint_returns_read_only_dataset(monkeypatch) 
 
 
 def test_hr_recruiting_status_exposes_state_path_readiness(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HR_RECRUITING_WORKBOOK_PATH", raising=False)
     monkeypatch.setenv("HR_RECRUITING_STATE_PATH", str(tmp_path / "hr-recruiting.json"))
     response = _client(monkeypatch).get("/api/hr-recruiting/status")
 
@@ -203,7 +206,22 @@ def test_hr_recruiting_status_exposes_state_path_readiness(monkeypatch, tmp_path
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
     assert payload["state_path_configured"] is True
+    assert payload["workbook_configured"] is False
     assert "HR_RECRUITING_IMPORT_API_KEY" not in response.text
+
+
+def test_hr_recruiting_status_exposes_workbook_readiness(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HR_RECRUITING_STATE_PATH", raising=False)
+    monkeypatch.setenv("HR_RECRUITING_WORKBOOK_PATH", str(tmp_path / "hr-kpi.xlsx"))
+    response = _client(monkeypatch).get("/api/hr-recruiting/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection_mode"] == "read_only"
+    assert payload["workbook_configured"] is True
+    assert payload["source_profile"] == "kpi_workbook"
+    assert payload["source_system"] == "HR Lead KPI Recheck workbook"
+    assert payload["source_authority"] == "Grasshopper/SharePoint/Tenstreet HR KPI recheck workbook"
 
 
 def test_hr_recruiting_import_endpoint_is_key_protected(monkeypatch, tmp_path) -> None:

@@ -29,6 +29,8 @@ import type {
   HrRecruitingStatusCount,
   HrRecruitingSummary,
   HrRecruitingTrendRow,
+  HrRecruitingWorkbookEvidence,
+  HrRecruitingWorkbookMemberKpi,
   HrRecruitingWorklistRow,
 } from '../types/fleet'
 
@@ -160,6 +162,11 @@ function compactDate(value: string) {
   return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function workbookMetric(evidence: HrRecruitingWorkbookEvidence | undefined, key: string) {
+  const value = evidence?.kpi_summary?.[key]
+  return typeof value === 'number' ? value : null
+}
+
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
   return (
@@ -242,20 +249,25 @@ function Skeleton() {
   )
 }
 
-function WorklistTable({ rows }: { rows: HrRecruitingWorklistRow[] }) {
+function WorklistTable({ rows, workbookSource }: { rows: HrRecruitingWorklistRow[]; workbookSource: boolean }) {
   if (!rows.length) {
-    return <EmptyPanel message="The configured Zapier/Outlook snapshot has no active worklist leads after validation and dedupe." />
+    return <EmptyPanel message={workbookSource ? 'The configured HR KPI workbook has no lead-level KPI rows after validation.' : 'The configured Zapier/Outlook snapshot has no active worklist leads after validation and dedupe.'} />
   }
+  const firstColumn = workbookSource ? 'KPI Bucket' : 'Worklist'
+  const countColumn = workbookSource ? 'Leads' : 'Active'
+  const newColumn = workbookSource ? 'New Today' : 'New Today'
+  const avgColumn = workbookSource ? 'Avg First Outreach' : 'Avg Age'
+  const maxColumn = workbookSource ? 'Max First Outreach' : 'Max Age'
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
       <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
         <thead className="bg-gray-900/80 light:bg-gray-100">
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
-            <th className="px-4 py-3 font-medium">Worklist</th>
-            <th className="px-4 py-3 font-medium">Active</th>
-            <th className="px-4 py-3 font-medium">New Today</th>
-            <th className="px-4 py-3 font-medium">Avg Age</th>
-            <th className="px-4 py-3 font-medium">Max Age</th>
+            <th className="px-4 py-3 font-medium">{firstColumn}</th>
+            <th className="px-4 py-3 font-medium">{countColumn}</th>
+            <th className="px-4 py-3 font-medium">{newColumn}</th>
+            <th className="px-4 py-3 font-medium">{avgColumn}</th>
+            <th className="px-4 py-3 font-medium">{maxColumn}</th>
             <th className="px-4 py-3 font-medium">24h</th>
             <th className="px-4 py-3 font-medium">48h</th>
             <th className="px-4 py-3 font-medium">72h</th>
@@ -280,13 +292,13 @@ function WorklistTable({ rows }: { rows: HrRecruitingWorklistRow[] }) {
   )
 }
 
-function StaleWorklistTable({ rows }: { rows: HrRecruitingWorklistRow[] }) {
+function StaleWorklistTable({ rows, workbookSource }: { rows: HrRecruitingWorklistRow[]; workbookSource: boolean }) {
   const staleRows = rows
     .filter(row => row.stale_24h || row.stale_48h || row.stale_72h)
     .sort((a, b) => b.stale_72h - a.stale_72h || b.stale_48h - a.stale_48h || b.stale_24h - a.stale_24h)
 
   if (!staleRows.length) {
-    return <EmptyPanel message="No active worklist leads are over the configured stale thresholds." />
+    return <EmptyPanel message={workbookSource ? 'No HR KPI workbook leads are in late or missing outreach buckets.' : 'No active worklist leads are over the configured stale thresholds.'} />
   }
 
   return (
@@ -296,7 +308,7 @@ function StaleWorklistTable({ rows }: { rows: HrRecruitingWorklistRow[] }) {
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="font-medium text-white light:text-gray-900">{row.worklist}</p>
-              <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{formatCount(row.active_leads)} active leads · max age {formatHours(row.max_age_hours)}</p>
+              <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{formatCount(row.active_leads)} {workbookSource ? 'leads' : 'active leads'} · max {workbookSource ? 'first outreach' : 'age'} {formatHours(row.max_age_hours)}</p>
             </div>
             <span className="rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-200 light:text-amber-700">
               {formatCount(row.stale_24h)} over 24h
@@ -365,7 +377,7 @@ function StatusCountChart({ rows }: { rows: HrRecruitingStatusCount[] }) {
   )
 }
 
-function DailyVolumeTable({ rows }: { rows: HrRecruitingDailyRow[] }) {
+function DailyVolumeTable({ rows, workbookSource }: { rows: HrRecruitingDailyRow[]; workbookSource: boolean }) {
   const recent = rows.slice(-8).reverse()
   if (!recent.length) return null
 
@@ -375,11 +387,11 @@ function DailyVolumeTable({ rows }: { rows: HrRecruitingDailyRow[] }) {
         <thead className="bg-gray-900/80 light:bg-gray-100">
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
             <th className="px-4 py-3 font-medium">Date</th>
-            <th className="px-4 py-3 font-medium">Worklist</th>
+            <th className="px-4 py-3 font-medium">{workbookSource ? 'KPI Bucket' : 'Worklist'}</th>
             <th className="px-4 py-3 font-medium">New</th>
-            <th className="px-4 py-3 font-medium">Completed</th>
-            <th className="px-4 py-3 font-medium">Active</th>
-            <th className="px-4 py-3 font-medium">Avg Process</th>
+            <th className="px-4 py-3 font-medium">{workbookSource ? 'Real Discuss.' : 'Completed'}</th>
+            <th className="px-4 py-3 font-medium">{workbookSource ? 'Leads' : 'Active'}</th>
+            <th className="px-4 py-3 font-medium">{workbookSource ? 'Avg Outreach' : 'Avg Process'}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
@@ -399,6 +411,104 @@ function DailyVolumeTable({ rows }: { rows: HrRecruitingDailyRow[] }) {
   )
 }
 
+function MemberKpiTable({ rows, label }: { rows: HrRecruitingWorkbookMemberKpi[]; label: string }) {
+  if (!rows.length) return null
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+      <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+        <thead className="bg-gray-900/80 light:bg-gray-100">
+          <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+            <th className="px-4 py-3 font-medium">HR Member</th>
+            <th className="px-4 py-3 font-medium">{label}</th>
+            <th className="px-4 py-3 font-medium">Within 24h</th>
+            <th className="px-4 py-3 font-medium">24-48h</th>
+            <th className="px-4 py-3 font-medium">48-72h</th>
+            <th className="px-4 py-3 font-medium">Over 72h</th>
+            <th className="px-4 py-3 font-medium">Rate</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+          {rows.map(row => (
+            <tr key={`${label}-${row.hr_member}`} className="bg-gray-900/35 light:bg-white">
+              <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.hr_member}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.lead_count)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.within_24h)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.recovered_24_48h)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.late_48_72h)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.failed_over_72h)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentValue(row.within_24h_rate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function WorkbookEvidencePanel({ evidence }: { evidence: HrRecruitingWorkbookEvidence | undefined }) {
+  if (!evidence) return null
+  const cards = [
+    { label: 'Lead Forms', value: workbookMetric(evidence, 'unique_lead_forms') },
+    { label: 'Call Attempts', value: workbookMetric(evidence, 'total_outbound_attempts') },
+    { label: 'No Outbound', value: workbookMetric(evidence, 'no_outbound_found') },
+    { label: 'No Real Discussion', value: workbookMetric(evidence, 'no_real_discussion_found') },
+  ]
+
+  return (
+    <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Database className="h-5 w-5 text-blue-300" />
+          <h3 className="font-semibold text-white light:text-gray-900">Workbook Evidence</h3>
+        </div>
+        <span className="text-xs text-gray-500 light:text-gray-600">{evidence.workbook_name || 'pending workbook'}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {cards.map(card => (
+          <div key={card.label} className="rounded-lg border border-gray-800/70 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
+            <p className="text-xs text-gray-500 light:text-gray-600">{card.label}</p>
+            <p className="mt-1 text-xl font-semibold text-white light:text-gray-900">{formatCount(card.value)}</p>
+          </div>
+        ))}
+      </div>
+      {!!evidence.missing_tabs.length && (
+        <p className="mt-3 text-sm text-amber-200 light:text-amber-700">
+          Missing workbook tabs: {evidence.missing_tabs.join(', ')}
+        </p>
+      )}
+      <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <MemberKpiTable rows={evidence.first_outreach_by_member} label="First Outreach" />
+        <MemberKpiTable rows={evidence.real_discussion_by_member} label="Real Discussion" />
+      </div>
+      {!!evidence.source_log_qa.length && (
+        <div className="mt-5 overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+          <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+            <thead className="bg-gray-900/80 light:bg-gray-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+                <th className="px-4 py-3 font-medium">Source File</th>
+                <th className="px-4 py-3 font-medium">Rows</th>
+                <th className="px-4 py-3 font-medium">Mapping</th>
+                <th className="px-4 py-3 font-medium">QA Notes</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+              {evidence.source_log_qa.map(row => (
+                <tr key={row.file} className="bg-gray-900/35 light:bg-white">
+                  <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.file}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.row_count)}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{row.used_for_mapping ? 'Used' : 'Reference only'}</td>
+                  <td className="max-w-[520px] px-4 py-3 text-gray-300 light:text-gray-700">{row.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function HrRecruitingWorklist() {
   const { data, loading, error, refresh } = useHrRecruitingWorklist()
   const summary = data?.summary || ZERO_SUMMARY
@@ -406,6 +516,7 @@ export default function HrRecruitingWorklist() {
   const trend = data?.trend || []
   const statusCounts = data?.status_counts || []
   const daily = data?.daily || []
+  const workbookSource = data?.source_profile === 'kpi_workbook'
   const hardTargets = [
     targetOrFallback(data?.hard_targets, 'new_hires_7d', summary.new_hires_7d),
     targetOrFallback(data?.hard_targets, 'active_qualified_pipeline', summary.active_qualified_pipeline),
@@ -413,7 +524,7 @@ export default function HrRecruitingWorklist() {
     targetOrFallback(data?.hard_targets, 'stale_untouched_48h', summary.stale_untouched_48h),
     targetOrFallback(data?.hard_targets, 'orientation_show_rate', summary.orientation_show_rate),
   ]
-  const sourceMessage = data?.source_message || 'Configure the approved Zapier/Outlook HR snapshot to populate this monitor.'
+  const sourceMessage = data?.source_message || (workbookSource ? 'Configure HR_RECRUITING_WORKBOOK_PATH with the approved HR KPI workbook to populate this monitor.' : 'Configure the approved Zapier/Outlook HR snapshot to populate this monitor.')
   const empty = !loading && !error && data && data.row_counts.deduped_leads === 0
 
   if (loading && !data) {
@@ -430,14 +541,14 @@ export default function HrRecruitingWorklist() {
           <div className="min-w-0">
             <h2 className="text-xl font-bold text-white light:text-gray-900">HR Recruiting Worklist</h2>
             <p className="max-w-[calc(100vw-6rem)] text-sm text-gray-400 light:text-gray-600 xl:max-w-none">
-              <span className="sm:hidden">Read-only Zapier/Outlook analytics</span>
-              <span className="hidden sm:inline">Read-only Zapier/Outlook analytics · no applicant contact data exposed</span>
+              <span className="sm:hidden">{workbookSource ? 'Read-only workbook evidence' : 'Read-only Zapier/Outlook analytics'}</span>
+              <span className="hidden sm:inline">{workbookSource ? 'Read-only Grasshopper/SharePoint/Tenstreet workbook evidence · no applicant contact data exposed' : 'Read-only Zapier/Outlook analytics · no applicant contact data exposed'}</span>
             </p>
           </div>
         </div>
         <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center xl:w-auto">
           <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
-            Table {data?.table_id || '01KR00WV4YHCB6BMYDE1EG7HEM'}
+            {workbookSource ? data?.source_artifact || 'Workbook pending' : `Table ${data?.table_id || '01KR00WV4YHCB6BMYDE1EG7HEM'}`}
           </span>
           <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
             {data?.source_status || 'loading'}
@@ -473,6 +584,8 @@ export default function HrRecruitingWorklist() {
         <KpiCard icon={<ShieldCheck className="h-5 w-5 text-violet-200" />} label={hardTargets[4].label} value={targetValue(hardTargets[4])} detail={`Target ${hardTargets[4].display_target}`} tone="bg-violet-500/15" status={hardTargets[4].status} />
       </div>
 
+      {workbookSource && <WorkbookEvidencePanel evidence={data?.workbook_evidence} />}
+
       <DepartmentCallAnalysisPanel department="HR" title="HR Call Analysis" />
 
       {empty && <EmptyPanel message={sourceMessage} />}
@@ -481,17 +594,17 @@ export default function HrRecruitingWorklist() {
         <section className="xl:col-span-2 rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
           <div className="mb-4 flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-cyan-300" />
-            <h3 className="font-semibold text-white light:text-gray-900">Leads by Worklist</h3>
+            <h3 className="font-semibold text-white light:text-gray-900">{workbookSource ? 'First Outreach KPI Buckets' : 'Leads by Worklist'}</h3>
           </div>
-          <WorklistTable rows={byWorklist} />
+          <WorklistTable rows={byWorklist} workbookSource={workbookSource} />
         </section>
 
         <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
           <div className="mb-4 flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-300" />
-            <h3 className="font-semibold text-white light:text-gray-900">Stale Leads</h3>
+            <h3 className="font-semibold text-white light:text-gray-900">{workbookSource ? 'Late or Missing Outreach' : 'Stale Leads'}</h3>
           </div>
-          <StaleWorklistTable rows={byWorklist} />
+          <StaleWorklistTable rows={byWorklist} workbookSource={workbookSource} />
         </section>
       </div>
 
@@ -518,7 +631,7 @@ export default function HrRecruitingWorklist() {
           <Database className="h-5 w-5 text-blue-300" />
           <h3 className="font-semibold text-white light:text-gray-900">Daily Worklist Rollup</h3>
         </div>
-        <DailyVolumeTable rows={daily} />
+        <DailyVolumeTable rows={daily} workbookSource={workbookSource} />
         <p className="mt-4 text-xs text-gray-500 light:text-gray-600">
           Generated {data?.generated_at ? new Date(data.generated_at).toLocaleString() : 'pending'} · {data?.source_authority || 'Zapier Table + approved TenStreet Outlook emails'} · PII suppressed
         </p>
