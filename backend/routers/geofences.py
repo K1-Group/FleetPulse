@@ -1,14 +1,16 @@
 """Geofence management endpoints."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import Optional
 
 from geotab_client import GeotabClient
 from _cache import get_cached, set_cached
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class GeofenceCreate(BaseModel):
@@ -68,50 +70,8 @@ async def get_geofences():
         return result
         
     except Exception as e:
-        return [
-            {
-                "id": "demo-zone-1",
-                "name": "LAS Airport Hub",
-                "points": [
-                    {"lat": 36.080, "lng": -115.152},
-                    {"lat": 36.084, "lng": -115.152},
-                    {"lat": 36.084, "lng": -115.148},
-                    {"lat": 36.080, "lng": -115.148},
-                ],
-                "color": "#3b82f6",
-                "displayed": True,
-                "zone_type": "customer",
-                "comment": "Main airport pickup/dropoff zone",
-            },
-            {
-                "id": "demo-zone-2",
-                "name": "Strip North",
-                "points": [
-                    {"lat": 36.126, "lng": -115.174},
-                    {"lat": 36.130, "lng": -115.174},
-                    {"lat": 36.130, "lng": -115.168},
-                    {"lat": 36.126, "lng": -115.168},
-                ],
-                "color": "#8b5cf6",
-                "displayed": True,
-                "zone_type": "customer",
-                "comment": "K1 Logistics Strip north coverage",
-            },
-            {
-                "id": "demo-zone-3",
-                "name": "Henderson Depot",
-                "points": [
-                    {"lat": 36.028, "lng": -115.035},
-                    {"lat": 36.032, "lng": -115.035},
-                    {"lat": 36.032, "lng": -115.031},
-                    {"lat": 36.028, "lng": -115.031},
-                ],
-                "color": "#10b981",
-                "displayed": True,
-                "zone_type": "office",
-                "comment": "Henderson service depot",
-            },
-        ]
+        logger.warning("geofence_zones_unavailable", extra={"error": str(e)})
+        return []
 
 
 @router.get("/activity")
@@ -144,25 +104,12 @@ async def get_geofence_activity():
                     "timestamp": str(ex.get("activeFrom", now.isoformat())),
                 })
         
-        # If no real zone events, provide demo data
-        if not zone_events:
-            zone_events = [
-                {"id": "evt-1", "vehicle": "Budget-LV-042", "event_type": "exit", "zone_name": "LAS Airport Hub", "timestamp": (now - timedelta(minutes=15)).isoformat()},
-                {"id": "evt-2", "vehicle": "Budget-LV-018", "event_type": "enter", "zone_name": "Strip North", "timestamp": (now - timedelta(minutes=32)).isoformat()},
-                {"id": "evt-3", "vehicle": "Budget-LV-073", "event_type": "enter", "zone_name": "Henderson Depot", "timestamp": (now - timedelta(hours=1)).isoformat()},
-                {"id": "evt-4", "vehicle": "Budget-LV-055", "event_type": "exit", "zone_name": "Strip North", "timestamp": (now - timedelta(hours=2)).isoformat()},
-                {"id": "evt-5", "vehicle": "Budget-LV-091", "event_type": "enter", "zone_name": "LAS Airport Hub", "timestamp": (now - timedelta(hours=3)).isoformat()},
-            ]
-        
         set_cached(cache_key, zone_events, ttl=60)
         return zone_events
         
     except Exception as e:
-        now = datetime.now(timezone.utc)
-        return [
-            {"id": "evt-1", "vehicle": "Budget-LV-042", "event_type": "exit", "zone_name": "LAS Airport Hub", "timestamp": (now - timedelta(minutes=15)).isoformat()},
-            {"id": "evt-2", "vehicle": "Budget-LV-018", "event_type": "enter", "zone_name": "Strip North", "timestamp": (now - timedelta(minutes=32)).isoformat()},
-        ]
+        logger.warning("geofence_activity_unavailable", extra={"error": str(e)})
+        return []
 
 
 @router.post("/create")
@@ -203,9 +150,7 @@ async def create_geofence(geofence: GeofenceCreate):
         }
         
     except Exception as e:
-        return {
-            "id": "demo-new",
-            "name": geofence.name,
-            "status": "demo",
-            "message": f"Demo mode: Geofence '{geofence.name}' would be created. Error: {str(e)}"
-        }
+        raise HTTPException(
+            status_code=503,
+            detail=f"Geotab geofence creation is unavailable; no fallback zone was created. {type(e).__name__}: {e}",
+        ) from e

@@ -30,7 +30,7 @@ import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
 import UserLoginStatus from './components/UserLoginStatus'
-import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
+import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useFuelTrends, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -145,6 +145,7 @@ export default function App() {
   const monitorStatus = useMonitorStatus(dashboardActive)
   const trailerTracking = useControlTowerTrailerTracking(dashboardActive)
   const driverWorkforce = useDriverWorkforce(dashboardActive)
+  const fuelTrends = useFuelTrends(dashboardActive)
   const utilization7d = useDataConnectorVehicleKpis(7, dashboardActive)
   const safety7d = useDataConnectorSafetyScores(7, dashboardActive)
   const entityMargin = useEntityMarginYtd(dashboardActive)
@@ -324,7 +325,13 @@ export default function App() {
 
         {/* Fleet Analytics */}
         <section>
-          <FleetAnalytics loading={overview.loading} locations={locations.data} />
+          <FleetAnalytics
+            loading={overview.loading || fuelTrends.loading || alerts.loading}
+            overview={overview.data}
+            locations={locations.data}
+            alerts={alerts.data}
+            fuelTrends={fuelTrends.data}
+          />
         </section>
 
         {/* Map + Alerts row */}

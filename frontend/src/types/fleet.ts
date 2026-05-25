@@ -568,6 +568,15 @@ export interface OperatingCostSource {
   table?: string
 }
 
+export interface FuelTrend {
+  date: string
+  miles?: number
+  gallons?: number
+  cost?: number
+  fuel_cost_source?: string
+  transaction_count?: number
+}
+
 export interface EntityMarginSummary {
   miles: number
   drive_hours: number

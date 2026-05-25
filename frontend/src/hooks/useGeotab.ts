@@ -22,6 +22,7 @@ import type {
   DriverScore,
   FleetCoachingSummary,
   FleetOverview,
+  FuelTrend,
   HrCallAnalysisDataset,
   HrRecruitingDataset,
   LaneStabilityPayload,
@@ -130,6 +131,10 @@ export function useLocations(enabled = true) {
 
 export function useDashboardValidation(enabled = true) {
   return useFetch<DashboardValidationResponse>(`${API}/dashboard/validation`, 60000, enabled)
+}
+
+export function useFuelTrends(enabled = true) {
+  return useFetch<FuelTrend[]>(`${API}/fuel/trends`, 300000, enabled, 25000)
 }
 
 export function useDataConnectorVehicleKpis(days = 7, enabled = true) {

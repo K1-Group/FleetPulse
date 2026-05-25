@@ -25,7 +25,8 @@ export default function GeofenceManager() {
   const [activity, setActivity] = useState<ZoneEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
-  const [newZone, setNewZone] = useState({ name: '', latitude: 36.08, longitude: -115.15, radius: 200 })
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [newZone, setNewZone] = useState({ name: '', latitude: '', longitude: '', radius: '200' })
 
   useEffect(() => {
     Promise.all([
@@ -38,18 +39,30 @@ export default function GeofenceManager() {
   }, [])
 
   const createZone = async () => {
+    setCreateError(null)
+    const latitude = Number(newZone.latitude)
+    const longitude = Number(newZone.longitude)
+    const radius = Number(newZone.radius)
+    if (!newZone.name.trim() || !Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(radius)) {
+      setCreateError('Enter a zone name, latitude, longitude, and radius from the real Geotab boundary.')
+      return
+    }
     const res = await fetch('/api/geofences/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: newZone.name,
-        latitude: newZone.latitude,
-        longitude: newZone.longitude,
-        radius_meters: newZone.radius,
+        latitude,
+        longitude,
+        radius_meters: radius,
       }),
     })
     const data = await res.json()
-    if (data.status === 'created' || data.status === 'demo') {
+    if (!res.ok) {
+      setCreateError(data.detail || 'Geotab rejected the geofence create request.')
+      return
+    }
+    if (data.status === 'created') {
       setShowCreate(false)
       // Refresh zones
       const z = await fetch('/api/geofences/zones').then(r => r.json())
@@ -102,7 +115,7 @@ export default function GeofenceManager() {
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
-            className="bg-gray-800/50 rounded-lg p-4 mb-6 grid grid-cols-1 md:grid-cols-4 gap-4"
+            className="bg-gray-800/50 rounded-lg p-4 mb-6 grid grid-cols-1 md:grid-cols-5 gap-4"
           >
             <input
               type="text"
@@ -115,7 +128,7 @@ export default function GeofenceManager() {
               type="number"
               placeholder="Latitude"
               value={newZone.latitude}
-              onChange={e => setNewZone({ ...newZone, latitude: parseFloat(e.target.value) })}
+              onChange={e => setNewZone({ ...newZone, latitude: e.target.value })}
               className="bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-2 text-white"
               step="0.001"
             />
@@ -123,23 +136,36 @@ export default function GeofenceManager() {
               type="number"
               placeholder="Longitude"
               value={newZone.longitude}
-              onChange={e => setNewZone({ ...newZone, longitude: parseFloat(e.target.value) })}
+              onChange={e => setNewZone({ ...newZone, longitude: e.target.value })}
               className="bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-2 text-white"
               step="0.001"
             />
+            <input
+              type="number"
+              placeholder="Radius meters"
+              value={newZone.radius}
+              onChange={e => setNewZone({ ...newZone, radius: e.target.value })}
+              className="bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-2 text-white"
+              min="1"
+            />
             <button
               onClick={createZone}
-              disabled={!newZone.name}
+              disabled={!newZone.name.trim() || !newZone.latitude || !newZone.longitude || !newZone.radius}
               className="bg-emerald-500 text-white rounded-lg px-4 py-2 hover:bg-emerald-600 disabled:opacity-50 transition-all"
             >
               Create Zone
             </button>
+            {createError && (
+              <p className="md:col-span-5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                {createError}
+              </p>
+            )}
           </motion.div>
         )}
 
         {/* Zone Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-          {zones.map((zone, i) => (
+          {zones.length ? zones.map((zone, i) => (
             <motion.div
               key={zone.id}
               initial={{ opacity: 0, scale: 0.95 }}
@@ -159,7 +185,11 @@ export default function GeofenceManager() {
                 )}
               </div>
             </motion.div>
-          ))}
+          )) : (
+            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-dashed border-gray-800 px-4 py-8 text-center text-sm text-gray-500">
+              No source-backed Geotab zones returned.
+            </div>
+          )}
         </div>
 
         {/* Live Activity Feed */}
