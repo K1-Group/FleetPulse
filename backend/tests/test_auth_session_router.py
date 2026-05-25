@@ -69,7 +69,58 @@ def test_session_decodes_easy_auth_user(monkeypatch):
         "email": "rami@k1group.net",
         "principal_id": "principal-123",
     }
+    assert payload["seat_access"]["authorization_mode"] == "optional"
     assert payload["logout_url"] == "/.auth/logout?post_logout_redirect_uri=%2F"
+
+
+def test_session_maps_easy_auth_groups_to_fleetpulse_seats(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_ENTRA_LOGIN_ENABLED", "true")
+    monkeypatch.setenv(
+        "FLEETPULSE_ENTRA_SEAT_GROUPS_JSON",
+        json.dumps(
+            {
+                "executive_command": {
+                    "groupId": "group-executive",
+                }
+            }
+        ),
+    )
+    headers = {
+        "x-ms-client-principal": _principal(
+            [
+                {"typ": "preferred_username", "val": "rami@k1group.net"},
+                {"typ": "groups", "val": "GROUP-EXECUTIVE"},
+            ]
+        ),
+        "x-ms-client-principal-idp": "aad",
+    }
+
+    response = _client().get("/api/auth/session", headers=headers)
+
+    assert response.status_code == 200
+    access = response.json()["seat_access"]
+    assert access["source_authority"] == "Microsoft Entra security groups"
+    assert access["write_back_allowed"] is False
+    assert access["primary_seat"]["id"] == "executive_command"
+    assert "finance" in access["allowed_tabs"]
+
+
+def test_seat_access_endpoint_returns_projection(monkeypatch):
+    monkeypatch.setenv(
+        "FLEETPULSE_ENTRA_SEAT_GROUPS_JSON",
+        json.dumps({"fleet_compliance_manager": {"groupId": "group-fleet"}}),
+    )
+    headers = {
+        "x-ms-client-principal": _principal([{"typ": "groups", "val": "group-fleet"}]),
+        "x-ms-client-principal-idp": "aad",
+    }
+
+    response = _client().get("/api/auth/seat-access", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["primary_seat"]["id"] == "fleet_compliance_manager"
+    assert "maintenance" in payload["allowed_tabs"]
 
 
 def test_session_rejects_external_return_url(monkeypatch):

@@ -12,3 +12,8 @@ router = APIRouter()
 @router.get("/session")
 def session(request: Request, return_to: str | None = None):
     return build_auth_session(request, return_to)
+
+
+@router.get("/seat-access")
+def seat_access(request: Request):
+    return build_auth_session(request).get("seat_access")
