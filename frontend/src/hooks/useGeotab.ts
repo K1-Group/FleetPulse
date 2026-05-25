@@ -13,10 +13,12 @@ import type {
   DataConnectorSafetyResponse,
   DataConnectorVehicleKpiResponse,
   DashboardValidationResponse,
+  DeliveryCenterPerformanceSnapshot,
   DepartmentCallAnalysisDataset,
   DriverWorkforceResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
+  EntityMarginSnapshot,
   DriverScore,
   FleetCoachingSummary,
   FleetOverview,
@@ -33,6 +35,10 @@ import type {
 } from '../types/fleet'
 
 const API = '/api'
+
+function currentYearStart() {
+  return `${new Date().getFullYear()}-01-01`
+}
 
 function currentReturnTo() {
   if (typeof window === 'undefined') return '/'
@@ -253,6 +259,24 @@ export function useOperatingCostWindow(days = 364, enabled = true) {
 
 export function useLaneStabilityWindow(windowDays: 42 | 91 | 182 | 364 = 364, enabled = true) {
   return useFetch<LaneStabilityPayload>(`${API}/lane-stability?window=${windowDays}`, 300000, enabled, 60000)
+}
+
+export function useEntityMarginYtd(enabled = true) {
+  return useFetch<EntityMarginSnapshot>(
+    `${API}/fuel/entity-margin?start=${currentYearStart()}`,
+    300000,
+    enabled,
+    90000,
+  )
+}
+
+export function useDeliveryCenterPerformanceYtd(enabled = true) {
+  return useFetch<DeliveryCenterPerformanceSnapshot>(
+    `${API}/fuel/delivery-center-performance?start=${currentYearStart()}`,
+    300000,
+    enabled,
+    90000,
+  )
 }
 
 export function useControlTowerAgents() {

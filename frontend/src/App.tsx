@@ -30,7 +30,7 @@ import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
 import UserLoginStatus from './components/UserLoginStatus'
-import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores } from './hooks/useGeotab'
+import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
 
@@ -147,6 +147,9 @@ export default function App() {
   const driverWorkforce = useDriverWorkforce(dashboardActive)
   const utilization7d = useDataConnectorVehicleKpis(7, dashboardActive)
   const safety7d = useDataConnectorSafetyScores(7, dashboardActive)
+  const entityMargin = useEntityMarginYtd(dashboardActive)
+  const deliveryPerformance = useDeliveryCenterPerformanceYtd(dashboardActive)
+  const laneStability = useLaneStabilityWindow(364, dashboardActive)
   const authSession = useAuthSession(true)
 
   const activeLocationCount = locations.data?.length ?? null
@@ -294,6 +297,15 @@ export default function App() {
             utilization7d={utilization7d.data}
             utilization7dError={utilization7d.error}
             utilization7dLoading={utilization7d.loading}
+            entityMargin={entityMargin.data}
+            entityMarginError={entityMargin.error}
+            entityMarginLoading={entityMargin.loading}
+            deliveryPerformance={deliveryPerformance.data}
+            deliveryPerformanceError={deliveryPerformance.error}
+            deliveryPerformanceLoading={deliveryPerformance.loading}
+            laneStability={laneStability.data}
+            laneStabilityError={laneStability.error}
+            laneStabilityLoading={laneStability.loading}
             validation={dashboardValidation.data}
           />
         </section>

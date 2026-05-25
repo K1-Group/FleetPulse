@@ -28,7 +28,10 @@ import type {
   DashboardValidationItem,
   DashboardValidationResponse,
   DashboardValidationStatus,
+  DeliveryCenterPerformanceSnapshot,
+  EntityMarginSnapshot,
   FleetOverview,
+  LaneStabilityPayload,
   VehicleSafetyScore,
 } from '../types/fleet'
 
@@ -84,6 +87,15 @@ interface Props {
   utilization7d?: DataConnectorVehicleKpiResponse | null
   utilization7dError?: string | null
   utilization7dLoading?: boolean
+  entityMargin?: EntityMarginSnapshot | null
+  entityMarginLoading?: boolean
+  entityMarginError?: string | null
+  deliveryPerformance?: DeliveryCenterPerformanceSnapshot | null
+  deliveryPerformanceLoading?: boolean
+  deliveryPerformanceError?: string | null
+  laneStability?: LaneStabilityPayload | null
+  laneStabilityLoading?: boolean
+  laneStabilityError?: string | null
   validation?: DashboardValidationResponse | null
 }
 
@@ -236,6 +248,114 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
+function asDisplayPercent(value: unknown): number | null {
+  const numeric = asNumber(value)
+  if (numeric === null) return null
+  return Math.abs(numeric) <= 1 ? Number((numeric * 100).toFixed(1)) : Number(numeric.toFixed(1))
+}
+
+type SourceStatus = {
+  status?: string
+  source_authority?: string
+  message?: string
+  row_count?: number | null
+}
+
+function readableSourceStatus(status?: string | null) {
+  if (!status) return null
+  return status
+    .split('_')
+    .filter(Boolean)
+    .map(part => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ')
+}
+
+function sourceStateLabel(source?: SourceStatus | null) {
+  const label = readableSourceStatus(source?.status)
+  if (!label) return undefined
+  if (source?.status === 'healthy') return undefined
+  if (source?.status === 'partial') return 'Partial'
+  return label
+}
+
+function sourceKpiStatus(
+  source: SourceStatus | null | undefined,
+  hasValue: boolean,
+  loading: boolean,
+  error?: string | null,
+): KpiStatus {
+  if (loading) return 'pending'
+  if (error) return 'error'
+  if (!source) return hasValue ? 'verified' : 'no-data'
+  if (source.status === 'unavailable') return 'error'
+  if (source.status === 'partial') return hasValue ? 'stale' : 'no-data'
+  if (source.status === 'healthy') return hasValue ? 'verified' : 'no-data'
+  if (source.status === 'awaiting_feed' || source.status === 'not_configured') return 'no-data'
+  return hasValue ? 'verified' : 'no-data'
+}
+
+function percentTone(value: number | null, target = 80): KpiTone {
+  if (value === null) return 'neutral'
+  if (value >= target) return 'success'
+  if (value >= target - 10) return 'warning'
+  return 'danger'
+}
+
+function sourceWithPeriod(source: string | undefined, start?: string, end?: string) {
+  const label = source || 'Source pending'
+  if (!start || !end) return label
+  return `${label} · ${start} to ${end}`
+}
+
+function rowCountText(count: number | null | undefined, unit: string) {
+  if (count === null || count === undefined) return null
+  return `${Number(count).toLocaleString()} ${unit}`
+}
+
+function isK1Entity(rowEntity: string | null | undefined, entity: 'K1L' | 'K1G') {
+  const normalized = String(rowEntity || '').toLowerCase()
+  if (entity === 'K1L') return normalized.includes('k1 logistics')
+  return normalized.includes('k1 group')
+}
+
+function ratio(numerator: number, denominator: number) {
+  return denominator > 0 ? numerator / denominator : null
+}
+
+function aggregateDeliveryPerformance(
+  snapshot: DeliveryCenterPerformanceSnapshot | null | undefined,
+  entity: 'K1L' | 'K1G',
+) {
+  const rows = snapshot?.delivery_centers?.filter(row => isK1Entity(row.entity, entity)) || []
+  const totals = rows.reduce(
+    (acc, row) => {
+      acc.orders += asNumber(row.orders) || 0
+      acc.pickupMeasured += asNumber(row.pickup_measured_orders) || 0
+      acc.pickupOnTime += asNumber(row.pickup_on_time_orders) || 0
+      acc.pickupMissing += asNumber(row.pickup_missing_orders) || 0
+      acc.deliveryMeasured += asNumber(row.delivery_measured_orders) || 0
+      acc.deliveryOnTime += asNumber(row.delivery_on_time_orders) || 0
+      acc.deliveryMissing += asNumber(row.delivery_missing_orders) || 0
+      return acc
+    },
+    {
+      orders: 0,
+      pickupMeasured: 0,
+      pickupOnTime: 0,
+      pickupMissing: 0,
+      deliveryMeasured: 0,
+      deliveryOnTime: 0,
+      deliveryMissing: 0,
+    },
+  )
+  return {
+    ...totals,
+    centerCount: rows.length,
+    pickupOnTimePct: asDisplayPercent(ratio(totals.pickupOnTime, totals.pickupMeasured)),
+    deliveryOnTimePct: asDisplayPercent(ratio(totals.deliveryOnTime, totals.deliveryMeasured)),
+  }
+}
+
 function overviewKpi(
   validation: DashboardValidationResponse | null | undefined,
   loading: boolean,
@@ -305,6 +425,15 @@ function buildCards(
   utilization7d: DataConnectorVehicleKpiResponse | null | undefined,
   utilization7dLoading: boolean,
   utilization7dError?: string | null,
+  entityMargin?: EntityMarginSnapshot | null,
+  entityMarginLoading = false,
+  entityMarginError?: string | null,
+  deliveryPerformance?: DeliveryCenterPerformanceSnapshot | null,
+  deliveryPerformanceLoading = false,
+  deliveryPerformanceError?: string | null,
+  laneStability?: LaneStabilityPayload | null,
+  laneStabilityLoading = false,
+  laneStabilityError?: string | null,
 ): KpiCard[] {
   const safetyValue = asNumber(safety7d?.summary?.safety_rank_pct)
   const safetyStatus = dataConnectorSafetyStatus(safety7d, safety7dLoading, safety7dError)
@@ -315,6 +444,44 @@ function buildCards(
   const utilization7dValue = asNumber(utilization7d?.summary?.utilization_pct)
   const utilization7dPeriod = utilization7d?.period_days || 7
   const utilization7dStatus = utilizationStatus(utilization7d, utilization7dLoading, utilization7dError)
+  const laneStabilityValue = asDisplayPercent(laneStability?.summary?.today_stable_cov_pct)
+  const laneStabilityStatus: KpiStatus = laneStabilityLoading
+    ? 'pending'
+    : laneStabilityError
+    ? 'error'
+    : laneStabilityValue !== null && (laneStability?.rows?.length || 0) > 0
+    ? 'verified'
+    : 'no-data'
+  const laneStabilityDelta = laneStability?.summary
+    ? `${Number(laneStability.summary.critical_today || 0).toLocaleString()} critical lanes · ${asDisplayPercent(laneStability.summary.wow_delta_pp)?.toFixed(1) ?? '0.0'} pp WoW`
+    : null
+  const entitySource = entityMargin?.sources?.xcelerator_entity
+  const fuelSource = entityMargin?.sources?.fuel
+  const fuelHealthy = fuelSource?.status === 'healthy'
+  const k1lMarginRaw = fuelHealthy
+    ? entityMargin?.summary?.k1l_actual_gross_margin_pct_after_fuel
+    : entityMargin?.summary?.k1l_actual_gross_margin_pct_before_fuel
+  const k1lMarginValue = asDisplayPercent(k1lMarginRaw)
+  const k1gMarginValue = asDisplayPercent(entityMargin?.summary?.k1g_actual_gross_margin_pct_before_overhead)
+  const k1lMarginStatus = sourceKpiStatus(entitySource, k1lMarginValue !== null, entityMarginLoading, entityMarginError)
+  const k1gMarginStatus = sourceKpiStatus(entitySource, k1gMarginValue !== null, entityMarginLoading, entityMarginError)
+  const k1lMarginBasis = fuelHealthy ? 'after fuel' : 'before fuel'
+  const k1lMarginDelta = rowCountText(entityMargin?.summary?.k1l_orders, 'orders')
+  const k1gMarginDelta = rowCountText(entityMargin?.summary?.k1g_orders, 'orders')
+  const k1lPerformance = aggregateDeliveryPerformance(deliveryPerformance, 'K1L')
+  const k1gPerformance = aggregateDeliveryPerformance(deliveryPerformance, 'K1G')
+  const deliverySource = deliveryPerformance?.source
+  const deliveryStatus = (value: number | null) => sourceKpiStatus(
+    deliverySource,
+    value !== null,
+    deliveryPerformanceLoading,
+    deliveryPerformanceError,
+  )
+  const serviceDelta = (measured: number, missing: number) => (
+    measured > 0
+      ? `${measured.toLocaleString()} measured · ${missing.toLocaleString()} missing proof`
+      : null
+  )
 
   return [
     overviewKpi(validation, loading, overview, {
@@ -486,15 +653,21 @@ function buildCards(
         ? `Fleet daily avg · latest ${safetyLatestDate} · previous ${safetyPeriod} days`
         : safety7d?.message || `Previous ${safetyPeriod} days`,
     },
-    placeholderKpi({
+    {
       group: 'Safety',
       icon: 'bar-chart-3',
       id: 'stability',
       label: 'Stability',
-      source: 'Xcelerator/Fabric',
-      status: 'pending',
-      tone: 'neutral',
-    }),
+      source: laneStability?.source_authority || 'K1 Group LLC / Fabric lakehouse lane_stability_daily_kpi',
+      status: laneStabilityStatus,
+      stateLabel: laneStabilityStatus === 'no-data' ? 'No Data' : undefined,
+      tone: percentTone(laneStabilityValue, 80),
+      unit: '%',
+      value: laneStabilityValue,
+      decimals: 1,
+      delta: laneStabilityDelta,
+      updatedAt: laneStability?.generated_at,
+    },
     placeholderKpi({
       group: 'Service Levels',
       icon: 'badge-check',
@@ -504,72 +677,102 @@ function buildCards(
       status: 'pending',
       tone: 'success',
     }),
-    placeholderKpi({
+    {
       company: 'K1L',
       group: 'Service Levels',
       icon: 'clock-3',
       id: 'otp-k1l',
       label: 'OTP K1L',
-      source: 'Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(deliverySource?.source_authority || deliveryPerformance?.source_authority, deliveryPerformance?.period_start, deliveryPerformance?.period_end),
+      status: deliveryStatus(k1lPerformance.pickupOnTimePct),
+      stateLabel: sourceStateLabel(deliverySource),
+      tone: percentTone(k1lPerformance.pickupOnTimePct, 95),
       unit: '%',
-    }),
-    placeholderKpi({
+      value: k1lPerformance.pickupOnTimePct,
+      decimals: 1,
+      delta: serviceDelta(k1lPerformance.pickupMeasured, k1lPerformance.pickupMissing),
+      updatedAt: deliveryPerformance?.generated_at,
+    },
+    {
       company: 'K1G',
       group: 'Service Levels',
       icon: 'clock-3',
       id: 'otp-k1g',
       label: 'OTP K1G',
-      source: 'Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(deliverySource?.source_authority || deliveryPerformance?.source_authority, deliveryPerformance?.period_start, deliveryPerformance?.period_end),
+      status: deliveryStatus(k1gPerformance.pickupOnTimePct),
+      stateLabel: sourceStateLabel(deliverySource),
+      tone: percentTone(k1gPerformance.pickupOnTimePct, 95),
       unit: '%',
-    }),
-    placeholderKpi({
+      value: k1gPerformance.pickupOnTimePct,
+      decimals: 1,
+      delta: serviceDelta(k1gPerformance.pickupMeasured, k1gPerformance.pickupMissing),
+      updatedAt: deliveryPerformance?.generated_at,
+    },
+    {
       company: 'K1L',
       group: 'Service Levels',
       icon: 'clock-3',
       id: 'otd-k1l',
       label: 'OTD K1L',
-      source: 'Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(deliverySource?.source_authority || deliveryPerformance?.source_authority, deliveryPerformance?.period_start, deliveryPerformance?.period_end),
+      status: deliveryStatus(k1lPerformance.deliveryOnTimePct),
+      stateLabel: sourceStateLabel(deliverySource),
+      tone: percentTone(k1lPerformance.deliveryOnTimePct, 95),
       unit: '%',
-    }),
-    placeholderKpi({
+      value: k1lPerformance.deliveryOnTimePct,
+      decimals: 1,
+      delta: serviceDelta(k1lPerformance.deliveryMeasured, k1lPerformance.deliveryMissing),
+      updatedAt: deliveryPerformance?.generated_at,
+    },
+    {
       company: 'K1G',
       group: 'Service Levels',
       icon: 'clock-3',
       id: 'otd-k1g',
       label: 'OTD K1G',
-      source: 'Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(deliverySource?.source_authority || deliveryPerformance?.source_authority, deliveryPerformance?.period_start, deliveryPerformance?.period_end),
+      status: deliveryStatus(k1gPerformance.deliveryOnTimePct),
+      stateLabel: sourceStateLabel(deliverySource),
+      tone: percentTone(k1gPerformance.deliveryOnTimePct, 95),
       unit: '%',
-    }),
-    placeholderKpi({
+      value: k1gPerformance.deliveryOnTimePct,
+      decimals: 1,
+      delta: serviceDelta(k1gPerformance.deliveryMeasured, k1gPerformance.deliveryMissing),
+      updatedAt: deliveryPerformance?.generated_at,
+    },
+    {
       company: 'K1L',
       group: 'Finance',
       icon: 'dollar-sign',
       id: 'gm-k1l',
       label: 'GM% K1L',
-      source: 'QBO + Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(entitySource?.source_authority || entityMargin?.source_authority, entityMargin?.period_start, entityMargin?.period_end),
+      status: k1lMarginStatus,
+      stateLabel: sourceStateLabel(entitySource),
+      tone: percentTone(k1lMarginValue, asDisplayPercent(entityMargin?.k1l_margin_target_pct) || 72),
       unit: '%',
-    }),
-    placeholderKpi({
+      value: k1lMarginValue,
+      decimals: 1,
+      delta: k1lMarginDelta ? `${k1lMarginDelta} · ${k1lMarginBasis}` : k1lMarginBasis,
+      updatedAt: entityMargin?.generated_at,
+    },
+    {
       company: 'K1G',
       group: 'Finance',
       icon: 'dollar-sign',
       id: 'gm-k1g',
       label: 'GM% K1G',
-      source: 'QBO + Xcelerator',
-      status: 'pending',
-      tone: 'neutral',
+      source: sourceWithPeriod(entitySource?.source_authority || entityMargin?.source_authority, entityMargin?.period_start, entityMargin?.period_end),
+      status: k1gMarginStatus,
+      stateLabel: sourceStateLabel(entitySource),
+      tone: percentTone(k1gMarginValue, asDisplayPercent(entityMargin?.k1g_margin_target_pct) || 20),
       unit: '%',
-    }),
+      value: k1gMarginValue,
+      decimals: 1,
+      delta: k1gMarginDelta ? `${k1gMarginDelta} · before overhead` : 'before overhead',
+      updatedAt: entityMargin?.generated_at,
+    },
   ]
 }
 
@@ -635,6 +838,15 @@ export default function Dashboard({
   utilization7d,
   utilization7dError,
   utilization7dLoading = false,
+  entityMargin,
+  entityMarginLoading = false,
+  entityMarginError,
+  deliveryPerformance,
+  deliveryPerformanceLoading = false,
+  deliveryPerformanceError,
+  laneStability,
+  laneStabilityLoading = false,
+  laneStabilityError,
   validation,
 }: Props) {
   const cards = useMemo(
@@ -648,8 +860,36 @@ export default function Dashboard({
       utilization7d,
       utilization7dLoading,
       utilization7dError,
+      entityMargin,
+      entityMarginLoading,
+      entityMarginError,
+      deliveryPerformance,
+      deliveryPerformanceLoading,
+      deliveryPerformanceError,
+      laneStability,
+      laneStabilityLoading,
+      laneStabilityError,
     ),
-    [loading, overview, safety7d, safety7dError, safety7dLoading, utilization7d, utilization7dError, utilization7dLoading, validation],
+    [
+      deliveryPerformance,
+      deliveryPerformanceError,
+      deliveryPerformanceLoading,
+      entityMargin,
+      entityMarginError,
+      entityMarginLoading,
+      laneStability,
+      laneStabilityError,
+      laneStabilityLoading,
+      loading,
+      overview,
+      safety7d,
+      safety7dError,
+      safety7dLoading,
+      utilization7d,
+      utilization7dError,
+      utilization7dLoading,
+      validation,
+    ],
   )
 
   return (
