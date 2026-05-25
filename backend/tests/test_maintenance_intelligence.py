@@ -31,6 +31,19 @@ from _cache import clear_cached_prefix  # noqa: E402
 from routers import maintenance  # noqa: E402
 
 
+def _scope_fixture_devices():
+    return [
+        {"id": "truck-1", "name": "Truck 1", "groups": [{"id": "GroupVehicleId"}]},
+        {"id": "trailer-1", "name": "Trailer 1", "groups": [{"id": "GroupTrailerId"}]},
+        {
+            "id": "historic-1",
+            "name": "Historic Unit",
+            "groups": [{"id": "GroupVehicleId"}],
+            "activeTo": "2020-01-01T00:00:00+00:00",
+        },
+    ]
+
+
 def test_maintenance_intelligence_prioritizes_repeated_cooling_fault(monkeypatch):
     clear_cached_prefix("maintenance_intelligence:")
 
@@ -99,6 +112,65 @@ def test_maintenance_intelligence_uses_configured_default_window(monkeypatch):
     assert payload["config"]["fault_lookback_days"] == 14
 
 
+def test_maintenance_intelligence_filters_faults_to_fleet_scope(monkeypatch):
+    clear_cached_prefix("maintenance_intelligence:")
+    clear_cached_prefix("maint:")
+
+    async def _fault_trends(days: int):
+        return {
+            "period_days": days,
+            "feed_status": "ok",
+            "faults": [
+                {
+                    "vehicle_id": "truck-1",
+                    "vehicle_name": "Truck 1",
+                    "FaultCode": "100",
+                    "FaultCodeDescription": "Engine oil pressure low",
+                    "FailureModeDescription": "Data valid but below normal operational range - severe level",
+                    "date": "2026-05-21",
+                },
+                {
+                    "vehicle_id": "trailer-1",
+                    "vehicle_name": "Trailer 1",
+                    "FaultCode": "200",
+                    "FaultCodeDescription": "Trailer diagnostic should not count as fleet vehicle maintenance",
+                    "date": "2026-05-21",
+                },
+            ],
+        }
+
+    monkeypatch.setattr(maintenance, "_fault_trends_from_data_connector", _fault_trends)
+    monkeypatch.setattr(maintenance, "_get_devices_cached", _scope_fixture_devices)
+    monkeypatch.setattr(maintenance, "_get_fleet_faults", lambda days=None: {})
+
+    payload = asyncio.run(maintenance.get_maintenance_intelligence(days=30))
+
+    assert payload["summary"]["total_fault_rows"] == 1
+    assert payload["summary"]["vehicles_with_faults"] == 1
+    assert payload["decisions"][0]["vehicle_id"] == "truck-1"
+
+
+def test_maintenance_predictions_use_fleet_vehicle_scope(monkeypatch):
+    clear_cached_prefix("maintenance_predictions")
+    clear_cached_prefix("maintenance_intelligence:")
+    clear_cached_prefix("maint:")
+
+    async def _intelligence(days=None):
+        return {"decisions": []}
+
+    monkeypatch.setattr(maintenance, "_get_devices_cached", _scope_fixture_devices)
+    monkeypatch.setattr(maintenance, "_get_fleet_odometers", lambda: {"truck-1": 12345, "trailer-1": 555})
+    monkeypatch.setattr(maintenance, "_get_fleet_engine_hours", lambda: {"truck-1": 678, "trailer-1": 9})
+    monkeypatch.setattr(maintenance, "_get_fleet_faults", lambda days=None: {})
+    monkeypatch.setattr(maintenance, "get_maintenance_intelligence", _intelligence)
+
+    predictions = asyncio.run(maintenance.get_maintenance_predictions())
+
+    assert len(predictions) == 1
+    assert predictions[0].vehicle_id == "truck-1"
+    assert predictions[0].vehicle_name == "Truck 1"
+
+
 def test_urgent_maintenance_collapses_unknown_fault_noise(monkeypatch):
     clear_cached_prefix("maintenance_urgent")
 
@@ -122,7 +194,7 @@ def test_urgent_maintenance_collapses_unknown_fault_noise(monkeypatch):
             ]
         }
 
-    monkeypatch.setattr(maintenance, "_get_devices_cached", lambda: [{"id": "truck-1", "name": "Truck 1"}])
+    monkeypatch.setattr(maintenance, "_get_devices_cached", lambda: [_scope_fixture_devices()[0]])
     monkeypatch.setattr(maintenance, "_get_fleet_faults", lambda days=None: {"truck-1": faults})
     monkeypatch.setattr(maintenance, "_get_fleet_odometers", lambda: {"truck-1": 0})
     monkeypatch.setattr(maintenance, "get_maintenance_intelligence", _intelligence)

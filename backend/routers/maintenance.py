@@ -18,6 +18,7 @@ from models import (
     UrgentMaintenanceAlert,
     UrgencyLevel,
 )
+from services.fleet_service import get_scoped_device_map
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -699,6 +700,29 @@ def _get_devices_cached() -> list[dict]:
         return []
 
 
+def _get_scoped_maintenance_devices() -> list[dict]:
+    devices = _get_devices_cached()
+    scoped_device_ids = set(get_scoped_device_map(devices).keys())
+    if devices and not scoped_device_ids:
+        logger.warning("Maintenance device scope returned no vehicles; check FleetPulse Geotab group config.")
+    return [
+        device
+        for device in devices
+        if str(device.get("id") or "") in scoped_device_ids
+    ]
+
+
+def _filter_faults_to_scoped_devices(faults: list[dict], devices: list[dict]) -> list[dict]:
+    scoped_device_ids = {str(device.get("id") or "") for device in devices if device.get("id")}
+    if not scoped_device_ids:
+        return faults
+    return [
+        fault
+        for fault in faults
+        if _fault_vehicle_id(fault) in scoped_device_ids
+    ]
+
+
 def calculate_maintenance_due_date(last_service: datetime, odometer_at_service: float,
                                    current_odometer: float, service_type: str) -> tuple[datetime, bool]:
     intervals = _maintenance_intervals()[service_type]
@@ -816,9 +840,10 @@ async def get_maintenance_intelligence(days: Annotated[int | None, Query(ge=1, l
     if cached is not None:
         return cached
 
-    devices = _get_devices_cached()
+    devices = _get_scoped_maintenance_devices()
     fault_payload = await _fault_trends_from_data_connector(days)
     faults = fault_payload.get("faults") or []
+    faults = _filter_faults_to_scoped_devices(faults, devices)
     source_mode = "geotab_data_connector_fault_trends"
 
     if not faults:
@@ -861,7 +886,7 @@ async def get_maintenance_predictions():
     if cached is not None:
         return cached
     try:
-        devices = _get_devices_cached()
+        devices = _get_scoped_maintenance_devices()
         odometers = _get_fleet_odometers()
         engine_hours_map = _get_fleet_engine_hours()
         lookback_days = _fault_lookback_days()
@@ -927,7 +952,7 @@ async def get_vehicle_maintenance_detail(vehicle_id: str):
     if cached is not None:
         return cached
     try:
-        devices = _get_devices_cached()
+        devices = _get_scoped_maintenance_devices()
         device = next((d for d in devices if d.get("id") == vehicle_id), None)
         if not device:
             raise HTTPException(status_code=404, detail="Vehicle not found")
@@ -1005,7 +1030,7 @@ async def get_maintenance_costs():
     if cached is not None:
         return cached
     try:
-        devices = _get_devices_cached()
+        devices = _get_scoped_maintenance_devices()
         odometers = _get_fleet_odometers()
         now = datetime.now(timezone.utc)
         primary_days = _forecast_primary_days()
@@ -1063,7 +1088,7 @@ async def get_urgent_maintenance():
         return cached
     try:
         lookback_days = _fault_lookback_days()
-        devices = _get_devices_cached()
+        devices = _get_scoped_maintenance_devices()
         faults_map = _get_fleet_faults(lookback_days)
         odometers = _get_fleet_odometers()
         intervals = _maintenance_intervals()

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import time
+import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,8 @@ import logging
 
 import mygeotab
 from dotenv import load_dotenv
+
+from _cache import get_cached, set_cached
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,8 @@ def _float_env(name: str, default: float) -> float:
 _executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=max(1, _int_env("FLEETPULSE_GEOTAB_MAX_WORKERS", 4))
 )
+_cache_locks: dict[str, threading.Lock] = {}
+_cache_locks_guard = threading.Lock()
 
 # Try loading creds from the openclaw env file, fall back to project .env
 _env_geotab = Path.home() / ".openclaw" / ".env.geotab"
@@ -97,9 +103,54 @@ class GeotabClient:
             logger.warning(f"Geotab API call timed out after {timeout}s: {fn.__name__ if hasattr(fn, '__name__') else fn}")
             raise TimeoutError(f"Geotab API call timed out after {timeout}s")
 
+    def _read_cache_ttl(self) -> int:
+        return _int_env("FLEETPULSE_GEOTAB_READ_CACHE_SECONDS", 75)
+
+    def _cached_read(self, cache_key: str, fetch):
+        ttl = self._read_cache_ttl()
+        if ttl <= 0:
+            return fetch()
+
+        cached = get_cached(cache_key, ttl=ttl)
+        if cached is not None:
+            return cached
+
+        with _cache_locks_guard:
+            lock = _cache_locks.setdefault(cache_key, threading.Lock())
+
+        with lock:
+            cached = get_cached(cache_key, ttl=ttl)
+            if cached is not None:
+                return cached
+            value = fetch()
+            set_cached(cache_key, value, ttl=ttl)
+            return value
+
+    @staticmethod
+    def _bucket_datetime(value: datetime) -> str:
+        value_utc = value.astimezone(timezone.utc)
+        return value_utc.replace(second=0, microsecond=0).isoformat()
+
+    @classmethod
+    def _cache_key(cls, method: str, **parts: Any) -> str:
+        normalized_parts = {
+            key: (
+                cls._bucket_datetime(value)
+                if isinstance(value, datetime)
+                else value
+            )
+            for key, value in parts.items()
+            if value is not None
+        }
+        raw = json.dumps(normalized_parts, sort_keys=True, separators=(",", ":"))
+        return f"geotab:{method}:{raw}"
+
     # ── data methods ───────────────────────────────────────────
     def get_devices(self) -> list[dict[str, Any]]:
-        return self._call(self.api.get, "Device")
+        return self._cached_read(
+            self._cache_key("Device"),
+            lambda: self._call(self.api.get, "Device"),
+        )
 
     def get_trips(
         self,
@@ -112,10 +163,13 @@ class GeotabClient:
             "fromDate": from_date.isoformat(),
             "toDate": to_date.isoformat(),
         }
-        return self._call(
-            self.api.get,
-            "Trip",
-            search=search,
+        return self._cached_read(
+            self._cache_key("Trip", from_date=from_date, to_date=to_date),
+            lambda: self._call(
+                self.api.get,
+                "Trip",
+                search=search,
+            ),
         )
 
     def get_exception_events(
@@ -125,11 +179,14 @@ class GeotabClient:
     ) -> list[dict[str, Any]]:
         to_date = to_date or datetime.now(timezone.utc)
         from_date = from_date or (to_date - timedelta(days=7))
-        return self._call(
-            self.api.get,
-            "ExceptionEvent",
-            from_date=from_date.isoformat(),
-            to_date=to_date.isoformat(),
+        return self._cached_read(
+            self._cache_key("ExceptionEvent", from_date=from_date, to_date=to_date),
+            lambda: self._call(
+                self.api.get,
+                "ExceptionEvent",
+                from_date=from_date.isoformat(),
+                to_date=to_date.isoformat(),
+            ),
         )
 
     def get_status_data(
@@ -146,17 +203,34 @@ class GeotabClient:
         }
         if diagnostic_id:
             search["diagnosticSearch"] = {"id": diagnostic_id}
-        return self._call(self.api.get, "StatusData", search=search)
+        return self._cached_read(
+            self._cache_key(
+                "StatusData",
+                diagnostic_id=diagnostic_id,
+                from_date=from_date,
+                to_date=to_date,
+            ),
+            lambda: self._call(self.api.get, "StatusData", search=search),
+        )
 
     def get_zones(self) -> list[dict[str, Any]]:
-        return self._call(self.api.get, "Zone")
+        return self._cached_read(
+            self._cache_key("Zone"),
+            lambda: self._call(self.api.get, "Zone"),
+        )
 
     def get_groups(self) -> list[dict[str, Any]]:
-        return self._call(self.api.get, "Group")
+        return self._cached_read(
+            self._cache_key("Group"),
+            lambda: self._call(self.api.get, "Group"),
+        )
 
     def get_device_status_info(self) -> list[dict[str, Any]]:
         """DeviceStatusInfo gives current lat/lon, speed, bearing, etc."""
-        return self._call(self.api.get, "DeviceStatusInfo")
+        return self._cached_read(
+            self._cache_key("DeviceStatusInfo"),
+            lambda: self._call(self.api.get, "DeviceStatusInfo"),
+        )
 
     def add_zone(self, zone_data: dict[str, Any]) -> str:
         return self._call(self.api.add, "Zone", zone_data)
