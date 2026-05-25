@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any
 
+import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -11,7 +13,9 @@ from geotab_client import GeotabClient
 from _cache import get_cached, set_cached
 from services.trailer_tracking_service import get_live_trailer_tracking
 from services.fleet_report_delivery_service import (
+    get_due_report_schedule_status,
     get_report_schedule_status,
+    record_report_schedule_attempt,
     save_report_schedule,
     send_report_email,
 )
@@ -38,6 +42,31 @@ class ReportScheduleRequest(BaseModel):
     timezone: str = "America/Chicago"
     weekday: int | None = None
     day_of_month: int | None = None
+
+
+class ScheduledReportRunRequest(BaseModel):
+    force: bool = False
+    now: str | None = None
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _report_cache_ttl_seconds() -> int:
+    return max(60, _int_env("FLEETPULSE_REPORT_CACHE_SECONDS", 900))
+
+
+def _report_stale_ttl_seconds() -> int:
+    return max(_report_cache_ttl_seconds(), _int_env("FLEETPULSE_REPORT_STALE_CACHE_SECONDS", 86400))
+
+
+def _is_source_quota_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "OverLimitException" in message or "API calls quota exceeded" in message
 
 
 def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
@@ -242,46 +271,66 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
     return html
 
 
-@router.get("/generate")
-async def generate_report(period: str = "weekly"):
-    """Generate fleet report data as HTML (rendered to PDF on frontend via print)."""
+def _build_error_report(period: str, error: Exception) -> dict[str, Any]:
+    status = "source_quota_limited" if _is_source_quota_error(error) else "source_unavailable"
+    safe_error = escape(str(error))
+    return {
+        "html": f"<h1>Report Generation Error</h1><p>{safe_error}</p>",
+        "period": period,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {},
+        "source_status": status,
+        "error": str(error),
+    }
+
+
+def _generate_report_payload(period: str = "weekly") -> dict[str, Any]:
+    """Generate a source-backed fleet report payload."""
+    period = str(period or "weekly").lower()
+    if period not in {"daily", "weekly", "monthly"}:
+        raise ValueError("Report period must be daily, weekly, or monthly.")
+
     cache_key = f"report:{period}"
-    cached = get_cached(cache_key)
+    cached = get_cached(cache_key, ttl=_report_cache_ttl_seconds())
     if cached:
         return cached
-    
+
     try:
         client = GeotabClient.get()
         now = datetime.now(timezone.utc)
-        
+
         if period == "daily":
             from_date = now - timedelta(days=1)
         elif period == "monthly":
             from_date = now - timedelta(days=30)
         else:  # weekly
             from_date = now - timedelta(days=7)
-        
+
         devices = client.get_devices()
         trips = client.get_trips(from_date=from_date, to_date=now)
         exceptions = client.get_exception_events(from_date=from_date, to_date=now)
+        source_warnings: list[str] = []
         try:
             trailer_tracking = get_live_trailer_tracking()
-        except Exception:
+        except Exception as exc:
             trailer_tracking = None
-        
+            source_warnings.append(f"Trailer tracking unavailable: {type(exc).__name__}")
+
         fleet_data = {
             "devices": devices,
             "trips": trips,
             "exceptions": exceptions,
             "trailer_tracking": trailer_tracking,
         }
-        
+
         html = _build_html_report(fleet_data, period.capitalize())
-        
+
         result = {
             "html": html,
             "period": period,
             "generated_at": now.isoformat(),
+            "source_status": "source_backed" if not source_warnings else "partial_source_backed",
+            "source_warnings": source_warnings,
             "summary": {
                 "total_vehicles": len(devices),
                 "total_trips": len(trips),
@@ -291,18 +340,30 @@ async def generate_report(period: str = "weekly"):
                 "trailer_custody_inferred": trailer_tracking.summary.custody_inferred if trailer_tracking else 0,
             }
         }
-        
-        set_cached(cache_key, result, ttl=300)
+
+        set_cached(cache_key, result, ttl=_report_cache_ttl_seconds())
         return result
-        
+
     except Exception as e:
-        return {
-            "html": f"<h1>Report Generation Error</h1><p>{str(e)}</p>",
-            "period": period,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "summary": {},
-            "error": str(e)
-        }
+        stale = get_cached(cache_key, ttl=_report_stale_ttl_seconds())
+        if stale:
+            result = dict(stale)
+            warnings = list(result.get("source_warnings") or [])
+            warnings.append(f"Current Geotab report refresh failed: {type(e).__name__}")
+            result["source_status"] = "stale_source_cache"
+            result["source_warnings"] = warnings
+            result["error"] = str(e)
+            return result
+        return _build_error_report(period, e)
+
+
+@router.get("/generate")
+async def generate_report(period: str = "weekly"):
+    """Generate fleet report data as HTML (rendered to PDF on frontend via print)."""
+    try:
+        return _generate_report_payload(period)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/email")
@@ -327,3 +388,83 @@ async def update_report_schedule(request: ReportScheduleRequest):
         return save_report_schedule(request.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/schedule/run")
+async def run_scheduled_report(request: ScheduledReportRunRequest | None = None):
+    """Run the saved scheduled report when an external scheduler calls at the due time."""
+    run_request = request or ScheduledReportRunRequest()
+    due_status = get_due_report_schedule_status(run_request.now)
+    if not due_status.get("due") and not run_request.force:
+        return {"status": "skipped", **due_status}
+
+    schedule = due_status["schedule"]
+    run_key = due_status.get("run_key") or f"manual:{datetime.now(timezone.utc).isoformat()}"
+    scheduled_for = due_status.get("scheduled_for") or datetime.now(timezone.utc).isoformat()
+
+    if not due_status.get("delivery_ready"):
+        message = "FLEETPULSE_REPORT_EMAIL_WEBHOOK_URL is required for scheduled report delivery."
+        schedule_status = record_report_schedule_attempt(
+            message=message,
+            run_key=run_key,
+            scheduled_for=scheduled_for,
+            status="needs_configuration",
+        )
+        return {
+            "status": "needs_configuration",
+            "message": message,
+            "run_key": run_key,
+            "scheduled_for": scheduled_for,
+            **schedule_status,
+        }
+
+    report = _generate_report_payload(schedule.get("period", "weekly"))
+    if report.get("error") and not report.get("summary"):
+        record_report_schedule_attempt(
+            message=str(report["error"]),
+            run_key=run_key,
+            scheduled_for=scheduled_for,
+            status="failed",
+        )
+        raise HTTPException(status_code=503, detail=str(report["error"]))
+
+    try:
+        delivery_result = send_report_email(
+            {
+                "recipients": schedule.get("recipients") or [],
+                "period": schedule.get("period") or "weekly",
+                "subject": f"FleetPulse {str(schedule.get('period') or 'weekly').capitalize()} Report",
+                "html": report["html"],
+                "summary": report.get("summary") or {},
+                "generated_at": scheduled_for,
+            }
+        )
+    except ValueError as exc:
+        record_report_schedule_attempt(
+            message=str(exc),
+            run_key=run_key,
+            scheduled_for=scheduled_for,
+            status="failed",
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    schedule_status = record_report_schedule_attempt(
+        message=delivery_result.get("message", delivery_result.get("status", "")),
+        run_key=run_key,
+        scheduled_for=scheduled_for,
+        status=delivery_result.get("status", "failed"),
+    )
+
+    return {
+        "status": delivery_result.get("status"),
+        "delivery": delivery_result,
+        "report": {
+            "generated_at": report.get("generated_at"),
+            "period": report.get("period"),
+            "source_status": report.get("source_status"),
+            "source_warnings": report.get("source_warnings", []),
+            "summary": report.get("summary", {}),
+        },
+        "run_key": run_key,
+        "scheduled_for": scheduled_for,
+        **schedule_status,
+    }
