@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from configs.driver_workforce import DriverWorkforceConfig
+import services.driver_workforce_service as driver_workforce_service
 from services.driver_workforce_service import (
     _build_ceo_powerbi_route_ticket_dax,
+    _build_fabric_warehouse_route_ticket_sql,
+    _load_route_ticket_rows,
     build_driver_workdays,
     calculate_driver_workforce_kpis,
     normalize_geotab_activity,
@@ -169,3 +172,61 @@ def test_ceo_powerbi_route_ticket_rows_normalize_from_service_name_projection(mo
     assert tickets[0]["driver_id"] == "369"
     assert tickets[0]["planned_start"] == _dt("2026-05-21T16:00:00Z")
     assert tickets[0]["planned_finish"] == _dt("2026-05-22T01:30:00Z")
+
+
+def test_driver_workforce_source_can_target_ceo_powerbi_without_global_switch(monkeypatch):
+    monkeypatch.setenv("FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE", "ceo_powerbi")
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_SOURCE", raising=False)
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_ceo_powerbi_route_ticket_rows",
+        lambda: [{"ticket_id": "RT-1", "planned_start": "2026-05-21T11:00:00"}],
+    )
+
+    rows, last_updated, meta = _load_route_ticket_rows(DriverWorkforceConfig.from_env())
+
+    assert rows[0]["ticket_id"] == "RT-1"
+    assert last_updated is not None
+    assert meta["xcelerator_source"] == "ceo_powerbi"
+    assert meta["configured_xcelerator_source"] == "ceo_powerbi"
+    assert meta["source_authority"] == "K1 Group LLC / Xcelerator CEO Dashboard Power BI semantic model"
+    assert meta["ceo_powerbi_rows"] == 1
+
+
+def test_driver_workforce_ceo_powerbi_can_fallback_to_fabric_warehouse(monkeypatch):
+    config = DriverWorkforceConfig(
+        xcelerator_source="ceo_powerbi",
+        ceo_powerbi_fallback_source="fabric_warehouse_sql",
+    )
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_ceo_powerbi_route_ticket_rows",
+        lambda: (_ for _ in ()).throw(RuntimeError("powerbi_not_authorized")),
+    )
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_fabric_warehouse_route_ticket_rows",
+        lambda: [{"ticket_id": "RT-FABRIC"}],
+    )
+
+    rows, last_updated, meta = _load_route_ticket_rows(config)
+
+    assert rows == [{"ticket_id": "RT-FABRIC"}]
+    assert last_updated is not None
+    assert meta["xcelerator_source"] == "ceo_powerbi"
+    assert meta["effective_xcelerator_source"] == "fabric_warehouse_sql"
+    assert meta["fabric_warehouse_rows"] == 1
+    assert meta["fallback_reason"] == "RuntimeError"
+    assert meta["errors"] == ["ceo_powerbi_route_tickets:RuntimeError"]
+
+
+def test_fabric_warehouse_route_ticket_sql_uses_service_and_delivery_filters():
+    query, params = _build_fabric_warehouse_route_ticket_sql(
+        ["Route Ticket", "Linehaul"],
+        "K1 Logistics Inc",
+    )
+
+    assert "FROM dbo.xcelerator_review_orders" in query
+    assert "service_name IN (?, ?)" in query
+    assert "delivery_center = ?" in query
+    assert params == ["Route Ticket", "Linehaul", "K1 Logistics Inc"]

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from configs.driver_workforce import DriverWorkforceConfig
 from configs.xcelerator_source import xcelerator_ceo_powerbi_only, xcelerator_source_label
 from geotab_client import GeotabClient
+from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig, execute_sql_query
 from integrations.powerbi.execute_queries import PowerBIExecuteQueriesConfig, execute_dax_query
 from models import Alert, AlertSeverity, Vehicle
 from services.fleet_service import get_scoped_device_map, get_vehicles
@@ -34,9 +35,16 @@ from services.xcelerator_review_orders_import_service import (
 
 
 SOURCE_AUTHORITY = "K1 Group LLC / Xcelerator route tickets + K1 Logistics Inc / Geotab activity"
+CEO_POWERBI_ROUTE_TICKET_AUTHORITY = (
+    "K1 Group LLC / Xcelerator CEO Dashboard Power BI semantic model"
+)
 PROJECTION_MODE = "read_only"
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_LOCK = threading.RLock()
+ROUTE_SOURCE_AUTO = "auto"
+ROUTE_SOURCE_CEO_POWERBI = "ceo_powerbi"
+ROUTE_SOURCE_EVENT_STATE = "event_state"
+ROUTE_SOURCE_FABRIC_WAREHOUSE = "fabric_warehouse_sql"
 
 
 STATUS_PRIORITY = {
@@ -95,7 +103,7 @@ def _build_driver_workforce_dataset(
     now: datetime,
     config: DriverWorkforceConfig,
 ) -> dict[str, Any]:
-    route_rows, xcelerator_last_updated, route_source_meta = _load_route_ticket_rows()
+    route_rows, xcelerator_last_updated, route_source_meta = _load_route_ticket_rows(config)
     route_tickets, invalid_ticket_count = normalize_route_tickets(route_rows, config=config)
     operating_start, operating_end = get_operating_day_window(now, config)
     operating_tickets = [
@@ -663,18 +671,29 @@ def driver_workforce_alert_models(now: datetime | None = None) -> list[Alert]:
     return alerts
 
 
-def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, dict[str, Any]]:
+def _load_route_ticket_rows(
+    config: DriverWorkforceConfig,
+) -> tuple[list[dict[str, Any]], datetime | None, dict[str, Any]]:
+    route_source = _route_ticket_source(config)
     rows: list[dict[str, Any]] = []
     meta: dict[str, Any] = {
+        "xcelerator_source": route_source,
+        "effective_xcelerator_source": route_source,
+        "configured_xcelerator_source": config.xcelerator_source,
+        "ceo_powerbi_fallback_source": config.ceo_powerbi_fallback_source,
+        "source_authority": (
+            CEO_POWERBI_ROUTE_TICKET_AUTHORITY
+            if route_source == ROUTE_SOURCE_CEO_POWERBI
+            else xcelerator_source_label()
+        ),
         "xcelerator_event_state_configured": xcelerator_event_state_configured(),
         "xcelerator_event_rows": 0,
         "review_orders_rows": 0,
         "ceo_powerbi_rows": 0,
+        "fabric_warehouse_rows": 0,
         "errors": [],
     }
-    if xcelerator_ceo_powerbi_only():
-        meta["xcelerator_source"] = "ceo_powerbi"
-        meta["source_authority"] = xcelerator_source_label()
+    if route_source == ROUTE_SOURCE_CEO_POWERBI:
         try:
             rows = _load_ceo_powerbi_route_ticket_rows()
             meta["ceo_powerbi_rows"] = len(rows)
@@ -682,6 +701,32 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
             return rows, datetime.now(timezone.utc), meta
         except Exception as exc:
             meta["errors"].append(f"ceo_powerbi_route_tickets:{type(exc).__name__}")
+            if _route_ticket_fallback_source(config) == ROUTE_SOURCE_FABRIC_WAREHOUSE:
+                try:
+                    rows = _load_fabric_warehouse_route_ticket_rows()
+                    meta["fabric_warehouse_rows"] = len(rows)
+                    meta["effective_xcelerator_source"] = ROUTE_SOURCE_FABRIC_WAREHOUSE
+                    meta["fallback_reason"] = type(exc).__name__
+                    meta["source_authority"] = (
+                        "K1 Group LLC / Xcelerator Fabric Warehouse route-ticket projection"
+                    )
+                    return rows, datetime.now(timezone.utc), meta
+                except Exception as fallback_exc:
+                    meta["errors"].append(
+                        f"fabric_warehouse_route_tickets:{type(fallback_exc).__name__}"
+                    )
+            return rows, None, meta
+
+    if route_source == ROUTE_SOURCE_FABRIC_WAREHOUSE:
+        meta["source_authority"] = (
+            "K1 Group LLC / Xcelerator Fabric Warehouse route-ticket projection"
+        )
+        try:
+            rows = _load_fabric_warehouse_route_ticket_rows()
+            meta["fabric_warehouse_rows"] = len(rows)
+            return rows, datetime.now(timezone.utc), meta
+        except Exception as exc:
+            meta["errors"].append(f"fabric_warehouse_route_tickets:{type(exc).__name__}")
             return rows, None, meta
 
     last_updated: datetime | None = None
@@ -712,11 +757,41 @@ def _load_route_ticket_rows() -> tuple[list[dict[str, Any]], datetime | None, di
     return rows, last_updated, meta
 
 
+def _route_ticket_source(config: DriverWorkforceConfig) -> str:
+    source = (config.xcelerator_source or ROUTE_SOURCE_AUTO).strip().casefold()
+    if source in {"ceo", "ceo_dashboard", "ceo_powerbi", "powerbi", "xcelerator_ceo_powerbi"}:
+        return ROUTE_SOURCE_CEO_POWERBI
+    if source in {"fabric", "fabric_warehouse", "fabric_warehouse_sql", "warehouse", "warehouse_sql"}:
+        return ROUTE_SOURCE_FABRIC_WAREHOUSE
+    if source in {"event", "events", "event_state", "scheduled_feed", "state"}:
+        return ROUTE_SOURCE_EVENT_STATE
+    if source != ROUTE_SOURCE_AUTO:
+        return ROUTE_SOURCE_EVENT_STATE
+    return ROUTE_SOURCE_CEO_POWERBI if xcelerator_ceo_powerbi_only() else ROUTE_SOURCE_EVENT_STATE
+
+
+def _route_ticket_fallback_source(config: DriverWorkforceConfig) -> str:
+    fallback = (config.ceo_powerbi_fallback_source or "").strip().casefold()
+    if fallback in {"fabric", "fabric_warehouse", "fabric_warehouse_sql", "warehouse", "warehouse_sql"}:
+        return ROUTE_SOURCE_FABRIC_WAREHOUSE
+    return ""
+
+
 def _load_ceo_powerbi_route_ticket_rows() -> list[dict[str, Any]]:
     config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
     if not config.configured:
         raise RuntimeError("xcelerator_ceo_powerbi_not_configured")
     return execute_dax_query(config, _build_ceo_powerbi_route_ticket_dax())
+
+
+def _load_fabric_warehouse_route_ticket_rows() -> list[dict[str, Any]]:
+    config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
+    if not config.configured:
+        raise RuntimeError("xcelerator_fabric_warehouse_sql_not_configured")
+    service_names = _route_ticket_service_names()
+    delivery_center = _route_ticket_delivery_center()
+    query, params = _build_fabric_warehouse_route_ticket_sql(service_names, delivery_center)
+    return execute_sql_query(config, query, params)
 
 
 def _route_ticket_service_names() -> list[str]:
@@ -731,6 +806,43 @@ def _route_ticket_delivery_center() -> str:
 
 def _dax_string(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _build_fabric_warehouse_route_ticket_sql(
+    service_names: list[str],
+    delivery_center: str,
+) -> tuple[str, list[str]]:
+    service_placeholders = ", ".join("?" for _ in service_names) or "?"
+    params = list(service_names or ["Route Ticket"])
+    delivery_filter = ""
+    if delivery_center:
+        delivery_filter = "\n    AND delivery_center = ?"
+        params.append(delivery_center)
+    query = f"""
+SELECT TOP (500)
+    CAST(order_tracking_id AS varchar(128)) AS ticket_id,
+    CAST(driver_no AS varchar(128)) AS driver_id,
+    CAST(driver_no AS varchar(128)) AS driver_name,
+    CASE
+        WHEN CAST(status AS varchar(32)) = 'C' THEN 'complete'
+        WHEN CAST(status AS varchar(32)) IN ('N', 'S') THEN 'open'
+        ELSE CAST(status AS varchar(32))
+    END AS route_status,
+    CAST(pickup_city AS varchar(255)) AS pickup_location,
+    CAST(delivery_city AS varchar(255)) AS delivery_location,
+    CONVERT(varchar(33), TRY_CONVERT(datetime2, pickup_target_from), 126) AS planned_start,
+    CONVERT(varchar(33), TRY_CONVERT(datetime2, delivery_target_to), 126) AS planned_finish,
+    CAST(service_name AS varchar(128)) AS service_type,
+    CAST(delivery_center AS varchar(128)) AS delivery_center
+FROM dbo.xcelerator_review_orders
+WHERE service_name IN ({service_placeholders})
+    AND TRY_CONVERT(datetime2, pickup_target_from) IS NOT NULL
+    AND TRY_CONVERT(datetime2, delivery_target_to) IS NOT NULL
+    AND TRY_CONVERT(datetime2, pickup_target_from) >= DATEADD(day, -1, SYSUTCDATETIME())
+    AND TRY_CONVERT(datetime2, pickup_target_from) <= DATEADD(day, 1, SYSUTCDATETIME()){delivery_filter}
+ORDER BY TRY_CONVERT(datetime2, pickup_target_from), order_tracking_id
+""".strip()
+    return query, params
 
 
 def _build_ceo_powerbi_route_ticket_dax() -> str:
