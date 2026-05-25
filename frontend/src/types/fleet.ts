@@ -565,6 +565,103 @@ export interface OperatingCostSource {
   source_authority?: string
   message?: string
   row_count?: number | null
+  table?: string
+}
+
+export interface EntityMarginSummary {
+  miles: number
+  drive_hours: number
+  idle_hours: number
+  operating_hours: number
+  fuel_cost: number
+  fuel_card_audit_cost: number
+  maintenance_cost: number
+  insurance_cost: number
+  posted_insurance_cost: number
+  insurance_cost_per_mile: number | null
+  employee_cost: number
+  rental_trucks_trailers_cost: number
+  other_expense_cost: number
+  k1l_orders: number
+  k1l_grand_total: number
+  k1l_driver_pay: number
+  k1l_target_gross_margin: number
+  k1l_actual_gross_margin_before_fuel: number
+  k1l_actual_gross_margin_pct_before_fuel: number | null
+  k1l_actual_gross_margin_after_fuel: number
+  k1l_actual_gross_margin_pct_after_fuel: number | null
+  k1g_orders: number
+  k1g_grand_total: number
+  k1g_driver_pay: number
+  k1g_target_gross_margin: number
+  k1g_actual_gross_margin_before_overhead: number
+  k1g_actual_gross_margin_pct_before_overhead: number | null
+  qbo_expenses_available: boolean
+}
+
+export interface EntityMarginSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: 'read_only'
+  grain: 'weekly'
+  k1l_margin_target_pct: number
+  k1g_margin_target_pct: number
+  complete_k1l_cpm_available: boolean
+  complete_k1l_true_cpm_available: boolean
+  unresolved_sources: string[]
+  true_cpm_unresolved_sources: string[]
+  xcelerator_source_type?: string
+  sources: Record<string, OperatingCostSource>
+  summary: EntityMarginSummary | null
+  weekly: Record<string, unknown>[]
+  excluded_delivery_centers: Record<string, number>
+  row_counts: Record<string, number>
+}
+
+export interface DeliveryCenterPerformanceRow {
+  delivery_center: string
+  entity: string
+  orders: number
+  pickup_orders: number
+  pickup_measured_orders: number
+  pickup_on_time_orders: number
+  pickup_late_orders: number
+  pickup_missing_orders: number
+  pickup_missing_schedule_orders: number
+  pickup_missing_actual_orders: number
+  pickup_on_time_pct: number | null
+  pickup_late_pct: number | null
+  pickup_proof_coverage_pct: number | null
+  pickup_avg_late_minutes: number | null
+  pickup_max_late_minutes: number | null
+  delivery_orders: number
+  delivery_measured_orders: number
+  delivery_on_time_orders: number
+  delivery_late_orders: number
+  delivery_missing_orders: number
+  delivery_missing_schedule_orders: number
+  delivery_missing_actual_orders: number
+  delivery_on_time_pct: number | null
+  delivery_late_pct: number | null
+  delivery_proof_coverage_pct: number | null
+  delivery_avg_late_minutes: number | null
+  delivery_max_late_minutes: number | null
+}
+
+export interface DeliveryCenterPerformanceSnapshot {
+  period_start: string
+  period_end: string
+  generated_at: string
+  source_authority: string
+  projection_mode: 'read_only'
+  grain: 'delivery_center'
+  summary: DeliveryCenterPerformanceRow | null
+  delivery_centers: DeliveryCenterPerformanceRow[]
+  source: OperatingCostSource & {
+    missing_column_families?: string[]
+  }
 }
 
 export interface OperatingCostWeeklyRow {
