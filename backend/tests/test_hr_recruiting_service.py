@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from openpyxl import Workbook
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
@@ -225,3 +227,84 @@ def test_hr_recruiting_import_dry_run_does_not_write(tmp_path) -> None:
 
     assert result["status"] == "ok"
     assert not state_path.exists()
+
+
+def _write_hr_kpi_workbook(path: Path) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Lead Level KPI"
+    ws.append(["HR Lead KPI Recheck"])
+    ws.append(
+        [
+            "Lead Name",
+            "Phone",
+            "Email",
+            "Lead Created At",
+            "App Status",
+            "First Outreach KPI Bucket",
+            "Hours to First Outreach",
+            "Real Discussion KPI Bucket",
+            "Hours to First Real Discussion",
+        ]
+    )
+    ws.append(["Private Applicant One", "555-0100", "one@example.com", "2026-05-14 08:00", "Not Qualified", "Within 24h", 2, "Within 24h", 3])
+    ws.append(["Private Applicant Two", "555-0101", "two@example.com", "2026-05-14 09:00", "New", "No outbound found", None, "No 1min+ discussion found", None])
+    ws.append(["Private Applicant Three", "555-0102", "three@example.com", "2026-05-13 09:00", "No Response", "Over 72h failed", 80, "Over 72h failed", 82])
+
+    ws = wb.create_sheet("Call Attempts Detail")
+    ws.append(["Detail"])
+    ws.append(["Call Date/Time", "HR Member", "Duration Seconds", "Real Discussion 1min+"])
+    ws.append(["2026-05-14 10:00", "Recruiter A", 180, "Yes"])
+    ws.append(["2026-05-16 10:00", "Recruiter A", 20, "No"])
+
+    ws = wb.create_sheet("KPI By First Outreach")
+    ws.append(["Summary"])
+    ws.append(["HR Member", "Leads_First_Outreach", "Within_24h", "Recovered_24_48", "Late_48_72", "Failed_Over_72", "Avg_Hours_To_First_Outreach", "Median_Hours_To_First_Outreach", "Total_Outbound_Attempts", "Within_24h_Rate"])
+    ws.append(["Recruiter A", 2, 1, 0, 0, 1, 41, 41, 2, 0.5])
+
+    ws = wb.create_sheet("KPI By Real Discussion")
+    ws.append(["Summary"])
+    ws.append(["HR Member", "Leads_First_Real_Discussion", "Within_24h", "Recovered_24_48", "Late_48_72", "Failed_Over_72", "Avg_Hours_To_First_Real", "Median_Hours_To_First_Real", "Real_Within_24_Rate"])
+    ws.append(["Recruiter A", 2, 1, 0, 0, 1, 42.5, 42.5, 0.5])
+
+    for sheet in ("Failed No Outbound", "Recovered 24-48h", "Failed Over 72h", "No Real Discussion"):
+        ws = wb.create_sheet(sheet)
+        ws.append(["Subset"])
+        ws.append(["Lead Created At", "First Outreach KPI Bucket", "Real Discussion KPI Bucket"])
+
+    ws = wb.create_sheet("Source Log QA")
+    ws.append(["File", "Rows", "Columns", "Used for Mapping", "Reason / Notes", "First Columns"])
+    ws.append(["Detail_HR.csv", 100, 9, "Yes", "Phone-level call detail used for lead matching", "Date/Time, Extension"])
+    ws.append(["Report_Export.csv", 12, 23, "No", "Tenstreet status summary; not a call log", "Source, Referrer"])
+    wb.save(path)
+
+
+def test_hr_recruiting_workbook_source_projects_only_aggregate_evidence(tmp_path) -> None:
+    workbook_path = tmp_path / "hr-kpi.xlsx"
+    _write_hr_kpi_workbook(workbook_path)
+
+    dataset = asyncio.run(
+        get_hr_recruiting_dataset(
+            now=datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc),
+            config=HrRecruitingConfig(workbook_path=str(workbook_path), source="hr_kpi_workbook"),
+        )
+    )
+
+    assert dataset["projection_mode"] == "read_only"
+    assert dataset["source_profile"] == "kpi_workbook"
+    assert dataset["source_system"] == "HR Lead KPI Recheck workbook"
+    assert dataset["source_artifact"] == "hr-kpi.xlsx"
+    assert dataset["summary"]["first_touch_eligible_count"] == 3
+    assert dataset["summary"]["first_touch_within_24h_count"] == 1
+    assert dataset["summary"]["first_touch_24h_pct"] == 0.3333
+    assert dataset["summary"]["stale_untouched_48h"] == 1
+    assert dataset["hard_targets"]["first_touch_24h_pct"]["status"] == "warning"
+    assert dataset["hard_targets"]["new_hires_7d"]["status"] == "awaiting_feed"
+    assert dataset["hard_targets"]["active_qualified_pipeline"]["status"] == "awaiting_feed"
+    assert dataset["workbook_evidence"]["kpi_summary"]["total_outbound_attempts"] == 2
+    assert dataset["workbook_evidence"]["source_log_qa"][0]["used_for_mapping"] is True
+
+    serialized = json.dumps(dataset)
+    assert "Private Applicant" not in serialized
+    assert "555-0100" not in serialized
+    assert "one@example.com" not in serialized

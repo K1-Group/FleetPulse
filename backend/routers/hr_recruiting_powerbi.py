@@ -16,13 +16,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _with_hr_recruiting_meta(row: dict[str, Any], connection_name: str) -> dict[str, Any]:
+def _with_hr_recruiting_meta(
+    row: dict[str, Any],
+    connection_name: str,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
     return {
         **row,
         "connection_name": connection_name,
         "exported_at": _now_iso(),
-        "source_system": "TenStreet Outlook/Zapier",
-        "source_authority": "Zapier Table + approved TenStreet Outlook emails",
+        "source_system": snapshot.get("source_system"),
+        "source_authority": snapshot.get("source_authority"),
+        "source_profile": snapshot.get("source_profile"),
         "projection_mode": "read_only",
     }
 
@@ -31,6 +36,8 @@ def _hr_period(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "generated_at": snapshot["generated_at"],
         "source": snapshot["source"],
+        "source_profile": snapshot.get("source_profile"),
+        "source_artifact": snapshot.get("source_artifact"),
         "table_id": snapshot["table_id"],
         "source_status": snapshot["source_status"],
         "source_message": snapshot["source_message"],
@@ -53,6 +60,7 @@ async def powerbi_hr_recruiting_summary() -> list[dict[str, Any]]:
                 "hard_target_pending": ",".join(snapshot.get("hard_target_pending", [])),
             },
             "hr_recruiting_summary",
+            snapshot,
         )
     ]
 
@@ -63,7 +71,7 @@ async def powerbi_hr_recruiting_by_worklist() -> list[dict[str, Any]]:
     snapshot = await get_hr_recruiting_dataset()
     period = _hr_period(snapshot)
     return [
-        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_by_worklist")
+        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_by_worklist", snapshot)
         for row in snapshot["by_worklist"]
     ]
 
@@ -74,7 +82,7 @@ async def powerbi_hr_recruiting_daily() -> list[dict[str, Any]]:
     snapshot = await get_hr_recruiting_dataset()
     period = _hr_period(snapshot)
     return [
-        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_daily")
+        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_daily", snapshot)
         for row in snapshot["daily"]
     ]
 
@@ -85,7 +93,7 @@ async def powerbi_hr_recruiting_status_counts() -> list[dict[str, Any]]:
     snapshot = await get_hr_recruiting_dataset()
     period = _hr_period(snapshot)
     return [
-        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_status_counts")
+        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_status_counts", snapshot)
         for row in snapshot["status_counts"]
     ]
 
@@ -96,7 +104,7 @@ async def powerbi_hr_recruiting_trend() -> list[dict[str, Any]]:
     snapshot = await get_hr_recruiting_dataset()
     period = _hr_period(snapshot)
     return [
-        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_trend")
+        _with_hr_recruiting_meta({**period, **row}, "hr_recruiting_trend", snapshot)
         for row in snapshot["trend"]
     ]
 
@@ -108,8 +116,9 @@ async def powerbi_hr_recruiting_snapshot() -> dict[str, Any]:
     return {
         "connection_name": "hr_recruiting_snapshot",
         "exported_at": _now_iso(),
-        "source_system": "TenStreet Outlook/Zapier",
-        "source_authority": "Zapier Table + approved TenStreet Outlook emails",
+        "source_system": snapshot.get("source_system"),
+        "source_authority": snapshot.get("source_authority"),
+        "source_profile": snapshot.get("source_profile"),
         "projection_mode": "read_only",
         **snapshot,
     }

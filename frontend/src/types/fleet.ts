@@ -941,12 +941,53 @@ export interface HrRecruitingTrendRow {
   avg_age_hours: number
 }
 
+export interface HrRecruitingWorkbookBucket {
+  bucket: string
+  count: number
+}
+
+export interface HrRecruitingWorkbookMemberKpi {
+  hr_member: string
+  lead_count: number
+  within_24h: number
+  recovered_24_48h: number
+  late_48_72h: number
+  failed_over_72h: number
+  avg_hours: number | null
+  median_hours: number | null
+  within_24h_rate: number | null
+  total_outbound_attempts: number
+}
+
+export interface HrRecruitingWorkbookSourceQa {
+  file: string
+  row_count: number
+  column_count: number
+  used_for_mapping: boolean
+  notes: string
+  first_columns: string
+}
+
+export interface HrRecruitingWorkbookEvidence {
+  workbook_name: string | null
+  tabs: Array<{ sheet: string; row_count: number; status: string }>
+  missing_tabs: string[]
+  kpi_summary: Record<string, number | null>
+  first_outreach_buckets: HrRecruitingWorkbookBucket[]
+  real_discussion_buckets: HrRecruitingWorkbookBucket[]
+  first_outreach_by_member: HrRecruitingWorkbookMemberKpi[]
+  real_discussion_by_member: HrRecruitingWorkbookMemberKpi[]
+  source_log_qa: HrRecruitingWorkbookSourceQa[]
+}
+
 export interface HrRecruitingDataset {
   generated_at: string
   projection_mode: 'read_only'
+  source_profile: 'worklist_snapshot' | 'kpi_workbook' | string
   source_system: string
   source_authority: string
   source: string
+  source_artifact: string | null
   table_id: string
   source_status: string
   source_message: string | null
@@ -963,6 +1004,7 @@ export interface HrRecruitingDataset {
   trend: HrRecruitingTrendRow[]
   row_counts: Record<string, number>
   validation_errors: Record<string, number>
+  workbook_evidence?: HrRecruitingWorkbookEvidence
 }
 
 // HR call-analysis and productivity monitor

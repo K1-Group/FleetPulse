@@ -21,6 +21,13 @@ from typing import Any
 
 import httpx
 
+from services.hr_recruiting_workbook import (
+    SOURCE_AUTHORITY as WORKBOOK_SOURCE_AUTHORITY,
+    SOURCE_PROFILE as WORKBOOK_SOURCE_PROFILE,
+    SOURCE_SYSTEM as WORKBOOK_SOURCE_SYSTEM,
+    build_hr_recruiting_workbook_dataset,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TABLE_ID = "01KR00WV4YHCB6BMYDE1EG7HEM"
@@ -236,6 +243,7 @@ class HrRecruitingConfig:
     sla_hours: tuple[int, ...] = DEFAULT_SLA_HOURS
     snapshot_url: str = ""
     snapshot_path: str = ""
+    workbook_path: str = ""
     sharepoint_reporting_log_url: str = ""
     timeout_seconds: float = 20.0
 
@@ -251,24 +259,43 @@ class HrRecruitingConfig:
                 os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
                 or os.getenv("HR_RECRUITING_SNAPSHOT_PATH", "").strip()
             ),
+            workbook_path=os.getenv("HR_RECRUITING_WORKBOOK_PATH", "").strip(),
             sharepoint_reporting_log_url=os.getenv("SHAREPOINT_HR_REPORTING_LOG_URL", "").strip(),
             timeout_seconds=_float_env("HR_RECRUITING_TIMEOUT_SECONDS", 20.0),
         )
 
     @property
     def source_configured(self) -> bool:
-        return bool(self.snapshot_url or self.snapshot_path)
+        return bool(self.snapshot_url or self.snapshot_path or self.workbook_path)
+
+    @property
+    def workbook_source_path(self) -> str:
+        if self.workbook_path:
+            return self.workbook_path
+        suffix = Path(self.snapshot_path).suffix.casefold() if self.snapshot_path else ""
+        if suffix in {".xlsx", ".xlsm"}:
+            return self.snapshot_path
+        return ""
 
     def safe_status(self) -> dict[str, Any]:
+        workbook_configured = bool(self.workbook_source_path)
+        source = (
+            self.source
+            if not workbook_configured or self.source != "zapier_table"
+            else "hr_kpi_workbook"
+        )
         return {
-            "source": self.source,
+            "source": source,
             "table_id": self.table_id,
             "snapshot_configured": bool(self.snapshot_url),
             "state_path_configured": bool(self.snapshot_path),
+            "workbook_configured": workbook_configured,
             "sharepoint_reporting_log_configured": bool(self.sharepoint_reporting_log_url),
             "sla_hours": list(self.sla_hours),
             "hard_targets": _public_hard_targets(),
-            "source_authority": SOURCE_AUTHORITY,
+            "source_authority": WORKBOOK_SOURCE_AUTHORITY if workbook_configured else SOURCE_AUTHORITY,
+            "source_system": WORKBOOK_SOURCE_SYSTEM if workbook_configured else SOURCE_SYSTEM,
+            "source_profile": WORKBOOK_SOURCE_PROFILE if workbook_configured else "worklist_snapshot",
             "projection_mode": "read_only",
             "pii_suppressed": True,
         }
@@ -656,7 +683,7 @@ async def _load_source_records(config: HrRecruitingConfig) -> SourceLoadResult:
         return SourceLoadResult(
             records=[],
             status="snapshot_not_configured",
-            message="Configure HR_RECRUITING_SNAPSHOT_URL or HR_RECRUITING_STATE_PATH with an approved Zapier/Outlook JSON snapshot.",
+            message="Configure HR_RECRUITING_WORKBOOK_PATH, HR_RECRUITING_SNAPSHOT_URL, or HR_RECRUITING_STATE_PATH with approved HR recruiting evidence.",
         )
 
     if config.snapshot_url:
@@ -1005,10 +1032,12 @@ def build_hr_recruiting_dataset(
     dataset = {
         "generated_at": as_of.isoformat(),
         "projection_mode": "read_only",
+        "source_profile": "worklist_snapshot",
         "source_system": SOURCE_SYSTEM,
         "source_authority": SOURCE_AUTHORITY,
         "source": config.source,
         "table_id": config.table_id,
+        "source_artifact": None,
         "source_status": derived_source_status,
         "source_message": source_message,
         "pii_suppressed": True,
@@ -1159,6 +1188,20 @@ async def get_hr_recruiting_dataset(
     config: HrRecruitingConfig | None = None,
 ) -> dict[str, Any]:
     config = config or HrRecruitingConfig.from_env()
+    workbook_path = config.workbook_source_path
+    if workbook_path:
+        return build_hr_recruiting_workbook_dataset(
+            workbook_path,
+            now=now or _now_utc(),
+            source=(
+                config.source
+                if config.source and config.source != "zapier_table"
+                else "hr_kpi_workbook"
+            ),
+            table_id=config.table_id,
+            sla_hours=config.sla_hours,
+            hard_targets=HARD_TARGETS,
+        )
     source = await _load_source_records(config)
     return build_hr_recruiting_dataset(
         source.records,
