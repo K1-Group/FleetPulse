@@ -28,6 +28,7 @@ EMAIL_WEBHOOK_ENV = "FLEETPULSE_REPORT_EMAIL_WEBHOOK_URL"
 EMAIL_WEBHOOK_TOKEN_ENV = "FLEETPULSE_REPORT_EMAIL_WEBHOOK_TOKEN"
 SCHEDULE_PATH_ENV = "FLEETPULSE_REPORT_SCHEDULE_PATH"
 STATE_DIR_ENV = "FLEETPULSE_STATE_DIR"
+DEFAULT_HOSTED_SCHEDULE_PATH = Path("/home/data/fleetpulse_report_schedule.json")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -45,6 +46,12 @@ def _default_schedule() -> dict[str, Any]:
     }
 
 
+def _hosted_schedule_path() -> tuple[Path, bool] | None:
+    if DEFAULT_HOSTED_SCHEDULE_PATH.parent.parent.exists():
+        return DEFAULT_HOSTED_SCHEDULE_PATH, True
+    return None
+
+
 def _schedule_path() -> tuple[Path, bool]:
     explicit_path = os.getenv(SCHEDULE_PATH_ENV, "").strip()
     if explicit_path:
@@ -53,6 +60,10 @@ def _schedule_path() -> tuple[Path, bool]:
     state_dir = os.getenv(STATE_DIR_ENV, "").strip()
     if state_dir:
         return Path(state_dir).expanduser() / "fleet_report_schedule.json", True
+
+    hosted_path = _hosted_schedule_path()
+    if hosted_path:
+        return hosted_path
 
     return Path("/tmp/fleetpulse_report_schedule.json"), False
 
@@ -127,8 +138,9 @@ def _timezone(value: str) -> ZoneInfo:
         raise ValueError(f"Unsupported timezone: {timezone_name}") from exc
 
 
-def normalize_schedule(payload: dict[str, Any]) -> dict[str, Any]:
+def normalize_schedule(payload: dict[str, Any], *, touch_updated_at: bool = True) -> dict[str, Any]:
     schedule = {**_default_schedule(), **(payload or {})}
+    existing_updated_at = schedule.get("updated_at")
     schedule["enabled"] = bool(schedule.get("enabled"))
     schedule["period"] = _normalize_period(schedule.get("period", "weekly"))
     schedule["frequency"] = _normalize_frequency(schedule.get("frequency", "weekly"))
@@ -148,7 +160,23 @@ def normalize_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     if schedule["enabled"] and not schedule["recipients"]:
         raise ValueError("At least one email recipient is required for an enabled report schedule.")
 
-    schedule["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if touch_updated_at:
+        schedule["updated_at"] = datetime.now(timezone.utc).isoformat()
+        for key in [
+            "last_attempt_at",
+            "last_attempt_key",
+            "last_attempt_status",
+            "last_attempt_message",
+            "last_run_at",
+            "last_run_key",
+            "last_scheduled_for",
+        ]:
+            schedule.pop(key, None)
+    elif existing_updated_at:
+        schedule["updated_at"] = str(existing_updated_at)
+    else:
+        schedule.pop("updated_at", None)
+
     return schedule
 
 
@@ -202,6 +230,89 @@ def calculate_next_run(schedule: dict[str, Any], now: datetime | None = None) ->
     return candidate.isoformat()
 
 
+def _schedule_grace_seconds() -> int:
+    raw_value = os.getenv("FLEETPULSE_REPORT_SCHEDULE_GRACE_SECONDS", "").strip()
+    if raw_value:
+        try:
+            return max(0, int(raw_value))
+        except ValueError:
+            pass
+    return 24 * 60 * 60
+
+
+def _parse_utc_datetime(value: str | datetime | None) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if value:
+        normalized = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _scheduled_occurrence(schedule: dict[str, Any], now: datetime | None = None) -> datetime | None:
+    if not schedule.get("enabled"):
+        return None
+
+    tz = _timezone(str(schedule.get("timezone") or "America/Chicago"))
+    local_now = _parse_utc_datetime(now).astimezone(tz)
+    hour, minute = (int(part) for part in str(schedule.get("send_time") or "07:00").split(":", 1))
+    frequency = str(schedule.get("frequency") or "weekly")
+
+    if frequency == "daily":
+        candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    elif frequency == "weekly":
+        weekday = int(schedule.get("weekday", 0))
+        days_since = (local_now.weekday() - weekday) % 7
+        candidate = (local_now - timedelta(days=days_since)).replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+    else:
+        day = int(schedule.get("day_of_month", 1))
+        last_day = calendar.monthrange(local_now.year, local_now.month)[1]
+        candidate = local_now.replace(
+            day=min(day, last_day), hour=hour, minute=minute, second=0, microsecond=0
+        )
+
+    if candidate > local_now:
+        return None
+
+    if (local_now - candidate).total_seconds() > _schedule_grace_seconds():
+        return None
+
+    return candidate
+
+
+def get_due_report_schedule_status(now: str | datetime | None = None) -> dict[str, Any]:
+    status = get_report_schedule_status()
+    schedule = status["schedule"]
+    scheduled_for = _scheduled_occurrence(schedule, _parse_utc_datetime(now))
+
+    if not schedule.get("enabled"):
+        return {**status, "due": False, "reason": "disabled", "run_key": None, "scheduled_for": None}
+
+    if scheduled_for is None:
+        return {**status, "due": False, "reason": "not_due", "run_key": None, "scheduled_for": None}
+
+    run_key = f"{schedule['frequency']}:{scheduled_for.isoformat()}"
+    if schedule.get("last_run_key") == run_key:
+        return {
+            **status,
+            "due": False,
+            "reason": "already_sent",
+            "run_key": run_key,
+            "scheduled_for": scheduled_for.isoformat(),
+        }
+
+    return {
+        **status,
+        "due": True,
+        "reason": "due",
+        "run_key": run_key,
+        "scheduled_for": scheduled_for.isoformat(),
+    }
+
+
 def _delivery_configured() -> bool:
     return bool(os.getenv(EMAIL_WEBHOOK_ENV, "").strip())
 
@@ -222,7 +333,7 @@ def get_report_schedule_status() -> dict[str, Any]:
     raw_schedule = _load_json(path)
     load_error = raw_schedule.pop("_load_error", None)
     try:
-        schedule = normalize_schedule(raw_schedule)
+        schedule = normalize_schedule(raw_schedule, touch_updated_at=False)
     except ValueError:
         schedule = _default_schedule()
 
@@ -253,6 +364,43 @@ def save_report_schedule(payload: dict[str, Any]) -> dict[str, Any]:
             "recipient_count": len(schedule["recipients"]),
         },
     )
+
+    return {
+        "schedule": schedule,
+        "next_run_at": calculate_next_run(schedule),
+        "delivery_ready": _delivery_configured(),
+        "required_config": [] if _delivery_configured() else [EMAIL_WEBHOOK_ENV],
+        "persistent_storage": persistent_storage,
+        "storage_ready": True,
+    }
+
+
+def record_report_schedule_attempt(
+    *,
+    message: str,
+    run_key: str,
+    scheduled_for: str,
+    status: str,
+) -> dict[str, Any]:
+    path, persistent_storage = _schedule_path()
+    raw_schedule = _load_json(path)
+    raw_schedule.pop("_load_error", None)
+    schedule = normalize_schedule(raw_schedule, touch_updated_at=False)
+    now = datetime.now(timezone.utc).isoformat()
+
+    schedule["last_attempt_at"] = now
+    schedule["last_attempt_key"] = run_key
+    schedule["last_attempt_status"] = status
+    schedule["last_attempt_message"] = message
+    schedule["last_scheduled_for"] = scheduled_for
+    if status == "sent":
+        schedule["last_run_at"] = now
+        schedule["last_run_key"] = run_key
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    temp_path.write_text(json.dumps(schedule, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(path)
 
     return {
         "schedule": schedule,
