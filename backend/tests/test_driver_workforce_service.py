@@ -220,6 +220,53 @@ def test_driver_workforce_ceo_powerbi_can_fallback_to_fabric_warehouse(monkeypat
     assert meta["errors"] == ["ceo_powerbi_route_tickets:RuntimeError"]
 
 
+def test_driver_workforce_verifies_xcelerator_route_windows_without_geotab_join(monkeypatch):
+    now = _dt("2026-05-20T18:00:00Z")
+    config = DriverWorkforceConfig(timezone="America/Chicago")
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_route_ticket_rows",
+        lambda _config: (
+            [
+                {
+                    "ticket_id": "RT-10482",
+                    "driver_id": "7754",
+                    "vehicle_name": "7754",
+                    "planned_start": "2026-05-20T08:00:00-05:00",
+                    "planned_finish": "2026-05-20T20:00:00-05:00",
+                    "status": "open",
+                }
+            ],
+            now,
+            {"xcelerator_source": "ceo_powerbi"},
+        ),
+    )
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_geotab_activity",
+        lambda *args, **kwargs: {
+            "vehicles": [],
+            "events": [],
+            "last_updated": now,
+            "error": None,
+        },
+    )
+
+    dataset = driver_workforce_service.get_driver_workforce_dataset(
+        now=now,
+        config=config,
+        force_refresh=True,
+    )
+
+    assert dataset["validation"]["status"] == "verified"
+    assert dataset["validation"]["state"] == "route_windows_verified_geotab_join_pending"
+    assert dataset["validation"]["row_count"] == 1
+    assert dataset["validation"]["joined_count"] == 0
+    assert dataset["validation"]["activity_join_status"] == "pending_no_geotab_activity"
+    assert "planned route windows from Xcelerator" in dataset["validation"]["message"]
+    assert dataset["workdays"][0]["status"] == "late_start"
+
+
 def test_fabric_warehouse_route_ticket_sql_uses_service_and_delivery_filters():
     query, params = _build_fabric_warehouse_route_ticket_sql(
         ["Route Ticket", "Linehaul"],
