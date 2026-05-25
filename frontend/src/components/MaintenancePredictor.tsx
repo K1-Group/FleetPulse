@@ -454,7 +454,7 @@ export default function MaintenancePredictor() {
           <Wrench className="w-5 h-5 text-blue-400" />
           Vehicle Maintenance Status
           <span className="text-xs bg-gray-700 px-2 py-1 rounded-full">
-            {predictions.data?.length || 0} Vehicles
+            {predictions.data?.length || 0} Fleet Vehicles
           </span>
         </h2>
 
