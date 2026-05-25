@@ -255,6 +255,12 @@ export default function App() {
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3">
+                <span>Seat</span>
+                <span className="truncate text-right font-semibold text-gray-200 light:text-gray-900">
+                  {authSession.data?.seat_access.primary_seat?.display_name || (authSession.data?.authenticated ? 'Unassigned' : 'Public')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
                 <span>API</span>
                 <span className="inline-flex items-center gap-1.5 font-semibold text-gray-200 light:text-gray-900">
                   <span className={`inline-block h-1.5 w-1.5 rounded-full ${liveStatusClass}`} />

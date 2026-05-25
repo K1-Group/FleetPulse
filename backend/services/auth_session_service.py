@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import Request
+from services.entra_seat_access_service import build_seat_access
 
 ENTRA_SOURCE_AUTHORITY = "Microsoft Entra ID via Azure App Service Authentication"
 _AAD_IDPS = {"aad", "azureactivedirectory"}
@@ -122,6 +123,7 @@ def build_auth_session(request: Request, return_to: str | None = None) -> dict[s
         "login_enabled": login_enabled,
         "authenticated": authenticated,
         "identity_provider": idp or None,
+        "seat_access": build_seat_access(principal, authenticated),
         "user": user,
         "login_url": login_url,
         "logout_url": logout_url,

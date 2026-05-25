@@ -43,12 +43,33 @@ export interface AuthSessionUser {
   principal_id: string | null
 }
 
+export interface AuthSeat {
+  display_name: string
+  id: string
+  tabs: string[]
+}
+
+export interface AuthSeatAccess {
+  allowed_tabs: string[]
+  authorization_mode: 'optional' | 'enforced'
+  authorized: boolean
+  config_ready: boolean
+  denied_reason: string | null
+  primary_seat: AuthSeat | null
+  projection_mode: 'read_only'
+  public_tabs: string[]
+  seats: AuthSeat[]
+  source_authority: string
+  write_back_allowed: boolean
+}
+
 export interface AuthSession {
   auth_mode: 'required' | 'optional' | 'disabled'
   auth_required: boolean
   login_enabled: boolean
   authenticated: boolean
   identity_provider: string | null
+  seat_access: AuthSeatAccess
   user: AuthSessionUser | null
   login_url: string | null
   logout_url: string | null

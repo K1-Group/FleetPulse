@@ -11,10 +11,14 @@ function userLabel(session: AuthSession) {
   return session.user?.display_name || session.user?.email || 'Signed in'
 }
 
+function seatLabel(session: AuthSession | null) {
+  return session?.seat_access.primary_seat?.display_name || null
+}
+
 function modeLabel(session: AuthSession | null) {
   if (!session) return 'Auth pending'
   if (session.auth_required && !session.authenticated) return 'Sign in required'
-  if (session.authenticated) return 'Signed in'
+  if (session.authenticated) return seatLabel(session) || 'Signed in'
   if (session.login_enabled) return 'Public view'
   return 'SSO off'
 }
@@ -41,6 +45,7 @@ export default function UserLoginStatus({ session, loading, error }: Props) {
   const authenticated = Boolean(session?.authenticated)
   const loginUrl = session?.login_url
   const logoutUrl = session?.logout_url
+  const activeSeat = seatLabel(session)
 
   return (
     <div className="inline-flex h-10 max-w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/60 px-2.5 text-sm text-gray-300 light:border-gray-200 light:bg-white light:text-gray-700">
@@ -52,10 +57,12 @@ export default function UserLoginStatus({ session, loading, error }: Props) {
         )}
         <div className="min-w-0 leading-tight">
           <div className="truncate text-xs font-semibold text-white light:text-gray-950">
-            {authenticated && session ? userLabel(session) : modeLabel(session)}
+            {authenticated && session ? activeSeat || userLabel(session) : modeLabel(session)}
           </div>
           <div className="hidden truncate text-[10px] text-gray-500 light:text-gray-500 sm:block">
-            {session?.source_authority || 'Microsoft Entra'}
+            {authenticated && session
+              ? userLabel(session)
+              : session?.seat_access.source_authority || session?.source_authority || 'Microsoft Entra'}
           </div>
         </div>
       </div>

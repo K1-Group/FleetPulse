@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from http_cache import api_cache_control_header
+from services.auth_session_service import build_auth_session
+from services.entra_seat_access_service import tab_for_path
 
 logger = logging.getLogger("fleetpulse")
 
@@ -39,6 +41,10 @@ def _entra_auth_required() -> bool:
     return _env_bool("FLEETPULSE_ENTRA_AUTH_REQUIRED", False)
 
 
+def _entra_seat_access_enforced() -> bool:
+    return _env_bool("FLEETPULSE_ENTRA_SEAT_ACCESS_ENFORCED", False)
+
+
 def _entra_principal_present(request: Request) -> bool:
     principal = request.headers.get("x-ms-client-principal", "").strip()
     idp = request.headers.get("x-ms-client-principal-idp", "").strip().lower()
@@ -46,7 +52,7 @@ def _entra_principal_present(request: Request) -> bool:
 
 
 def _auth_exempt_path(path: str) -> bool:
-    return path in {"/api/health", "/api/auth/session"} or path.startswith("/.auth")
+    return path in {"/api/health", "/api/auth/session", "/api/auth/seat-access"} or path.startswith("/.auth")
 
 
 @app.middleware("http")
@@ -68,6 +74,38 @@ async def enforce_entra_sso(request: Request, call_next):
         target = f"{target}?{request.url.query}"
     login_url = f"/.auth/login/aad?post_login_redirect_uri={quote(target, safe='')}"
     return RedirectResponse(login_url, status_code=302)
+
+
+@app.middleware("http")
+async def enforce_entra_seat_access(request: Request, call_next):
+    if (
+        not _entra_seat_access_enforced()
+        or _auth_exempt_path(request.url.path)
+        or not request.url.path.startswith("/api/")
+    ):
+        return await call_next(request)
+
+    session = build_auth_session(request)
+    access = session.get("seat_access") or {}
+    tab = tab_for_path(request.url.path)
+
+    if not session.get("authenticated"):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Microsoft Entra sign-in is required for FleetPulse seat access."},
+        )
+
+    if not access.get("authorized") or (tab and tab not in access.get("allowed_tabs", [])):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "FleetPulse seat access denied.",
+                "denied_reason": "tab_not_allowed_for_entra_seat" if tab else access.get("denied_reason"),
+                "tab": tab,
+            },
+        )
+
+    return await call_next(request)
 
 
 @app.middleware("http")
