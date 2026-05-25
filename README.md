@@ -231,6 +231,8 @@ FLEETPULSE_XCELERATOR_EVENT_FEED_API_KEY_HEADER=X-FleetPulse-Xcelerator-Key
 FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
 FLEETPULSE_XCELERATOR_EVENT_IMPORT_API_KEY=
 FLEETPULSE_XCELERATOR_EVENT_RETAINED_RECORDS=50000
+FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=ceo_powerbi
+FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql
 FLEETPULSE_QBO_FINANCIAL_FEED_URL=
 FLEETPULSE_QBO_FINANCIAL_FEED_PATH=
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
@@ -255,6 +257,16 @@ the matching `*_IMPORT_API_KEY` value is configured, and both store read-only
 evidence files only. If Zapier or Power Automate writes directly to blob/file
 storage instead, point `FLEETPULSE_QBO_FINANCIAL_FEED_URL` or
 `FLEETPULSE_XCELERATOR_EVENT_FEED_URL` at that governed JSON feed.
+
+Driver Workforce can read current route-ticket windows from the Xcelerator CEO
+Dashboard semantic model by setting
+`FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=ceo_powerbi`. This is scoped to
+Driver Workforce only, so FleetPulse can keep Fabric Warehouse SQL as the
+preferred source for revenue, margin, lane stability, and delivery-center
+analytics. If Power BI rejects the app service principal, set
+`FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql` so the
+dashboard still reads the same Xcelerator ReviewOrders projection through the
+warehouse path and reports the effective source in `source_meta`.
 
 The remaining fixed-seat KPI blockers use the generic scheduled feed route
 `POST /api/control-tower/seat-kpis/feeds/{feed_key}/import` and status route
