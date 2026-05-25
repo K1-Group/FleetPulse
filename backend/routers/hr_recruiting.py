@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.hr_recruiting_service import (
@@ -24,9 +25,11 @@ class HrRecruitingImportRequest(BaseModel):
 
 
 @router.get("/worklist")
-async def hr_recruiting_worklist() -> dict[str, Any]:
+async def hr_recruiting_worklist(
+    week_start: date | None = Query(default=None, description="Optional week start date in YYYY-MM-DD format."),
+) -> dict[str, Any]:
     """Return the HR worklist dashboard dataset without applicant PII."""
-    return await get_hr_recruiting_dataset()
+    return await get_hr_recruiting_dataset(week_start=week_start)
 
 
 @router.get("/status")

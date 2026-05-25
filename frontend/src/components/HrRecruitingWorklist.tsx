@@ -1,14 +1,16 @@
 import { motion } from 'framer-motion'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   BarChart3,
+  CalendarDays,
   Clock,
   Database,
   RefreshCw,
   ShieldCheck,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-react'
 import {
   Bar,
@@ -26,6 +28,7 @@ import DepartmentCallAnalysisPanel from './DepartmentCallAnalysisPanel'
 import type {
   HrRecruitingDailyRow,
   HrRecruitingHardTarget,
+  HrRecruitingPeriodFilter,
   HrRecruitingStatusCount,
   HrRecruitingSummary,
   HrRecruitingTrendRow,
@@ -160,6 +163,29 @@ function compactDate(value: string) {
   const parsed = new Date(`${value}T00:00:00`)
   if (Number.isNaN(parsed.getTime())) return value
   return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function dateInputValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function normalizeWeekStart(value: string) {
+  if (!value) return ''
+  const parsed = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const daysSinceMonday = (parsed.getDay() + 6) % 7
+  parsed.setDate(parsed.getDate() - daysSinceMonday)
+  return dateInputValue(parsed)
+}
+
+function periodLabel(period: HrRecruitingPeriodFilter | undefined) {
+  if (period?.grain === 'week' && period.week_start && period.week_end) {
+    return `${compactDate(period.week_start)} - ${compactDate(period.week_end)}`
+  }
+  return 'All weeks'
 }
 
 function workbookMetric(evidence: HrRecruitingWorkbookEvidence | undefined, key: string) {
@@ -510,7 +536,8 @@ function WorkbookEvidencePanel({ evidence }: { evidence: HrRecruitingWorkbookEvi
 }
 
 export default function HrRecruitingWorklist() {
-  const { data, loading, error, refresh } = useHrRecruitingWorklist()
+  const [weekStart, setWeekStart] = useState('')
+  const { data, loading, error, refresh } = useHrRecruitingWorklist(true, weekStart || undefined)
   const summary = data?.summary || ZERO_SUMMARY
   const byWorklist = data?.by_worklist || []
   const trend = data?.trend || []
@@ -526,6 +553,7 @@ export default function HrRecruitingWorklist() {
   ]
   const sourceMessage = data?.source_message || (workbookSource ? 'Configure HR_RECRUITING_WORKBOOK_PATH with the approved HR KPI workbook to populate this monitor.' : 'Configure the approved Zapier/Outlook HR snapshot to populate this monitor.')
   const empty = !loading && !error && data && data.row_counts.deduped_leads === 0
+  const activePeriodLabel = periodLabel(data?.period_filter)
 
   if (loading && !data) {
     return <Skeleton />
@@ -547,6 +575,33 @@ export default function HrRecruitingWorklist() {
           </div>
         </div>
         <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center xl:w-auto">
+          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 light:border-gray-200 light:bg-white sm:w-auto">
+            <label className="flex shrink-0 items-center gap-1 text-xs font-medium text-gray-400 light:text-gray-600" htmlFor="hr-week-filter">
+              <CalendarDays className="h-4 w-4" />
+              Week
+            </label>
+            <input
+              id="hr-week-filter"
+              aria-label="HR recruiting week filter"
+              type="date"
+              value={weekStart}
+              onChange={event => setWeekStart(normalizeWeekStart(event.target.value))}
+              className="min-w-0 bg-transparent text-sm text-gray-100 outline-none light:text-gray-900"
+            />
+            {weekStart && (
+              <button
+                type="button"
+                aria-label="Clear HR recruiting week filter"
+                onClick={() => setWeekStart('')}
+                className="rounded-md p-1 text-gray-400 transition hover:bg-gray-800 hover:text-white light:text-gray-600 light:hover:bg-gray-100 light:hover:text-gray-900"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
+            {activePeriodLabel}
+          </span>
           <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
             {workbookSource ? data?.source_artifact || 'Workbook pending' : `Table ${data?.table_id || '01KR00WV4YHCB6BMYDE1EG7HEM'}`}
           </span>
@@ -633,7 +688,7 @@ export default function HrRecruitingWorklist() {
         </div>
         <DailyVolumeTable rows={daily} workbookSource={workbookSource} />
         <p className="mt-4 text-xs text-gray-500 light:text-gray-600">
-          Generated {data?.generated_at ? new Date(data.generated_at).toLocaleString() : 'pending'} · {data?.source_authority || 'Zapier Table + approved TenStreet Outlook emails'} · PII suppressed
+          Generated {data?.generated_at ? new Date(data.generated_at).toLocaleString() : 'pending'} · {activePeriodLabel} · {data?.source_authority || 'Zapier Table + approved TenStreet Outlook emails'} · PII suppressed
         </p>
       </section>
     </div>

@@ -167,8 +167,9 @@ export function useMonitorStatus(enabled = true) {
   return useFetch<any>(`${API}/monitor/status`, 15000, enabled)
 }
 
-export function useHrRecruitingWorklist(enabled = true) {
-  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist`, 60000, enabled, 60000)
+export function useHrRecruitingWorklist(enabled = true, weekStart?: string) {
+  const query = weekStart ? `?week_start=${encodeURIComponent(weekStart)}` : ''
+  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist${query}`, 60000, enabled, 60000)
 }
 
 export function useHrCallAnalysis(enabled = true) {

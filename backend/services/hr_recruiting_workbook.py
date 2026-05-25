@@ -52,10 +52,12 @@ def build_hr_recruiting_workbook_dataset(
     table_id: str,
     sla_hours: tuple[int, ...],
     hard_targets: dict[str, dict[str, Any]],
+    week_start: date | str | None = None,
 ) -> dict[str, Any]:
     """Build the HR recruiting dataset from the KPI recheck workbook."""
 
     path = Path(workbook_path).expanduser()
+    period_filter = _period_filter(week_start)
     if not workbook_path:
         return _empty_dataset(
             now=now,
@@ -65,6 +67,7 @@ def build_hr_recruiting_workbook_dataset(
             hard_targets=hard_targets,
             source_status="snapshot_not_configured",
             source_message="Configure HR_RECRUITING_WORKBOOK_PATH with the approved HR KPI recheck workbook.",
+            period_filter=period_filter,
         )
     if not path.exists():
         return _empty_dataset(
@@ -76,6 +79,7 @@ def build_hr_recruiting_workbook_dataset(
             source_status="source_error",
             source_message="Configured HR_RECRUITING_WORKBOOK_PATH does not exist.",
             workbook_name=path.name,
+            period_filter=period_filter,
         )
 
     try:
@@ -90,6 +94,7 @@ def build_hr_recruiting_workbook_dataset(
             source_status="source_error",
             source_message=f"HR KPI workbook could not be opened: {type(exc).__name__}.",
             workbook_name=path.name,
+            period_filter=period_filter,
         )
 
     present_tabs = [sheet for sheet in EXPECTED_TABS if sheet in workbook.sheetnames]
@@ -106,6 +111,7 @@ def build_hr_recruiting_workbook_dataset(
             workbook_name=path.name,
             present_tabs=present_tabs,
             missing_tabs=missing_tabs,
+            period_filter=period_filter,
         )
 
     leads = _records_for_sheet(
@@ -128,7 +134,35 @@ def build_hr_recruiting_workbook_dataset(
         _records_for_sheet(workbook, "Source Log QA", required_headers=("File", "Rows", "Used for Mapping"))
     )
 
-    if not leads:
+    source_lead_count = len(leads)
+    source_call_attempt_count = len(call_attempts)
+    if period_filter["grain"] == "week":
+        leads = [
+            row
+            for row in leads
+            if _record_in_period(row, period_filter, "Lead Created At")
+        ]
+        call_attempts = [
+            row
+            for row in call_attempts
+            if _record_in_period(row, period_filter, "Lead Created At", fallback_field="Call Date/Time")
+        ]
+        first_outreach_by_member = _member_kpi_from_leads(
+            leads,
+            member_field="First Outreach Member",
+            bucket_field="First Outreach KPI Bucket",
+            hours_field="Hours to First Outreach",
+            call_attempts=call_attempts,
+        )
+        real_discussion_by_member = _member_kpi_from_leads(
+            leads,
+            member_field="First Real Discussion Member",
+            bucket_field="Real Discussion KPI Bucket",
+            hours_field="Hours to First Real Discussion",
+            call_attempts=[],
+        )
+
+    if not source_lead_count:
         return _empty_dataset(
             now=now,
             source=source,
@@ -140,6 +174,7 @@ def build_hr_recruiting_workbook_dataset(
             workbook_name=path.name,
             present_tabs=present_tabs,
             missing_tabs=missing_tabs,
+            period_filter=period_filter,
         )
 
     as_of = _ensure_aware(now)
@@ -149,6 +184,12 @@ def build_hr_recruiting_workbook_dataset(
         if missing_tabs
         else None
     )
+    if period_filter["grain"] == "week" and not leads:
+        source_status = "no_data"
+        source_message = (
+            "No HR KPI workbook lead rows matched "
+            f"{period_filter['week_start']} through {period_filter['week_end']}."
+        )
 
     first_outreach_counts = Counter(_text(row.get("First Outreach KPI Bucket"), "Unknown") for row in leads)
     real_discussion_counts = Counter(_text(row.get("Real Discussion KPI Bucket"), "Unknown") for row in leads)
@@ -241,6 +282,7 @@ def build_hr_recruiting_workbook_dataset(
         "source_artifact": path.name,
         "source_status": source_status,
         "source_message": source_message,
+        "period_filter": period_filter,
         "pii_suppressed": True,
         "sla_hours": list(sla_hours),
         "hard_targets": hard_target_results,
@@ -256,13 +298,15 @@ def build_hr_recruiting_workbook_dataset(
         ],
         "trend": _trend_rows(leads),
         "row_counts": {
-            "source_rows": lead_count,
+            "source_rows": source_lead_count,
             "deduped_leads": lead_count,
             "active_leads": lead_count,
             "completed_leads": 0,
             "invalid_rows": 0,
             "source_email_dedupe_rows": 0,
             "call_attempt_rows": len(call_attempts),
+            "source_call_attempt_rows": source_call_attempt_count,
+            "filtered_lead_rows": lead_count,
             "source_log_qa_rows": len(source_log_qa),
             "tabs_present": len(present_tabs),
             "tabs_missing": len(missing_tabs),
@@ -270,6 +314,7 @@ def build_hr_recruiting_workbook_dataset(
         "validation_errors": {"missing_tabs": len(missing_tabs)} if missing_tabs else {},
         "workbook_evidence": {
             "workbook_name": path.name,
+            "period_filter": period_filter,
             "tabs": source_rows_by_tab,
             "missing_tabs": missing_tabs,
             "kpi_summary": kpi_summary,
@@ -294,8 +339,10 @@ def _empty_dataset(
     workbook_name: str | None = None,
     present_tabs: list[str] | None = None,
     missing_tabs: list[str] | None = None,
+    period_filter: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     as_of = _ensure_aware(now)
+    period = period_filter or _period_filter(None)
     hard_target_results = _build_hard_target_results(
         hard_targets,
         {key: None for key in hard_targets},
@@ -312,6 +359,7 @@ def _empty_dataset(
         "source_artifact": workbook_name,
         "source_status": source_status,
         "source_message": source_message,
+        "period_filter": period,
         "pii_suppressed": True,
         "sla_hours": list(sla_hours),
         "hard_targets": hard_target_results,
@@ -346,6 +394,8 @@ def _empty_dataset(
             "invalid_rows": 0,
             "source_email_dedupe_rows": 0,
             "call_attempt_rows": 0,
+            "source_call_attempt_rows": 0,
+            "filtered_lead_rows": 0,
             "source_log_qa_rows": 0,
             "tabs_present": len(present_tabs or []),
             "tabs_missing": len(missing_tabs or EXPECTED_TABS),
@@ -353,6 +403,7 @@ def _empty_dataset(
         "validation_errors": {"missing_tabs": len(missing_tabs or EXPECTED_TABS)},
         "workbook_evidence": {
             "workbook_name": workbook_name,
+            "period_filter": period,
             "tabs": [
                 {"sheet": sheet, "row_count": 0, "status": "present"}
                 for sheet in (present_tabs or [])
@@ -545,6 +596,48 @@ def _member_kpi_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _member_kpi_from_leads(
+    leads: list[dict[str, Any]],
+    *,
+    member_field: str,
+    bucket_field: str,
+    hours_field: str,
+    call_attempts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    attempts_by_member = Counter(_text(row.get("HR Member")) for row in call_attempts if _text(row.get("HR Member")))
+    grouped: dict[str, dict[str, Any]] = defaultdict(lambda: {"buckets": Counter(), "hours": []})
+    for lead in leads:
+        member = _text(lead.get(member_field))
+        if not member:
+            continue
+        grouped[member]["buckets"][_text(lead.get(bucket_field), "Unknown")] += 1
+        hours = _number(lead.get(hours_field))
+        if hours is not None:
+            grouped[member]["hours"].append(hours)
+
+    rows: list[dict[str, Any]] = []
+    for member, values in grouped.items():
+        buckets = values["buckets"]
+        lead_count = sum(buckets.values())
+        hours = values["hours"]
+        within_24h = int(buckets.get("Within 24h", 0))
+        rows.append(
+            {
+                "hr_member": member,
+                "lead_count": int(lead_count),
+                "within_24h": within_24h,
+                "recovered_24_48h": int(buckets.get("24-48h recovered", 0)),
+                "late_48_72h": int(buckets.get("48-72h late", 0)),
+                "failed_over_72h": int(buckets.get("Over 72h failed", 0)),
+                "avg_hours": _mean(hours),
+                "median_hours": _median(hours),
+                "within_24h_rate": round(within_24h / lead_count, 4) if lead_count else None,
+                "total_outbound_attempts": int(attempts_by_member.get(member, 0)),
+            }
+        )
+    return sorted(rows, key=lambda row: (-int(row["lead_count"]), str(row["hr_member"])))
+
+
 def _source_log_qa_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for record in records:
@@ -610,6 +703,60 @@ def _target_met(actual: float, operator: str, target: float) -> bool:
 
 def _normalize_header(value: str) -> str:
     return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+
+def _coerce_date(value: date | datetime | str | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return date.fromisoformat(raw)
+
+
+def _period_filter(week_start: date | datetime | str | None) -> dict[str, Any]:
+    start = _coerce_date(week_start)
+    if start is None:
+        return {
+            "grain": "all",
+            "week_start": None,
+            "week_end": None,
+            "timezone": "America/Chicago",
+            "date_field": None,
+        }
+    end = start + timedelta(days=6)
+    return {
+        "grain": "week",
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
+        "timezone": "America/Chicago",
+        "date_field": "Lead Created At",
+    }
+
+
+def _record_in_period(
+    row: dict[str, Any],
+    period_filter: dict[str, Any],
+    field: str,
+    *,
+    fallback_field: str | None = None,
+) -> bool:
+    if period_filter.get("grain") != "week":
+        return True
+    parsed = _parse_datetime(row.get(field))
+    if parsed is None and fallback_field:
+        parsed = _parse_datetime(row.get(fallback_field))
+    if parsed is None:
+        return False
+    week_start = _coerce_date(period_filter.get("week_start"))
+    week_end = _coerce_date(period_filter.get("week_end"))
+    if week_start is None or week_end is None:
+        return True
+    return week_start <= parsed.date() <= week_end
 
 
 def _ensure_aware(value: datetime) -> datetime:
@@ -689,6 +836,16 @@ def _boolish(value: Any) -> bool:
 def _mean(values: list[float] | None) -> float:
     values = values or []
     return round(sum(values) / len(values), 2) if values else 0.0
+
+
+def _median(values: list[float] | None) -> float:
+    values = sorted(values or [])
+    if not values:
+        return 0.0
+    midpoint = len(values) // 2
+    if len(values) % 2:
+        return round(values[midpoint], 2)
+    return round((values[midpoint - 1] + values[midpoint]) / 2, 2)
 
 
 def _max_or_zero(values: list[float] | None) -> float:

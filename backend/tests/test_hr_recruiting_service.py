@@ -229,7 +229,7 @@ def test_hr_recruiting_import_dry_run_does_not_write(tmp_path) -> None:
     assert not state_path.exists()
 
 
-def _write_hr_kpi_workbook(path: Path) -> None:
+def _write_hr_kpi_workbook(path: Path, *, include_next_week: bool = False) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Lead Level KPI"
@@ -242,20 +242,26 @@ def _write_hr_kpi_workbook(path: Path) -> None:
             "Lead Created At",
             "App Status",
             "First Outreach KPI Bucket",
+            "First Outreach Member",
             "Hours to First Outreach",
             "Real Discussion KPI Bucket",
+            "First Real Discussion Member",
             "Hours to First Real Discussion",
         ]
     )
-    ws.append(["Private Applicant One", "555-0100", "one@example.com", "2026-05-14 08:00", "Not Qualified", "Within 24h", 2, "Within 24h", 3])
-    ws.append(["Private Applicant Two", "555-0101", "two@example.com", "2026-05-14 09:00", "New", "No outbound found", None, "No 1min+ discussion found", None])
-    ws.append(["Private Applicant Three", "555-0102", "three@example.com", "2026-05-13 09:00", "No Response", "Over 72h failed", 80, "Over 72h failed", 82])
+    ws.append(["Private Applicant One", "555-0100", "one@example.com", "2026-05-14 08:00", "Not Qualified", "Within 24h", "Recruiter A", 2, "Within 24h", "Recruiter A", 3])
+    ws.append(["Private Applicant Two", "555-0101", "two@example.com", "2026-05-14 09:00", "New", "No outbound found", None, None, "No 1min+ discussion found", None, None])
+    ws.append(["Private Applicant Three", "555-0102", "three@example.com", "2026-05-13 09:00", "No Response", "Over 72h failed", "Recruiter A", 80, "Over 72h failed", "Recruiter A", 82])
+    if include_next_week:
+        ws.append(["Private Applicant Four", "555-0103", "four@example.com", "2026-05-20 09:00", "New", "Within 24h", "Recruiter B", 1, "Within 24h", "Recruiter B", 2])
 
     ws = wb.create_sheet("Call Attempts Detail")
     ws.append(["Detail"])
     ws.append(["Call Date/Time", "HR Member", "Duration Seconds", "Real Discussion 1min+"])
     ws.append(["2026-05-14 10:00", "Recruiter A", 180, "Yes"])
     ws.append(["2026-05-16 10:00", "Recruiter A", 20, "No"])
+    if include_next_week:
+        ws.append(["2026-05-20 10:00", "Recruiter B", 120, "Yes"])
 
     ws = wb.create_sheet("KPI By First Outreach")
     ws.append(["Summary"])
@@ -308,3 +314,43 @@ def test_hr_recruiting_workbook_source_projects_only_aggregate_evidence(tmp_path
     assert "Private Applicant" not in serialized
     assert "555-0100" not in serialized
     assert "one@example.com" not in serialized
+
+
+def test_hr_recruiting_workbook_week_filter_projects_selected_cohort(tmp_path) -> None:
+    workbook_path = tmp_path / "hr-kpi.xlsx"
+    _write_hr_kpi_workbook(workbook_path, include_next_week=True)
+
+    first_week = asyncio.run(
+        get_hr_recruiting_dataset(
+            now=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc),
+            config=HrRecruitingConfig(workbook_path=str(workbook_path), source="hr_kpi_workbook"),
+            week_start="2026-05-11",
+        )
+    )
+    next_week = asyncio.run(
+        get_hr_recruiting_dataset(
+            now=datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc),
+            config=HrRecruitingConfig(workbook_path=str(workbook_path), source="hr_kpi_workbook"),
+            week_start="2026-05-18",
+        )
+    )
+
+    assert first_week["period_filter"]["grain"] == "week"
+    assert first_week["period_filter"]["week_start"] == "2026-05-11"
+    assert first_week["period_filter"]["week_end"] == "2026-05-17"
+    assert first_week["row_counts"]["source_rows"] == 4
+    assert first_week["row_counts"]["deduped_leads"] == 3
+    assert first_week["row_counts"]["call_attempt_rows"] == 2
+    assert first_week["summary"]["first_touch_eligible_count"] == 3
+    assert first_week["workbook_evidence"]["kpi_summary"]["unique_lead_forms"] == 3
+    assert first_week["workbook_evidence"]["kpi_summary"]["total_outbound_attempts"] == 2
+    assert first_week["workbook_evidence"]["first_outreach_by_member"][0]["hr_member"] == "Recruiter A"
+    assert first_week["workbook_evidence"]["first_outreach_by_member"][0]["lead_count"] == 2
+
+    assert next_week["period_filter"]["week_start"] == "2026-05-18"
+    assert next_week["row_counts"]["source_rows"] == 4
+    assert next_week["row_counts"]["deduped_leads"] == 1
+    assert next_week["summary"]["first_touch_eligible_count"] == 1
+    assert next_week["summary"]["first_touch_24h_pct"] == 1.0
+    assert next_week["workbook_evidence"]["kpi_summary"]["total_outbound_attempts"] == 1
+    assert next_week["workbook_evidence"]["first_outreach_by_member"][0]["hr_member"] == "Recruiter B"

@@ -968,8 +968,17 @@ export interface HrRecruitingWorkbookSourceQa {
   first_columns: string
 }
 
+export interface HrRecruitingPeriodFilter {
+  grain: 'all' | 'week' | string
+  week_start: string | null
+  week_end: string | null
+  timezone: string
+  date_field: string | null
+}
+
 export interface HrRecruitingWorkbookEvidence {
   workbook_name: string | null
+  period_filter?: HrRecruitingPeriodFilter
   tabs: Array<{ sheet: string; row_count: number; status: string }>
   missing_tabs: string[]
   kpi_summary: Record<string, number | null>
@@ -991,6 +1000,7 @@ export interface HrRecruitingDataset {
   table_id: string
   source_status: string
   source_message: string | null
+  period_filter: HrRecruitingPeriodFilter
   pii_suppressed: boolean
   sla_hours: number[]
   hard_targets: Record<string, HrRecruitingHardTarget>
