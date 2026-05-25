@@ -23,6 +23,8 @@ class DriverWorkforceConfig:
     completion_tolerance_minutes: int = 10
     source_stale_minutes: int = 180
     timezone: str = "America/Chicago"
+    xcelerator_source: str = "auto"
+    ceo_powerbi_fallback_source: str = ""
 
     @classmethod
     def from_env(cls) -> "DriverWorkforceConfig":
@@ -52,6 +54,17 @@ class DriverWorkforceConfig:
                 "FLEETPULSE_DRIVER_WORKFORCE_TIMEZONE", "America/Chicago"
             ).strip()
             or "America/Chicago",
+            xcelerator_source=(
+                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE", "auto")
+                .strip()
+                .casefold()
+                or "auto"
+            ),
+            ceo_powerbi_fallback_source=(
+                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK", "")
+                .strip()
+                .casefold()
+            ),
         )
 
     def as_dict(self) -> dict[str, int | str]:
