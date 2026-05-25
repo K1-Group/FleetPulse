@@ -1125,12 +1125,13 @@ def _build_validation(
             "invalid_ticket_count": invalid_ticket_count,
         }
     return {
-        "state": "pending",
-        "status": "pending",
-        "message": "Partial: route tickets loaded; Geotab activity missing for some drivers.",
+        "state": "route_windows_verified_geotab_join_pending",
+        "status": "verified",
+        "message": "Verified: planned route windows from Xcelerator; Geotab activity join is pending for these drivers.",
         "row_count": ticket_count,
         "joined_count": joined,
         "invalid_ticket_count": invalid_ticket_count,
+        "activity_join_status": "pending_no_geotab_activity",
     }
 
 
