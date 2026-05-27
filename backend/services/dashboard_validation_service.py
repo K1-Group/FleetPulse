@@ -34,7 +34,7 @@ OVERVIEW_METRICS = [
     ("idle", "Idle"),
     ("parked", "Parked"),
     ("total_trips_today", "Driver Trips"),
-    ("total_stops_today", "Stops >5m"),
+    ("total_stops_today", "Stops >60m"),
     ("total_distance_miles", "Distance (mi)"),
     ("avg_trip_duration_hours", "Avg Trip Hrs"),
     ("avg_trip_distance_miles", "Avg Distance (mi)"),

@@ -220,7 +220,7 @@ def test_live_data_fallback_answers_active_vehicle_question(monkeypatch):
         total_stops_today=0,
         total_trips_today=0,
         total_vehicles=4,
-        trip_definition="driver_session_with_stops_over_5_min",
+        trip_definition="driver_session_with_stops_over_60_min",
     )
     vehicles = [
         SimpleNamespace(
@@ -278,7 +278,7 @@ def test_live_data_fallback_summarizes_fleet_status(monkeypatch):
         total_stops_today=436,
         total_trips_today=70,
         total_vehicles=45,
-        trip_definition="driver_session_with_stops_over_5_min",
+        trip_definition="driver_session_with_stops_over_60_min",
     )
 
     monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
@@ -313,7 +313,7 @@ def test_live_data_fallback_explains_scored_lanes(monkeypatch):
         total_stops_today=436,
         total_trips_today=70,
         total_vehicles=45,
-        trip_definition="driver_session_with_stops_over_5_min",
+        trip_definition="driver_session_with_stops_over_60_min",
     )
 
     monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)

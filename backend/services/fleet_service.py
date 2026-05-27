@@ -16,7 +16,7 @@ from models import FleetOverview, LocationStats, Vehicle, VehiclePosition, Vehic
 from services.hub_config_service import get_fleet_hubs
 
 KM_TO_MILES = 0.621371
-DEFAULT_STOP_THRESHOLD_MINUTES = 5
+DEFAULT_STOP_THRESHOLD_MINUTES = 60
 DEFAULT_DRIVER_LOGOUT_GAP_MINUTES = 10 * 60
 DEFAULT_TARGET_TRIP_HOURS = 12
 DEFAULT_DEVICE_GROUP_IDS = "GroupVehicleId"
@@ -482,7 +482,7 @@ def _build_fleet_overview() -> FleetOverview:
         target_trip_duration_hours=trip_metrics["target_trip_hours"],
         trips_meeting_target=trip_metrics["trips_meeting_target"],
         trips_under_target=trip_metrics["trips_under_target"],
-        trip_definition="driver_session_with_stops_over_5_min",
+        trip_definition="driver_session_with_stops_over_60_min",
         raw_device_count=len(raw_devices),
         scoped_device_count=len(devices),
         raw_status_count=len(statuses),
@@ -502,7 +502,7 @@ def get_fleet_overview() -> FleetOverview:
             return _with_source_mode(fallback, "cached_refresh_in_progress")
         return FleetOverview(
             source_mode="geotab_refresh_in_progress",
-            trip_definition="driver_session_with_stops_over_5_min",
+            trip_definition="driver_session_with_stops_over_60_min",
         )
 
     try:
@@ -516,7 +516,7 @@ def get_fleet_overview() -> FleetOverview:
             return _with_source_mode(fallback, "cached_after_geotab_timeout")
         return FleetOverview(
             source_mode="geotab_unavailable",
-            trip_definition="driver_session_with_stops_over_5_min",
+            trip_definition="driver_session_with_stops_over_60_min",
         )
     finally:
         lock.release()
