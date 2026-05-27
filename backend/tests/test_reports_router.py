@@ -47,6 +47,9 @@ def test_report_generation_reuses_cached_source_backed_payload(monkeypatch):
     second = reports._generate_report_payload("weekly")
 
     assert first["source_status"] == "source_backed"
+    assert first["period_start"]
+    assert first["period_end"]
+    assert "Window:" in first["html"]
     assert first["summary"]["total_vehicles"] == 1
     assert second["summary"]["total_distance_mi"] == first["summary"]["total_distance_mi"]
     assert fake_client.calls == ["devices", "trips", "exceptions"]
