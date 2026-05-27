@@ -69,7 +69,13 @@ def _is_source_quota_error(exc: Exception) -> bool:
     return "OverLimitException" in message or "API calls quota exceeded" in message
 
 
-def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
+def _build_html_report(
+    fleet_data: dict[str, Any],
+    period: str,
+    *,
+    period_start: datetime,
+    period_end: datetime,
+) -> str:
     """Build an HTML fleet report that can be rendered as PDF on the frontend."""
     now = datetime.now(timezone.utc)
     
@@ -185,6 +191,7 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
     <div class="header">
         <h1>🚗 FleetPulse Report</h1>
         <p>K1 Logistics · {period} Report</p>
+        <p>Window: {period_start.strftime('%B %d, %Y %I:%M %p UTC')} – {period_end.strftime('%B %d, %Y %I:%M %p UTC')}</p>
         <p>Generated: {now.strftime('%B %d, %Y at %I:%M %p UTC')}</p>
     </div>
 
@@ -274,10 +281,13 @@ def _build_html_report(fleet_data: dict[str, Any], period: str) -> str:
 def _build_error_report(period: str, error: Exception) -> dict[str, Any]:
     status = "source_quota_limited" if _is_source_quota_error(error) else "source_unavailable"
     safe_error = escape(str(error))
+    now = datetime.now(timezone.utc)
     return {
         "html": f"<h1>Report Generation Error</h1><p>{safe_error}</p>",
         "period": period,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "period_start": None,
+        "period_end": now.isoformat(),
+        "generated_at": now.isoformat(),
         "summary": {},
         "source_status": status,
         "error": str(error),
@@ -323,11 +333,18 @@ def _generate_report_payload(period: str = "weekly") -> dict[str, Any]:
             "trailer_tracking": trailer_tracking,
         }
 
-        html = _build_html_report(fleet_data, period.capitalize())
+        html = _build_html_report(
+            fleet_data,
+            period.capitalize(),
+            period_start=from_date,
+            period_end=now,
+        )
 
         result = {
             "html": html,
             "period": period,
+            "period_start": from_date.isoformat(),
+            "period_end": now.isoformat(),
             "generated_at": now.isoformat(),
             "source_status": "source_backed" if not source_warnings else "partial_source_backed",
             "source_warnings": source_warnings,
@@ -460,6 +477,8 @@ async def run_scheduled_report(request: ScheduledReportRunRequest | None = None)
         "report": {
             "generated_at": report.get("generated_at"),
             "period": report.get("period"),
+            "period_start": report.get("period_start"),
+            "period_end": report.get("period_end"),
             "source_status": report.get("source_status"),
             "source_warnings": report.get("source_warnings", []),
             "summary": report.get("summary", {}),

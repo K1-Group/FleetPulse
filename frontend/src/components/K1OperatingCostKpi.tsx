@@ -25,6 +25,8 @@ interface K1OperatingCostSnapshot {
   as_of_date?: string | null
   entity: string
   error?: string
+  period_end?: string | null
+  period_start?: string | null
   projection_mode: 'read_only'
   revenue_source?: string
   revenue_source_status?: {
@@ -112,6 +114,24 @@ function formatCpm(value: number | null | undefined) {
   return `$${Number(value).toFixed(3)}/mi`
 }
 
+function formatDateWindow(start?: string | null, end?: string | null) {
+  if (!start || !end) return 'Window pending'
+  const startDate = new Date(`${start.slice(0, 10)}T12:00:00`)
+  const endDate = new Date(`${end.slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 'Window pending'
+  const sameYear = startDate.getFullYear() === endDate.getFullYear()
+  const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth()
+  const startMonthDay = startDate.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  const endMonthDay = endDate.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (sameMonth) return `${startMonthDay}-${endDate.getDate()}, ${endDate.getFullYear()}`
+  if (sameYear) return `${startMonthDay}-${endMonthDay}, ${endDate.getFullYear()}`
+  return `${startDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}-${endDate.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`
+}
+
 function round(value: number | null | undefined, digits = 3) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   const factor = 10 ** digits
@@ -168,6 +188,8 @@ async function fetchKpiSnapshot(): Promise<K1OperatingCostSnapshot | null> {
         status: operatingCost?.complete_cost_available ? 'healthy' : 'pending',
       },
       entity: 'K1 Logistics Inc',
+      period_end: operatingCost?.period_end ?? null,
+      period_start: operatingCost?.period_start ?? null,
       projection_mode: 'read_only',
       revenue_source: revenueSource,
       revenue_source_status: {
@@ -227,6 +249,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
   const sourceLabel = snapshot?.source || 'QBO + Xcelerator + AtoB + Geotab'
   const revenueSourceStatus = snapshot?.revenue_source_status?.status || 'not_configured'
   const costSourceStatus = snapshot?.cost_source_status?.status || 'not_configured'
+  const windowLabel = formatDateWindow(snapshot?.period_start, snapshot?.period_end || snapshot?.as_of_date)
   const revenueSourceLabel = snapshot?.revenue_source === 'fabric_warehouse_sql'
     ? 'Xcelerator Warehouse SQL'
     : snapshot?.revenue_source === 'xcelerator_ceo_powerbi'
@@ -276,6 +299,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
       </div>
 
       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500 light:text-gray-600">
+        <span>Window: {windowLabel}</span>
         <span>CPM: Geotab miles + QBO K1L expenses + Xcelerator driver pay</span>
         <span>Revenue / Mile: {revenueSourceLabel} ({revenueSourceStatus.replace('_', ' ')})</span>
       </div>
@@ -284,6 +308,7 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
         <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2 light:bg-gray-50 light:border-gray-200">
           <div className="text-[10px] uppercase text-gray-500">Profit / mile</div>
           <div className="mt-1 font-semibold text-emerald-300 light:text-emerald-700">{formatCpm(summary?.profit_per_mile)}</div>
+          <div className="mt-1 text-[10px] text-gray-500">Window: {windowLabel}</div>
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2 light:bg-gray-50 light:border-gray-200">
           <div className="flex items-center gap-1 text-[10px] uppercase text-gray-500">
@@ -291,10 +316,12 @@ export default function K1OperatingCostKpi({ className = '', compact = false, va
             Total cost
           </div>
           <div className="mt-1 font-semibold text-white light:text-gray-900">{formatCurrency(summary?.total_cost)}</div>
+          <div className="mt-1 text-[10px] text-gray-500">Window: {windowLabel}</div>
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2 light:bg-gray-50 light:border-gray-200">
           <div className="text-[10px] uppercase text-gray-500">Miles</div>
           <div className="mt-1 font-semibold text-white light:text-gray-900">{formatMiles(summary?.miles)}</div>
+          <div className="mt-1 text-[10px] text-gray-500">Window: {windowLabel}</div>
         </div>
       </div>
 
