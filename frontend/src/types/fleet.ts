@@ -34,6 +34,24 @@ export interface FleetOverview {
   target_trip_duration_hours: number
   trips_meeting_target: number
   trips_under_target: number
+  stop_threshold_minutes: number
+  long_stops_today: Array<{
+    driver_key: string
+    driver_name: string | null
+    device_key: string
+    device_name: string | null
+    stopped_at: string
+    resumed_at: string | null
+    duration_minutes: number
+    latitude: number | null
+    longitude: number | null
+    address: string | null
+    geofence: string | null
+    location_label: string | null
+    location_source: string
+    source_authority: string
+    projection_mode: string
+  }>
   trip_definition: string
 }
 

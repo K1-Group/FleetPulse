@@ -49,6 +49,24 @@ class Vehicle(BaseModel):
 
 
 # ── Fleet Overview ─────────────────────────────────────────────
+class LongStopDetail(BaseModel):
+    driver_key: str
+    driver_name: Optional[str] = None
+    device_key: str
+    device_name: Optional[str] = None
+    stopped_at: datetime
+    resumed_at: Optional[datetime] = None
+    duration_minutes: float = 0
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address: Optional[str] = None
+    geofence: Optional[str] = None
+    location_label: Optional[str] = None
+    location_source: str = "unavailable"
+    source_authority: str = "Geotab"
+    projection_mode: str = "read_only"
+
+
 class FleetOverview(BaseModel):
     total_vehicles: int = 0
     active: int = 0
@@ -64,6 +82,8 @@ class FleetOverview(BaseModel):
     target_trip_duration_hours: float = 12
     trips_meeting_target: int = 0
     trips_under_target: int = 0
+    stop_threshold_minutes: int = 60
+    long_stops_today: list[LongStopDetail] = Field(default_factory=list)
     trip_definition: str = "geotab_trip_segment"
     source_authority: str = "Geotab"
     source_mode: str = "live_filtered"

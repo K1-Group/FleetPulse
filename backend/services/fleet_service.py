@@ -137,6 +137,86 @@ def _to_utc(value: Any) -> datetime | None:
     return None
 
 
+def _path_value(payload: dict[str, Any], path: str) -> Any:
+    current: Any = payload
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+        if current is None:
+            return None
+    return current
+
+
+def _text_value(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, dict):
+        for key in ("name", "address", "id"):
+            text = _text_value(value.get(key))
+            if text:
+                return text
+    return None
+
+
+def _first_text(payload: dict[str, Any], *paths: str) -> str | None:
+    for path in paths:
+        text = _text_value(_path_value(payload, path))
+        if text:
+            return text
+    return None
+
+
+def _float_value(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _point_value(value: Any) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    lat = next(
+        (
+            parsed
+            for key in ("latitude", "lat", "y")
+            if (parsed := _float_value(value.get(key))) is not None
+        ),
+        None,
+    )
+    lon = next(
+        (
+            parsed
+            for key in ("longitude", "lng", "lon", "x")
+            if (parsed := _float_value(value.get(key))) is not None
+        ),
+        None,
+    )
+    if lat is None or lon is None or not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+        return None
+    return {"latitude": lat, "longitude": lon}
+
+
+def _point_from_pairs(payload: dict[str, Any], pairs: tuple[tuple[str, str], ...]) -> dict[str, float] | None:
+    for lat_key, lon_key in pairs:
+        lat = _float_value(_path_value(payload, lat_key))
+        lon = _float_value(_path_value(payload, lon_key))
+        if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
+            return {"latitude": lat, "longitude": lon}
+    return None
+
+
+def _first_point(payload: dict[str, Any], paths: tuple[str, ...], pairs: tuple[tuple[str, str], ...]) -> dict[str, float] | None:
+    for path in paths:
+        point = _point_value(_path_value(payload, path))
+        if point:
+            return point
+    return _point_from_pairs(payload, pairs)
+
+
 def _first_datetime(payload: dict[str, Any], *keys: str) -> datetime | None:
     for key in keys:
         parsed = _to_utc(payload.get(key))
@@ -158,6 +238,112 @@ def _entity_name(payload: dict[str, Any], field: str) -> str | None:
         value = entity.get("name") or entity.get("id")
         return str(value) if value else None
     return str(entity) if entity else None
+
+
+def _trip_start_point(trip: dict[str, Any]) -> dict[str, float] | None:
+    return _first_point(
+        trip,
+        (
+            "startPoint",
+            "start_point",
+            "startLocation",
+            "start_location",
+            "startPosition",
+            "start_position",
+            "from",
+            "fromPoint",
+            "origin",
+        ),
+        (
+            ("startLatitude", "startLongitude"),
+            ("start_latitude", "start_longitude"),
+            ("fromLatitude", "fromLongitude"),
+            ("origin.latitude", "origin.longitude"),
+        ),
+    )
+
+
+def _trip_stop_point(trip: dict[str, Any]) -> dict[str, float] | None:
+    return _first_point(
+        trip,
+        (
+            "stopPoint",
+            "stop_point",
+            "stopLocation",
+            "stop_location",
+            "stopPosition",
+            "stop_position",
+            "endPoint",
+            "end_point",
+            "endLocation",
+            "end_location",
+            "to",
+            "toPoint",
+            "destination",
+        ),
+        (
+            ("stopLatitude", "stopLongitude"),
+            ("stop_latitude", "stop_longitude"),
+            ("endLatitude", "endLongitude"),
+            ("destination.latitude", "destination.longitude"),
+        ),
+    )
+
+
+def _trip_start_address(trip: dict[str, Any]) -> str | None:
+    return _first_text(
+        trip,
+        "startAddress",
+        "start_address",
+        "startLocation.address",
+        "start_location.address",
+        "origin.address",
+    )
+
+
+def _trip_stop_address(trip: dict[str, Any]) -> str | None:
+    return _first_text(
+        trip,
+        "stopAddress",
+        "stop_address",
+        "stopLocation.address",
+        "stop_location.address",
+        "endAddress",
+        "end_address",
+        "destination.address",
+    )
+
+
+def _trip_start_geofence(trip: dict[str, Any]) -> str | None:
+    return _first_text(
+        trip,
+        "startZoneName",
+        "start_zone_name",
+        "startZone",
+        "startZone.name",
+        "startGeofenceName",
+        "start_geofence_name",
+        "startGeofence",
+        "startGeofence.name",
+    )
+
+
+def _trip_stop_geofence(trip: dict[str, Any]) -> str | None:
+    return _first_text(
+        trip,
+        "stopZoneName",
+        "stop_zone_name",
+        "stopZone",
+        "stopZone.name",
+        "stopGeofenceName",
+        "stop_geofence_name",
+        "stopGeofence",
+        "stopGeofence.name",
+        "zoneName",
+        "zone.name",
+        "geofenceName",
+        "geofence.name",
+    )
 
 
 def _device_group_ids(device: dict[str, Any]) -> set[str]:
@@ -298,6 +484,88 @@ def _trip_segment(trip: dict[str, Any], now: datetime) -> dict[str, Any] | None:
         "start": start,
         "end": stop,
         "distance_km": _trip_distance_km(trip),
+        "start_point": _trip_start_point(trip),
+        "end_point": _trip_stop_point(trip),
+        "start_address": _trip_start_address(trip),
+        "end_address": _trip_stop_address(trip),
+        "start_geofence": _trip_start_geofence(trip),
+        "end_geofence": _trip_stop_geofence(trip),
+    }
+
+
+def _new_trip_session(driver_key: str, segment: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "driver_key": driver_key,
+        "driver_name": segment.get("driver_name"),
+        "device_keys": {segment["device_key"]},
+        "device_names": {segment["device_name"]} if segment.get("device_name") else set(),
+        "last_device_key": segment["device_key"],
+        "last_device_name": segment.get("device_name"),
+        "start": segment["start"],
+        "end": segment["end"],
+        "end_point": segment.get("end_point"),
+        "end_address": segment.get("end_address"),
+        "end_geofence": segment.get("end_geofence"),
+        "distance_km": segment["distance_km"],
+        "stop_count": 0,
+        "stop_minutes": 0.0,
+        "stop_events": [],
+        "segment_count": 1,
+    }
+
+
+def _nearest_location_detail(lat: float, lon: float) -> dict[str, Any] | None:
+    """Return nearest configured K1 hub if inside that hub radius."""
+    best, best_dist = None, float("inf")
+    for loc in LOCATIONS:
+        d = _distance_miles(lat, lon, loc["lat"], loc["lon"])
+        if d <= loc["radius_miles"] and d < best_dist:
+            best, best_dist = loc, d
+    return best
+
+
+def _long_stop_event(current: dict[str, Any], next_segment: dict[str, Any], gap_minutes: float) -> dict[str, Any]:
+    point = current.get("end_point") or next_segment.get("start_point")
+    address = current.get("end_address") or next_segment.get("start_address")
+    geofence = current.get("end_geofence") or next_segment.get("start_geofence")
+    location_source = "unavailable"
+    latitude = longitude = None
+
+    if address:
+        location_source = "geotab_trip_stop_address"
+    elif geofence:
+        location_source = "geotab_trip_stop_geofence"
+
+    if point:
+        latitude = point["latitude"]
+        longitude = point["longitude"]
+        hub = _nearest_location_detail(latitude, longitude)
+        if hub:
+            geofence = geofence or hub["name"]
+            address = address or hub["address"]
+            if location_source == "unavailable":
+                location_source = "configured_fleet_hub_geofence"
+        elif location_source == "unavailable":
+            location_source = "geotab_trip_stop_point"
+
+    location_label = address or geofence
+    if not location_label and latitude is not None and longitude is not None:
+        location_label = f"{latitude:.5f}, {longitude:.5f}"
+
+    return {
+        "driver_key": current["driver_key"],
+        "driver_name": current.get("driver_name") or next_segment.get("driver_name"),
+        "device_key": current.get("last_device_key") or next_segment["device_key"],
+        "device_name": current.get("last_device_name") or next_segment.get("device_name"),
+        "stopped_at": current["end"],
+        "resumed_at": next_segment["start"],
+        "duration_minutes": round(gap_minutes, 1),
+        "latitude": latitude,
+        "longitude": longitude,
+        "address": address,
+        "geofence": geofence,
+        "location_label": location_label,
+        "location_source": location_source,
     }
 
 
@@ -329,44 +597,28 @@ def build_driver_trip_sessions(
         current: dict[str, Any] | None = None
         for segment in sorted(segments, key=lambda item: item["start"]):
             if current is None:
-                current = {
-                    "driver_key": driver_key,
-                    "driver_name": segment.get("driver_name"),
-                    "device_keys": {segment["device_key"]},
-                    "device_names": {segment["device_name"]} if segment.get("device_name") else set(),
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "distance_km": segment["distance_km"],
-                    "stop_count": 0,
-                    "stop_minutes": 0.0,
-                    "segment_count": 1,
-                }
+                current = _new_trip_session(driver_key, segment)
                 continue
 
             gap_minutes = max((segment["start"] - current["end"]).total_seconds() / 60, 0)
             if gap_minutes > driver_logout_gap_minutes:
                 sessions.append(current)
-                current = {
-                    "driver_key": driver_key,
-                    "driver_name": segment.get("driver_name"),
-                    "device_keys": {segment["device_key"]},
-                    "device_names": {segment["device_name"]} if segment.get("device_name") else set(),
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "distance_km": segment["distance_km"],
-                    "stop_count": 0,
-                    "stop_minutes": 0.0,
-                    "segment_count": 1,
-                }
+                current = _new_trip_session(driver_key, segment)
                 continue
 
             if gap_minutes > stop_threshold_minutes:
                 current["stop_count"] += 1
                 current["stop_minutes"] += gap_minutes
+                current["stop_events"].append(_long_stop_event(current, segment, gap_minutes))
 
             current["end"] = max(current["end"], segment["end"])
+            current["end_point"] = segment.get("end_point")
+            current["end_address"] = segment.get("end_address")
+            current["end_geofence"] = segment.get("end_geofence")
             current["distance_km"] += segment["distance_km"]
             current["segment_count"] += 1
+            current["last_device_key"] = segment["device_key"]
+            current["last_device_name"] = segment.get("device_name")
             current["device_keys"].add(segment["device_key"])
             if segment.get("device_name"):
                 current["device_names"].add(segment["device_name"])
@@ -402,11 +654,17 @@ def summarize_driver_trip_sessions(
     avg_duration_min = sum(durations_min) / trip_count if trip_count else 0
     avg_distance_miles = total_distance_miles / trip_count if trip_count else 0
     target_minutes = target_trip_hours * 60
+    long_stops = [
+        stop_event
+        for session in sessions
+        for stop_event in session.get("stop_events", [])
+    ]
 
     return {
         "sessions": sessions,
         "trip_count": trip_count,
         "total_stops": sum(session["stop_count"] for session in sessions),
+        "long_stops": long_stops,
         "total_distance_miles": round(total_distance_miles, 1),
         "avg_duration_min": round(avg_duration_min, 1),
         "avg_duration_hours": round(avg_duration_min / 60, 1),
@@ -430,13 +688,8 @@ def _distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
 
 
 def _nearest_location(lat: float, lon: float) -> str | None:
-    """Return nearest configured K1 hub name if inside that hub radius."""
-    best, best_dist = None, float("inf")
-    for loc in LOCATIONS:
-        d = _distance_miles(lat, lon, loc["lat"], loc["lon"])
-        if d <= loc["radius_miles"] and d < best_dist:
-            best, best_dist = loc["name"], d
-    return best
+    location = _nearest_location_detail(lat, lon)
+    return location["name"] if location else None
 
 
 def _build_fleet_overview() -> FleetOverview:
@@ -466,7 +719,12 @@ def _build_fleet_overview() -> FleetOverview:
         for trip in client.get_trips(now - timedelta(days=1), now)
         if _entity_key(trip, "device", "") in scoped_device_ids
     ]
-    trip_metrics = summarize_driver_trip_sessions(trips, now=now)
+    stop_threshold_minutes = _int_env("FLEETPULSE_STOP_THRESHOLD_MINUTES", DEFAULT_STOP_THRESHOLD_MINUTES)
+    trip_metrics = summarize_driver_trip_sessions(
+        trips,
+        now=now,
+        stop_threshold_minutes=stop_threshold_minutes,
+    )
     return FleetOverview(
         total_vehicles=len(devices),
         active=counts["active"],
@@ -482,6 +740,8 @@ def _build_fleet_overview() -> FleetOverview:
         target_trip_duration_hours=trip_metrics["target_trip_hours"],
         trips_meeting_target=trip_metrics["trips_meeting_target"],
         trips_under_target=trip_metrics["trips_under_target"],
+        stop_threshold_minutes=stop_threshold_minutes,
+        long_stops_today=trip_metrics["long_stops"],
         trip_definition="driver_session_with_stops_over_60_min",
         raw_device_count=len(raw_devices),
         scoped_device_count=len(devices),

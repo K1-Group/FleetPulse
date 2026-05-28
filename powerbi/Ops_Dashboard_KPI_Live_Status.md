@@ -41,6 +41,8 @@ Power BI URLs:
 - Dashboard: https://app.powerbi.com/groups/b801f80d-5303-4121-abd1-1163639ef58b/dashboards/b4e7e44d-4306-4415-8861-35ecbd549ace
 - Native report: https://app.powerbi.com/groups/b801f80d-5303-4121-abd1-1163639ef58b/reports/1cc676e5-3be8-46d8-987d-d040cfa0a8ce
 
+Metric wording note as of 2026-05-27: the Fleet Ops stop count is labeled `Stops >60m` and remains backed by `total_stops_today`.
+
 ## Passing Areas
 
 ### Fleet Ops Manager
@@ -63,7 +65,7 @@ Geotab
 Operational use:
 
 - Vehicle status counts
-- Trips, stops, miles, and average trip duration
+- Trips, Stops >60m, miles, and average trip duration
 - Power BI overview, vehicles, locations, and safety projections
 - Read-only fleet telemetry for Fleet Ops Manager review
 

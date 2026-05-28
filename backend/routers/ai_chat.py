@@ -246,6 +246,46 @@ def _format_vehicle_summary(vehicle: Any) -> str:
     return f"{name} ({'; '.join(details)})" if details else name
 
 
+def _stop_value(stop: Any, field: str) -> Any:
+    if isinstance(stop, dict):
+        return stop.get(field)
+    return getattr(stop, field, None)
+
+
+def _format_long_stop(stop: Any) -> str:
+    driver = _stop_value(stop, "driver_name") or _stop_value(stop, "driver_key") or "Unknown driver"
+    device = _stop_value(stop, "device_name") or _stop_value(stop, "device_key")
+    location = (
+        _stop_value(stop, "location_label")
+        or _stop_value(stop, "address")
+        or _stop_value(stop, "geofence")
+        or "location unavailable"
+    )
+    try:
+        duration = float(_stop_value(stop, "duration_minutes") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    subject = f"{driver} / {device}" if device else str(driver)
+    return f"{subject} at {location} for {duration:g} min"
+
+
+def _long_stop_data(stop: Any) -> dict[str, Any]:
+    return {
+        "driver": _stop_value(stop, "driver_name") or _stop_value(stop, "driver_key"),
+        "vehicle": _stop_value(stop, "device_name") or _stop_value(stop, "device_key"),
+        "duration_minutes": _stop_value(stop, "duration_minutes"),
+        "location": _stop_value(stop, "location_label"),
+        "address": _stop_value(stop, "address"),
+        "geofence": _stop_value(stop, "geofence"),
+        "latitude": _stop_value(stop, "latitude"),
+        "longitude": _stop_value(stop, "longitude"),
+        "stopped_at": str(_stop_value(stop, "stopped_at") or ""),
+        "resumed_at": str(_stop_value(stop, "resumed_at") or ""),
+        "source_authority": _stop_value(stop, "source_authority") or "Geotab",
+        "projection_mode": _stop_value(stop, "projection_mode") or "read_only",
+    }
+
+
 def _summarize_vehicle_names(vehicles: list[Any], *, limit: int = 12) -> str:
     if not vehicles:
         return "None in the current scoped FleetPulse snapshot."
@@ -441,15 +481,27 @@ async def _live_data_fallback_response(message: str) -> ChatResponse:
         )
         insights.append("Offline units can indicate capacity, connectivity, or device-status risk.")
 
-    elif "trip" in normalized or "changed" in normalized:
+    elif (
+        "trip" in normalized
+        or "changed" in normalized
+        or "stop" in normalized
+        or "stopped" in normalized
+        or "not moving" in normalized
+    ):
+        long_stops = list(getattr(overview, "long_stops_today", []) or [])
         response = (
             "Today's live trip summary: "
             f"{overview.total_trips_today} driver-session trips, "
-            f"{overview.total_stops_today} stops, "
+            f"Stops >60m: {overview.total_stops_today}, "
             f"{overview.total_distance_miles:.1f} miles, "
             f"{overview.avg_trip_duration_hours:.1f} average trip hours, and "
             f"{overview.avg_trip_distance_miles:.1f} average miles per trip."
         )
+        if long_stops:
+            response += " Long stop locations: " + "; ".join(_format_long_stop(stop) for stop in long_stops[:5]) + "."
+            data = [_long_stop_data(stop) for stop in long_stops]
+        elif overview.total_stops_today:
+            response += " No source-backed address or geofence detail is available for those Stops >60m in this refresh."
         insights.append(f"Trip definition: {overview.trip_definition}.")
 
     elif "safety" in normalized or "score" in normalized:

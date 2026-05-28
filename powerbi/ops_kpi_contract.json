@@ -1,12 +1,23 @@
 {
   "contract_name": "FleetPulse Ops Dashboard KPI Contract",
-  "version": "2026-05-12",
+  "version": "2026-05-27",
   "base_url_env": "FLEETPULSE_BASE_URL",
   "default_base_url": "https://k1-fleetpulse.azurewebsites.net",
   "status_model": {
     "verified": "All required live checks passed for the role.",
     "needs_attention": "Required checks passed, but one or more warnings or known limitations remain.",
     "blocked": "One or more required checks failed; do not certify this role page."
+  },
+  "metric_semantics": {
+    "total_stops_today": {
+      "label": "Stops >60m",
+      "definition": "Read-only Geotab trip projection count of driver-session stops where the gap exceeds 60 minutes.",
+      "backing_field": "total_stops_today",
+      "threshold_minutes": 60,
+      "threshold_env": "FLEETPULSE_STOP_THRESHOLD_MINUTES",
+      "source_authority": "Geotab",
+      "projection_mode": "read_only"
+    }
   },
   "roles": [
     {
@@ -16,7 +27,7 @@
       "kpis": [
         "vehicle_status_counts",
         "trips_today",
-        "stops_today",
+        "stops_over_60m",
         "miles_today",
         "average_trip_hours",
         "trip_target_attainment",
