@@ -346,6 +346,69 @@ def _trip_stop_geofence(trip: dict[str, Any]) -> str | None:
     )
 
 
+def _status_point(status: dict[str, Any]) -> dict[str, float] | None:
+    return _first_point(
+        status,
+        (
+            "location",
+            "position",
+            "currentLocation",
+            "current_location",
+            "point",
+        ),
+        (
+            ("latitude", "longitude"),
+            ("lat", "lon"),
+            ("lat", "lng"),
+            ("y", "x"),
+        ),
+    )
+
+
+def _status_address(status: dict[str, Any]) -> str | None:
+    return _first_text(
+        status,
+        "address",
+        "location.address",
+        "currentLocation.address",
+        "current_location.address",
+    )
+
+
+def _status_geofence(status: dict[str, Any]) -> str | None:
+    return _first_text(
+        status,
+        "zoneName",
+        "zone.name",
+        "geofenceName",
+        "geofence.name",
+        "geofence",
+        "location.zoneName",
+        "location.geofenceName",
+    )
+
+
+def _device_status_map(current_statuses: Any | None) -> dict[str, dict[str, Any]]:
+    if not current_statuses:
+        return {}
+    if isinstance(current_statuses, dict):
+        return {
+            str(device_id): status
+            for device_id, status in current_statuses.items()
+            if device_id and isinstance(status, dict)
+        }
+    return {
+        str(status.get("device", {}).get("id")): status
+        for status in current_statuses
+        if isinstance(status, dict) and status.get("device", {}).get("id")
+    }
+
+
+def _is_currently_not_moving(status: dict[str, Any]) -> bool:
+    speed = _float_value(status.get("speed")) or 0.0
+    return not bool(status.get("isDriving")) and speed <= 3
+
+
 def _device_group_ids(device: dict[str, Any]) -> set[str]:
     ids: set[str] = set()
     for group in device.get("groups") or []:
@@ -524,7 +587,13 @@ def _nearest_location_detail(lat: float, lon: float) -> dict[str, Any] | None:
     return best
 
 
-def _long_stop_event(current: dict[str, Any], next_segment: dict[str, Any], gap_minutes: float) -> dict[str, Any]:
+def _long_stop_event(
+    current: dict[str, Any],
+    next_segment: dict[str, Any],
+    gap_minutes: float,
+    *,
+    open_stop: bool = False,
+) -> dict[str, Any]:
     point = current.get("end_point") or next_segment.get("start_point")
     address = current.get("end_address") or next_segment.get("start_address")
     geofence = current.get("end_geofence") or next_segment.get("start_geofence")
@@ -558,7 +627,7 @@ def _long_stop_event(current: dict[str, Any], next_segment: dict[str, Any], gap_
         "device_key": current.get("last_device_key") or next_segment["device_key"],
         "device_name": current.get("last_device_name") or next_segment.get("device_name"),
         "stopped_at": current["end"],
-        "resumed_at": next_segment["start"],
+        "resumed_at": None if open_stop else next_segment["start"],
         "duration_minutes": round(gap_minutes, 1),
         "latitude": latitude,
         "longitude": longitude,
@@ -569,12 +638,49 @@ def _long_stop_event(current: dict[str, Any], next_segment: dict[str, Any], gap_
     }
 
 
+def _append_current_not_moving_stop(
+    current: dict[str, Any],
+    *,
+    status_by_device: dict[str, dict[str, Any]],
+    now: datetime,
+    stop_threshold_minutes: int,
+) -> None:
+    status = status_by_device.get(str(current.get("last_device_key") or ""))
+    if not status or _is_status_stale(status, now) or not _is_currently_not_moving(status):
+        return
+
+    status_time = _status_datetime(status)
+    if status_time and status_time < current["end"]:
+        return
+
+    gap_minutes = max((now - current["end"]).total_seconds() / 60, 0)
+    if gap_minutes <= stop_threshold_minutes:
+        return
+
+    status_segment = {
+        "driver_name": current.get("driver_name"),
+        "device_key": current.get("last_device_key"),
+        "device_name": current.get("last_device_name"),
+        "start": now,
+        "start_point": _status_point(status),
+        "start_address": _status_address(status),
+        "start_geofence": _status_geofence(status),
+    }
+    current["stop_count"] += 1
+    current["stop_minutes"] += gap_minutes
+    current["stop_events"].append(
+        _long_stop_event(current, status_segment, gap_minutes, open_stop=True)
+    )
+    current["end"] = max(current["end"], now)
+
+
 def build_driver_trip_sessions(
     trips: list[dict[str, Any]],
     *,
     now: datetime | None = None,
     stop_threshold_minutes: int | None = None,
     driver_logout_gap_minutes: int | None = None,
+    current_statuses: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Group Geotab movement segments into K1 driver-session trips."""
 
@@ -585,6 +691,7 @@ def build_driver_trip_sessions(
     driver_logout_gap_minutes = driver_logout_gap_minutes or _int_env(
         "FLEETPULSE_DRIVER_LOGOUT_GAP_MINUTES", DEFAULT_DRIVER_LOGOUT_GAP_MINUTES
     )
+    status_by_device = _device_status_map(current_statuses)
 
     segments_by_driver: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for trip in trips:
@@ -624,6 +731,12 @@ def build_driver_trip_sessions(
                 current["device_names"].add(segment["device_name"])
 
         if current is not None:
+            _append_current_not_moving_stop(
+                current,
+                status_by_device=status_by_device,
+                now=now,
+                stop_threshold_minutes=stop_threshold_minutes,
+            )
             sessions.append(current)
 
     return sessions
@@ -636,6 +749,7 @@ def summarize_driver_trip_sessions(
     stop_threshold_minutes: int | None = None,
     driver_logout_gap_minutes: int | None = None,
     target_trip_hours: float | None = None,
+    current_statuses: Any | None = None,
 ) -> dict[str, Any]:
     target_trip_hours = target_trip_hours or _float_env(
         "FLEETPULSE_TARGET_TRIP_HOURS", DEFAULT_TARGET_TRIP_HOURS
@@ -645,6 +759,7 @@ def summarize_driver_trip_sessions(
         now=now,
         stop_threshold_minutes=stop_threshold_minutes,
         driver_logout_gap_minutes=driver_logout_gap_minutes,
+        current_statuses=current_statuses,
     )
     durations_min = [
         max((session["end"] - session["start"]).total_seconds() / 60, 0) for session in sessions
@@ -724,6 +839,7 @@ def _build_fleet_overview() -> FleetOverview:
         trips,
         now=now,
         stop_threshold_minutes=stop_threshold_minutes,
+        current_statuses=status_map,
     )
     return FleetOverview(
         total_vehicles=len(devices),
