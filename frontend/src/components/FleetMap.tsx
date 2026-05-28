@@ -21,6 +21,15 @@ interface RouteTrail {
   totalPoints: number
 }
 
+type TrailerMapSource = 'geotab' | 'xtra'
+
+interface TrailerMapMarker {
+  trailer: ControlTowerTrailerLiveAsset
+  position: [number, number]
+  source: TrailerMapSource
+  locationName: string | null
+}
+
 const statusColor: Record<string, string> = {
   active: '#10b981',
   idle: '#f59e0b', 
@@ -66,25 +75,32 @@ function vehicleIcon(status: string, isMoving: boolean = false, isSelected: bool
   })
 }
 
-function trailerIcon(trailer: ControlTowerTrailerLiveAsset) {
+function trailerIcon(trailer: ControlTowerTrailerLiveAsset, source: TrailerMapSource) {
   const hasCustody = Boolean(trailer.custody.vehicle_id)
-  const color = hasCustody ? '#06b6d4' : trailer.position ? '#f59e0b' : '#6b7280'
+  const color = source === 'xtra' ? '#f97316' : hasCustody ? '#06b6d4' : '#f59e0b'
+  const label = source === 'xtra' ? 'X' : ''
 
   return L.divIcon({
     className: '',
     html: `
       <div style="
-        width:18px;
-        height:18px;
+        width:20px;
+        height:20px;
         border-radius:4px;
         background:${color};
         border:2px solid white;
         box-shadow:0 0 8px rgba(0,0,0,.6);
         transform: translate(-50%, -50%) rotate(45deg);
-      "></div>
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        color:white;
+        font-size:10px;
+        font-weight:700;
+      "><span style="display:block; transform: rotate(-45deg);">${label}</span></div>
     `,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
   })
 }
 
@@ -150,6 +166,47 @@ const formatLastUpdated = (value: string | null): string => {
 
 const assetLabel = (vehicle: Vehicle): string => vehicle.name || vehicle.id || 'Unknown asset'
 
+const locationAliases: Record<string, string> = {
+  FTW: 'FORT WORTH',
+  OKC: 'OKLAHOMA CITY',
+  KC: 'KANSAS CITY',
+  SA: 'SAN ANTONIO',
+  LR: 'LITTLE ROCK',
+}
+
+function normalizePlaceName(value: string | null | undefined) {
+  if (!value) return ''
+  const normalized = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\b(YARD|TERMINAL|HUB|LOCATION|GEOFENCE|SITE|LOT|DROP|DROPSHIP)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return locationAliases[normalized] || normalized
+}
+
+function trailerEventLocation(trailer: ControlTowerTrailerLiveAsset) {
+  return trailer.location_name || trailer.xtra_last_event?.location || null
+}
+
+function findKnownLocation(value: string | null | undefined, locations: LocationStats[] | null) {
+  const normalizedValue = normalizePlaceName(value)
+  if (!normalizedValue || !locations) return null
+
+  return locations.find(location => {
+    const normalizedLocation = normalizePlaceName(location.name)
+    return (
+      normalizedLocation === normalizedValue ||
+      normalizedLocation.includes(normalizedValue) ||
+      normalizedValue.includes(normalizedLocation)
+    )
+  }) || null
+}
+
+function formatXtraEventType(value: string) {
+  return value.replace(/_/g, ' ')
+}
+
 export default function FleetMap({ vehicles, locations, trailers, selectedVehicleId }: Props) {
   const [showVehicles, setShowVehicles] = useState(true)
   const [showTrailers, setShowTrailers] = useState(true)
@@ -178,11 +235,39 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
   const filteredTrailers = useMemo(() => {
     if (!trailers) return []
     return trailers.filter(trailer => {
-      if (!showOffline && !trailer.position) return false
+      if (!showOffline && !trailer.position && !trailer.xtra_last_event) return false
       if (!selectedLocation) return true
-      return trailer.location_name === selectedLocation
+      if (trailer.location_name === selectedLocation) return true
+      const knownLocation = findKnownLocation(trailerEventLocation(trailer), locations)
+      return knownLocation?.name === selectedLocation
     })
-  }, [trailers, selectedLocation, showOffline])
+  }, [trailers, selectedLocation, showOffline, locations])
+
+  const trailerMapMarkers = useMemo<TrailerMapMarker[]>(() => {
+    return filteredTrailers.flatMap(trailer => {
+      if (trailer.position) {
+        const marker: TrailerMapMarker = {
+          trailer,
+          position: [trailer.position.latitude, trailer.position.longitude] as [number, number],
+          source: 'geotab',
+          locationName: trailer.location_name,
+        }
+        return [marker]
+      }
+
+      if (!trailer.xtra_last_event) return []
+      const knownLocation = findKnownLocation(trailer.xtra_last_event.location, locations)
+      if (!knownLocation) return []
+
+      const marker: TrailerMapMarker = {
+        trailer,
+        position: [knownLocation.latitude, knownLocation.longitude] as [number, number],
+        source: 'xtra',
+        locationName: knownLocation.name,
+      }
+      return [marker]
+    })
+  }, [filteredTrailers, locations])
 
   const routeVehicles = useMemo(
     () => filteredVehicles.filter(v => v.status === 'active' && v.position).slice(0, 5),
@@ -266,13 +351,11 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
       : []
 
     const trailerPositions = showTrailers
-      ? filteredTrailers
-          .filter(trailer => trailer.position)
-          .map(trailer => [trailer.position!.latitude, trailer.position!.longitude] as [number, number])
+      ? trailerMapMarkers.map(marker => marker.position)
       : []
 
     return [...vehiclePositions, ...trailerPositions, ...locationPositions]
-  }, [filteredVehicles, filteredTrailers, locations, showLocations, showTrailers, showVehicles])
+  }, [filteredVehicles, trailerMapMarkers, locations, showLocations, showTrailers, showVehicles])
 
   const lastUpdated = useMemo(() => {
     const timestamps = (vehicles || [])
@@ -477,7 +560,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   icon={locationIcon(loc)}
                 >
                   <Popup className="dark-popup">
-                    <div className="text-sm">
+                    <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                       <div className="font-semibold text-white mb-1">{loc.name}</div>
                       <div className="text-gray-300 space-y-1">
                         <div>🚗 {loc.vehicle_count} vehicles</div>
@@ -515,7 +598,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   </div>
                 </Tooltip>
                 <Popup className="dark-popup">
-                  <div className="text-sm">
+                  <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                     <div className="font-semibold text-white mb-1 flex items-center gap-2">
                       {statusEmoji[v.status]} Asset {assetLabel(v)}
                     </div>
@@ -536,11 +619,11 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
             ))}
 
             {/* Trailer markers */}
-            {showTrailers && filteredTrailers.filter(trailer => trailer.position).map(trailer => (
+            {showTrailers && trailerMapMarkers.map(({ trailer, position, source, locationName }) => (
               <Marker
-                key={trailer.geotab_device_id || trailer.trailer_id}
-                position={[trailer.position!.latitude, trailer.position!.longitude]}
-                icon={trailerIcon(trailer)}
+                key={`${source}-${trailer.geotab_device_id || trailer.trailer_id}`}
+                position={position}
+                icon={trailerIcon(trailer, source)}
               >
                 <Tooltip
                   direction="top"
@@ -552,21 +635,28 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   <div className="text-xs">
                     <div className="font-semibold">Trailer: {trailer.trailer_id}</div>
                     <div>GPS: {trailer.gps_status}</div>
+                    <div>Map source: {source === 'xtra' ? 'XTRA geofence' : 'Geotab GPS'}</div>
                     <div>Custody: {trailer.custody.vehicle_name || 'Unassigned'}</div>
                   </div>
                 </Tooltip>
                 <Popup className="dark-popup">
-                  <div className="text-sm">
+                  <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                     <div className="font-semibold text-white mb-1 flex items-center gap-2">
                       Trailer {trailer.trailer_id}
                     </div>
                     <div className="text-gray-300 space-y-1">
                       {trailer.geotab_device_id && <div className="text-xs text-gray-400">Geotab ID: {trailer.geotab_device_id}</div>}
                       <div>GPS: <span className="capitalize">{trailer.gps_status}</span></div>
-                      <div>Speed: {formatMph(trailer.speed)}</div>
-                      {trailer.location_name && <div>Location: {trailer.location_name}</div>}
+                      <div>Map source: {source === 'xtra' ? 'XTRA geofence event' : 'Geotab GPS'}</div>
+                      {source === 'geotab' && <div>Speed: {formatMph(trailer.speed)}</div>}
+                      {locationName && <div>Location: {locationName}</div>}
                       {trailer.xtra_last_event && (
-                        <div>XTRA: {trailer.xtra_last_event.event_type.replace('_', ' ')} {trailer.xtra_last_event.location ? `at ${trailer.xtra_last_event.location}` : ''}</div>
+                        <div>XTRA: {formatXtraEventType(trailer.xtra_last_event.event_type)} {trailer.xtra_last_event.location ? `at ${trailer.xtra_last_event.location}` : ''}</div>
+                      )}
+                      {source === 'xtra' && (
+                        <div className="text-xs text-amber-300">
+                          XTRA location reference only; Geotab GPS remains the trailer telemetry authority.
+                        </div>
                       )}
                       <div>Vehicle: {trailer.custody.vehicle_name || 'Unassigned'}</div>
                       {trailer.custody.driver_name && <div>Driver: {trailer.custody.driver_name}</div>}
@@ -626,7 +716,11 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
             </div>
             <div className="flex items-center gap-1">
               <Truck className="w-3 h-3 text-cyan-400" />
-              <span>{filteredTrailers.filter(trailer => trailer.position).length} trailers</span>
+              <span>{trailerMapMarkers.length} trailers</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Truck className="w-3 h-3 text-orange-400" />
+              <span>{trailerMapMarkers.filter(marker => marker.source === 'xtra').length} XTRA refs</span>
             </div>
             <div className="flex items-center gap-1">
               <Layers className="w-3 h-3 text-teal-400" />
