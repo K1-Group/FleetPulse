@@ -266,6 +266,8 @@ def _format_long_stop(stop: Any) -> str:
     except (TypeError, ValueError):
         duration = 0
     subject = f"{driver} / {device}" if device else str(driver)
+    if not _stop_value(stop, "resumed_at"):
+        return f"{subject} currently at {location} for {duration:g} min"
     return f"{subject} at {location} for {duration:g} min"
 
 
