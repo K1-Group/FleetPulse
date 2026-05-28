@@ -213,6 +213,55 @@ def test_address_benchmark_does_not_attach_driver_only_evidence_to_address_pair(
     assert dataset["evidence_sources"]["voice_recordings"] == 0
 
 
+def test_address_benchmark_accepts_connector_export_field_names():
+    config = AddressBenchmarkConfig(period_days=30, minimum_history_samples=1)
+    rows = [
+        {
+            "OrderTrackingID": "501",
+            "DriverNo": "D10",
+            "pickup_address": "Fort Worth Yard",
+            "delivery_address": "Dallas DC",
+            "pickup_departure": "2026-05-26T08:00:00Z",
+            "delivery_arrival": "2026-05-26T09:00:00Z",
+        }
+    ]
+    evidence_rows = [
+        {
+            "kind": "call",
+            "load_id": "501",
+            "platform": "SharePoint",
+            "title": "Dock delay call",
+            "transcription": "Driver reported a locked receiver gate.",
+            "recording_link": "https://sharepoint.example.test/recordings/501",
+            "start_time": "2026-05-26T08:30:00Z",
+        },
+        {
+            "record_type": "email",
+            "pickup": "Fort Worth Yard",
+            "delivery": "Dallas DC",
+            "service": "Outlook",
+            "subject": "Receiver access issue",
+            "snippet": "Receiver confirmed gate access was delayed.",
+            "webLink": "https://outlook.example.test/messages/501",
+        },
+    ]
+
+    dataset = build_address_benchmark_dataset(
+        rows,
+        evidence_rows=evidence_rows,
+        config=config,
+        now=_now(),
+        source_meta={"evidence": {"status": "healthy", "row_count": 2}},
+    )
+
+    evidence = dataset["address_pairs"][0]["evidence"]
+    assert evidence["voice_recordings"]["matches"][0]["source_system"] == "SharePoint"
+    assert evidence["voice_recordings"]["matches"][0]["transcript_available"] is True
+    assert evidence["voice_recordings"]["matches"][0]["source_uri"] == "https://sharepoint.example.test/recordings/501"
+    assert evidence["emails"]["matches"][0]["source_system"] == "Outlook"
+    assert evidence["emails"]["matches"][0]["source_uri"] == "https://outlook.example.test/messages/501"
+
+
 def test_address_benchmark_can_read_configured_fabric_warehouse(monkeypatch):
     monkeypatch.setattr(
         service.FabricWarehouseSqlConfig,

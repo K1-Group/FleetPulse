@@ -44,6 +44,6 @@ Optional voice/email evidence annotations:
 
 Useful optional route columns for long-stop location proof include `stop_address`, `long_stop_address`, `geotab_stop_address`, `stop_geofence`, `geofence_name`, and `site_name`.
 
-The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id` or pickup/delivery pair. Driver-only evidence is treated as too broad for address-pair proof and is not attached to a lane. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
-Useful optional columns include `source_system`, `subject`, `summary`, `transcript`, `source_uri`, `occurred_at`, `driver_id`, `order_id`, `pickup_address`, and `delivery_address`.
+The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id`/`load_id`/`reference_id` or pickup/delivery pair. Driver-only evidence is treated as too broad for address-pair proof and is not attached to a lane. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
+Useful optional columns include `source_system`, `service`, `platform`, `subject`, `title`, `summary`, `snippet`, `body_preview`, `transcript`, `transcription`, `source_uri`, `webLink`, `recording_link`, `message_url`, `sharepoint_url`, `teams_url`, `drive_url`, `occurred_at`, `received_at`, `sent_at`, `driver_id`, `order_id`, `load_id`, `pickup_address`, and `delivery_address`.
 Evidence links are rendered only when the configured URI is `http` or `https`; unsafe or local URI schemes are suppressed.

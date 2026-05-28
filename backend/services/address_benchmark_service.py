@@ -832,24 +832,57 @@ def _normalize_route_instance(
 
 def _normalize_evidence(row: dict[str, Any]) -> dict[str, Any] | None:
     evidence_type = _normalize_key(
-        _first_text(row, ("evidence_type", "type", "source_type", "channel")) or ""
+        _first_text(row, ("evidence_type", "type", "source_type", "channel", "record_type", "kind")) or ""
     )
     if evidence_type not in VOICE_TYPES | EMAIL_TYPES:
         return None
     pickup_address = _first_text(row, ("pickup_address", "pickup", "origin", "pickup_location"))
     delivery_address = _first_text(row, ("delivery_address", "delivery", "destination", "delivery_location"))
-    order_id = _first_text(row, ("order_id", "order_tracking_id", "OrderTrackingID", "ticket_id"))
+    order_id = _first_text(
+        row,
+        (
+            "order_id",
+            "order_tracking_id",
+            "OrderTrackingID",
+            "ticket_id",
+            "load_id",
+            "shipment_id",
+            "reference_id",
+            "reference",
+        ),
+    )
     driver_id = _first_text(row, ("driver_id", "driver_no", "DriverNo", "Driver"))
     if not any((order_id, pickup_address and delivery_address)):
         return None
     summary = _truncate(
-        _first_text(row, ("summary", "issue_summary", "notes", "body_preview", "transcript_summary")),
+        _first_text(
+            row,
+            (
+                "summary",
+                "issue_summary",
+                "notes",
+                "body_preview",
+                "transcript_summary",
+                "snippet",
+                "preview",
+                "body",
+                "text",
+                "message_excerpt",
+            ),
+        ),
         240,
     )
-    transcript = _first_text(row, ("transcript", "transcript_text", "recording_transcript"))
+    transcript = _first_text(
+        row,
+        ("transcript", "transcript_text", "recording_transcript", "transcription", "call_transcript"),
+    )
     return {
         "evidence_type": "voice_recording" if evidence_type in VOICE_TYPES else "email",
-        "source_system": _first_text(row, ("source_system", "source", "mailbox", "folder")) or "configured evidence feed",
+        "source_system": _first_text(
+            row,
+            ("source_system", "source", "mailbox", "folder", "service", "platform", "app"),
+        )
+        or "configured evidence feed",
         "order_id": order_id,
         "driver_id": driver_id,
         "pickup_address": pickup_address,
@@ -857,12 +890,34 @@ def _normalize_evidence(row: dict[str, Any]) -> dict[str, Any] | None:
         "address_pair_key": _address_pair_key(pickup_address, delivery_address)
         if pickup_address and delivery_address
         else None,
-        "occurred_at": _iso(_first_datetime(row, ("occurred_at", "received_at", "sent_at", "call_at", "date"))),
+        "occurred_at": _iso(
+            _first_datetime(
+                row,
+                ("occurred_at", "received_at", "sent_at", "call_at", "date", "created_at", "start_time"),
+            )
+        ),
         "subject": _truncate(_first_text(row, ("subject", "title", "filename")), 140),
         "summary": summary,
         "transcript_available": bool(transcript),
         "source_uri": _safe_source_uri(
-            _first_text(row, ("source_uri", "url", "web_url", "recording_url", "message_url"))
+            _first_text(
+                row,
+                (
+                    "source_uri",
+                    "url",
+                    "web_url",
+                    "webLink",
+                    "weblink",
+                    "recording_url",
+                    "recording_link",
+                    "message_url",
+                    "file_url",
+                    "sharepoint_url",
+                    "teams_url",
+                    "drive_url",
+                    "permalink",
+                ),
+            )
         ),
         "projection_mode": PROJECTION_MODE,
     }
