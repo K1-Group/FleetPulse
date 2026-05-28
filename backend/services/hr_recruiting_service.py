@@ -352,6 +352,49 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _coerce_date(value: date | datetime | str | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return date.fromisoformat(raw)
+
+
+def _period_filter(week_start: date | datetime | str | None) -> dict[str, Any]:
+    start = _coerce_date(week_start)
+    if start is None:
+        return {
+            "grain": "all",
+            "week_start": None,
+            "week_end": None,
+            "timezone": "America/Chicago",
+            "date_field": None,
+        }
+    end = start + timedelta(days=6)
+    return {
+        "grain": "week",
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
+        "timezone": "America/Chicago",
+        "date_field": "first_assigned_at",
+    }
+
+
+def _lead_in_period(lead: "RecruitingLead", period_filter: dict[str, Any]) -> bool:
+    if period_filter.get("grain") != "week":
+        return True
+    week_start = _coerce_date(period_filter.get("week_start"))
+    week_end = _coerce_date(period_filter.get("week_end"))
+    if week_start is None or week_end is None:
+        return True
+    return week_start <= lead.first_assigned_at.date() <= week_end
+
+
 def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -900,12 +943,14 @@ def build_hr_recruiting_dataset(
     config: HrRecruitingConfig | None = None,
     source_status: str = "ok",
     source_message: str | None = None,
+    week_start: date | str | None = None,
 ) -> dict[str, Any]:
     """Build the dashboard/Power BI dataset without exposing applicant PII."""
 
     config = config or HrRecruitingConfig.from_env()
     as_of = _ensure_aware(now or _now_utc())
     today = as_of.date()
+    period_filter = _period_filter(week_start)
     visible_thresholds = tuple(sorted(set((*config.sla_hours, *DEFAULT_SLA_HOURS))))
     primary_stale_hours = min(config.sla_hours or DEFAULT_SLA_HOURS)
 
@@ -924,7 +969,10 @@ def build_hr_recruiting_dataset(
         if existing is None or _prefer_new_lead(existing, lead):
             deduped[lead.dedupe_key] = lead
 
+    source_deduped_count = len(deduped)
     leads = list(deduped.values())
+    if period_filter["grain"] == "week":
+        leads = [lead for lead in leads if _lead_in_period(lead, period_filter)]
     active_leads = [lead for lead in leads if not _is_completed(lead)]
     completed_leads = [lead for lead in leads if lead.completed_at is not None]
     new_hire_start = today - timedelta(days=6)
@@ -998,6 +1046,13 @@ def build_hr_recruiting_dataset(
     ]
     trend = _build_trend(leads, active_leads, as_of, primary_stale_hours)
     derived_source_status = source_status if records or source_status != "ok" else "empty"
+    derived_source_message = source_message
+    if period_filter["grain"] == "week" and records and source_status == "ok" and not leads:
+        derived_source_status = "no_data"
+        derived_source_message = (
+            "No HR recruiting rows matched "
+            f"{period_filter['week_start']} through {period_filter['week_end']}."
+        )
     can_evaluate_targets = derived_source_status in {"ok", "empty"}
     hard_targets = _build_hard_target_results(
         {
@@ -1039,7 +1094,8 @@ def build_hr_recruiting_dataset(
         "table_id": config.table_id,
         "source_artifact": None,
         "source_status": derived_source_status,
-        "source_message": source_message,
+        "source_message": derived_source_message,
+        "period_filter": period_filter,
         "pii_suppressed": True,
         "sla_hours": list(config.sla_hours),
         "hard_targets": hard_targets,
@@ -1054,6 +1110,8 @@ def build_hr_recruiting_dataset(
         "row_counts": {
             "source_rows": len(records),
             "deduped_leads": len(leads),
+            "source_deduped_leads": source_deduped_count,
+            "filtered_lead_rows": len(leads),
             "active_leads": len(active_leads),
             "completed_leads": len(completed_leads),
             "invalid_rows": invalid_rows,
@@ -1186,6 +1244,7 @@ async def get_hr_recruiting_dataset(
     *,
     now: datetime | None = None,
     config: HrRecruitingConfig | None = None,
+    week_start: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrRecruitingConfig.from_env()
     workbook_path = config.workbook_source_path
@@ -1201,6 +1260,7 @@ async def get_hr_recruiting_dataset(
             table_id=config.table_id,
             sla_hours=config.sla_hours,
             hard_targets=HARD_TARGETS,
+            week_start=week_start,
         )
     source = await _load_source_records(config)
     return build_hr_recruiting_dataset(
@@ -1209,4 +1269,5 @@ async def get_hr_recruiting_dataset(
         config=config,
         source_status=source.status,
         source_message=source.message,
+        week_start=week_start,
     )

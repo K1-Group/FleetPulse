@@ -44,6 +44,13 @@ def _dataset() -> dict:
         "table_id": "01KR00WV4YHCB6BMYDE1EG7HEM",
         "source_status": "ok",
         "source_message": None,
+        "period_filter": {
+            "grain": "all",
+            "week_start": None,
+            "week_end": None,
+            "timezone": "America/Chicago",
+            "date_field": None,
+        },
         "pii_suppressed": True,
         "sla_hours": [24, 48, 72],
         "summary": {
@@ -171,8 +178,10 @@ def _dataset() -> dict:
     }
 
 
-def _client(monkeypatch) -> TestClient:
-    async def fake_dataset():
+def _client(monkeypatch, captured_calls: list[dict] | None = None) -> TestClient:
+    async def fake_dataset(**kwargs):
+        if captured_calls is not None:
+            captured_calls.append(kwargs)
         return _dataset()
 
     monkeypatch.setattr(hr_recruiting, "get_hr_recruiting_dataset", fake_dataset)
@@ -195,6 +204,14 @@ def test_hr_recruiting_worklist_endpoint_returns_read_only_dataset(monkeypatch) 
     assert payload["pii_suppressed"] is True
     assert "phone" not in str(payload).lower()
     assert "ssn" not in str(payload).lower()
+
+
+def test_hr_recruiting_worklist_endpoint_accepts_week_filter(monkeypatch) -> None:
+    captured_calls: list[dict] = []
+    response = _client(monkeypatch, captured_calls).get("/api/hr-recruiting/worklist?week_start=2026-05-18")
+
+    assert response.status_code == 200
+    assert str(captured_calls[0]["week_start"]) == "2026-05-18"
 
 
 def test_hr_recruiting_status_exposes_state_path_readiness(monkeypatch, tmp_path) -> None:
