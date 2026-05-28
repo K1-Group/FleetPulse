@@ -30,6 +30,7 @@ import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
 import UserLoginStatus from './components/UserLoginStatus'
+import AddressBenchmarkScan from './components/AddressBenchmarkScan'
 import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useFuelTrends, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
@@ -317,6 +318,10 @@ export default function App() {
             loading={driverWorkforce.loading}
             onSelectVehicle={setSelectedVehicleId}
           />
+        </section>
+
+        <section>
+          <AddressBenchmarkScan />
         </section>
 
         <section>

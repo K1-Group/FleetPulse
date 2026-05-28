@@ -143,6 +143,18 @@ def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
     monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
     monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [FakeSafety()])
     monkeypatch.setattr(
+        "services.address_benchmark_service.get_address_benchmark_dataset",
+        lambda days=180: {
+            "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows",
+            "projection_mode": "read_only",
+            "period": {"days": days},
+            "thresholds": {"stop_threshold_minutes": 60},
+            "summary": {"address_pairs": 0, "measured_orders": 0},
+            "evidence_sources": {"status": "pending_config", "voice_recordings": 0, "emails": 0},
+            "address_pairs": [],
+        },
+    )
+    monkeypatch.setattr(
         "services.lakehouse_lane_stability_service.get_lane_stability_daily",
         lambda window=42: {
             "window": window,
@@ -182,7 +194,7 @@ def test_fleet_context_uses_live_services_without_demo_values(monkeypatch):
     assert parsed["lane_stability"]["latest_row"]["scored_lanes"] == 50
     assert "V018" not in context
     assert "Fort Worth" not in context
-    assert "180" not in context
+    assert '"avg_route_minutes": 180' not in context
 
 
 def test_ai_system_prompt_does_not_embed_demo_locations(monkeypatch):
@@ -350,6 +362,72 @@ def test_live_data_fallback_includes_long_stop_location_details(monkeypatch):
     assert response.data[0]["address"] == "4200 Gravel Dr, Fort Worth, TX 76118"
     assert response.data[0]["geofence"] == "Fort Worth Yard"
     assert response.data[0]["source_authority"] == "Geotab"
+
+
+def test_live_data_fallback_answers_historical_address_benchmark_question(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    monkeypatch.setattr(
+        "services.address_benchmark_service.get_address_benchmark_dataset",
+        lambda days=180: {
+            "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows + configured voice/email evidence",
+            "projection_mode": "read_only",
+            "period": {"start": "2026-05-01", "end": "2026-05-27", "days": days},
+            "thresholds": {"stop_threshold_minutes": 60},
+            "summary": {
+                "address_pairs": 1,
+                "measured_orders": 3,
+                "drivers_compared": 2,
+                "opportunity_minutes_vs_pair_average": 16.6,
+            },
+            "evidence_sources": {
+                "status": "healthy",
+                "voice_recordings": 1,
+                "emails": 1,
+            },
+            "address_pairs": [
+                {
+                    "pickup_address": "Fort Worth Yard",
+                    "delivery_address": "Dallas DC",
+                    "avg_route_minutes": 76.7,
+                    "measured_orders": 3,
+                    "stop_events_over_threshold": 1,
+                    "opportunity_minutes_vs_pair_average": 16.6,
+                    "driver_benchmarks": [
+                        {"driver_name": "D1", "avg_route_minutes": 70.0},
+                        {"driver_name": "D2", "avg_route_minutes": 90.0},
+                    ],
+                    "evidence": {
+                        "voice_recordings": {"match_count": 1},
+                        "emails": {"match_count": 1},
+                    },
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "services.fleet_service.get_fleet_overview",
+        lambda: (_ for _ in ()).throw(RuntimeError("geotab_unavailable")),
+    )
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(
+                message=(
+                    "Can we scan history by pickup and delivery address, compare average "
+                    "time by driver, and check voice recordings or emails?"
+                )
+            )
+        )
+    )
+
+    assert response.model == "live-data-fallback"
+    assert response.is_ai_powered is False
+    assert "historical pickup/delivery scan" in response.response
+    assert "Fort Worth Yard to Dallas DC" in response.response
+    assert "Stops >60m" in response.insights[0]
+    assert response.data[0]["voice_matches"] == 1
+    assert response.data[0]["email_matches"] == 1
 
 
 def test_live_data_fallback_explains_scored_lanes(monkeypatch):

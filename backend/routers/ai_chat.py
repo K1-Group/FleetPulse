@@ -395,14 +395,157 @@ def _lane_stability_answer_from_payload(payload: dict[str, Any]) -> tuple[str, l
     return response, insights, data
 
 
+def _is_address_benchmark_question(normalized: str) -> bool:
+    if any(term in normalized for term in ("pickup", "delivery", "address")):
+        return any(
+            term in normalized
+            for term in (
+                "average",
+                "avg",
+                "history",
+                "historical",
+                "been there",
+                "driver",
+                "drivers",
+                "faster",
+                "time",
+                "recording",
+                "voice",
+                "email",
+                "worth",
+            )
+        )
+    return (
+        any(term in normalized for term in ("voice recording", "recording", "email"))
+        and any(term in normalized for term in ("route", "driver", "pickup", "delivery", "stop"))
+    )
+
+
+def _address_pair_label(pair: dict[str, Any]) -> str:
+    pickup = str(pair.get("pickup_address") or "pickup unavailable")
+    delivery = str(pair.get("delivery_address") or "delivery unavailable")
+    return f"{pickup} to {delivery}"
+
+
+def _minutes_text(value: Any) -> str:
+    try:
+        return f"{float(value):.1f} min"
+    except (TypeError, ValueError):
+        return "unavailable"
+
+
+def _address_benchmark_answer_from_payload(payload: dict[str, Any]) -> tuple[str, list[str], list[dict[str, Any]] | None]:
+    summary = payload.get("summary") or {}
+    thresholds = payload.get("thresholds") or {}
+    pairs = payload.get("address_pairs") or []
+    evidence_sources = payload.get("evidence_sources") or {}
+    period = payload.get("period") or {}
+    stop_threshold = int(thresholds.get("stop_threshold_minutes") or 60)
+
+    if not pairs:
+        response = (
+            "The historical pickup/delivery benchmark scan is available, but no measured "
+            "address pairs were returned for the current filter window. "
+            f"FleetPulse checked {summary.get('route_rows_in_period', 0)} in-period route rows "
+            f"from {payload.get('source_authority', 'read-only Xcelerator rows')}."
+        )
+        insights = [
+            "Import or connect Xcelerator rows with actual pickup and delivery timestamps before comparing driver speed.",
+            "Voice recordings and emails are only attached when a read-only evidence feed is configured.",
+            f"The stop threshold for this scan is Stops >{stop_threshold}m.",
+        ]
+        return response, insights, None
+
+    top_pairs = pairs[:3]
+    pair_text = []
+    data = []
+    for pair in top_pairs:
+        drivers = pair.get("driver_benchmarks") or []
+        fastest = sorted(
+            [driver for driver in drivers if driver.get("avg_route_minutes") is not None],
+            key=lambda driver: float(driver.get("avg_route_minutes") or 0),
+        )[:1]
+        fastest_text = (
+            f"; fastest driver {fastest[0].get('driver_name')} at {_minutes_text(fastest[0].get('avg_route_minutes'))}"
+            if fastest
+            else ""
+        )
+        pair_text.append(
+            f"{_address_pair_label(pair)} averaged {_minutes_text(pair.get('avg_route_minutes'))} "
+            f"across {pair.get('measured_orders', 0)} measured order(s){fastest_text}"
+        )
+        data.append(
+            {
+                "location": _address_pair_label(pair),
+                "metric": "avg_route_minutes",
+                "score": pair.get("avg_route_minutes") or 0,
+                "avg_route_minutes": pair.get("avg_route_minutes"),
+                "measured_orders": pair.get("measured_orders"),
+                "stop_events_over_threshold": pair.get("stop_events_over_threshold"),
+                "opportunity_minutes": pair.get("opportunity_minutes_vs_pair_average"),
+                "voice_matches": (pair.get("evidence") or {}).get("voice_recordings", {}).get("match_count", 0),
+                "email_matches": (pair.get("evidence") or {}).get("emails", {}).get("match_count", 0),
+            }
+        )
+
+    response = (
+        "FleetPulse can run the historical pickup/delivery scan as a read-only projection. "
+        f"For {period.get('start', 'the window')} through {period.get('end', 'now')}, "
+        f"it found {summary.get('address_pairs', 0)} address pair(s), "
+        f"{summary.get('measured_orders', 0)} measured order(s), "
+        f"{summary.get('drivers_compared', 0)} driver comparison(s), and "
+        f"{_minutes_text(summary.get('opportunity_minutes_vs_pair_average'))} above pair averages. "
+        + " Top lanes: "
+        + "; ".join(pair_text)
+        + "."
+    )
+    insights = [
+        f"Stops >{stop_threshold}m are counted only from configured stop/dwell evidence.",
+        f"Voice evidence status: {evidence_sources.get('status', 'pending_config')}; matched voice rows: {evidence_sources.get('voice_recordings', 0)}.",
+        f"Email evidence status: {evidence_sources.get('status', 'pending_config')}; matched email rows: {evidence_sources.get('emails', 0)}.",
+        "Xcelerator remains authoritative for route timing, revenue, driver pay, pickup, and delivery data.",
+    ]
+    return response, insights, data
+
+
 async def _live_data_fallback_response(message: str) -> ChatResponse:
     """Answer supported live-data questions when the AI provider is unavailable."""
+
+    normalized = message.lower()
+
+    if _is_address_benchmark_question(normalized):
+        try:
+            from services.address_benchmark_service import get_address_benchmark_dataset
+
+            benchmark_payload = get_address_benchmark_dataset(days=180)
+            response, insights, data = _address_benchmark_answer_from_payload(benchmark_payload)
+            return ChatResponse(
+                response=response,
+                data=data,
+                chart_type="bar" if data else None,
+                insights=insights,
+                confidence=0.75,
+                model="live-data-fallback",
+                is_ai_powered=False,
+            )
+        except Exception as exc:
+            return ChatResponse(
+                response=(
+                    "The historical pickup/delivery benchmark scan is not available from "
+                    f"the local projection right now ({type(exc).__name__})."
+                ),
+                insights=[
+                    "Expected source: read-only Xcelerator ReviewOrders rows or Fabric Warehouse.",
+                    "Voice/email evidence remains optional read-only annotation.",
+                ],
+                confidence=0.35,
+                model="live-data-fallback",
+                is_ai_powered=False,
+            )
 
     from services.alert_service import get_recent_alerts
     from services.fleet_service import get_fleet_overview, get_vehicles
     from services.safety_service import get_safety_scores
-
-    normalized = message.lower()
 
     try:
         overview = get_fleet_overview()
@@ -597,6 +740,7 @@ async def _fetch_fleet_context() -> str:
     from services.alert_service import get_recent_alerts
     from services.safety_service import get_safety_scores
     from services.lakehouse_lane_stability_service import get_lane_stability_daily
+    from services.address_benchmark_service import get_address_benchmark_dataset
 
     context: dict[str, Any] = {
         "source_authority": "Geotab plus read-only Xcelerator/Fabric projections when included",
@@ -640,6 +784,20 @@ async def _fetch_fleet_context() -> str:
     except Exception as exc:
         context["lane_stability_error"] = type(exc).__name__
 
+    try:
+        benchmark_payload = _to_jsonable(get_address_benchmark_dataset(days=180))
+        context["address_benchmarks"] = {
+            "source_authority": benchmark_payload.get("source_authority"),
+            "projection_mode": benchmark_payload.get("projection_mode"),
+            "period": benchmark_payload.get("period"),
+            "thresholds": benchmark_payload.get("thresholds"),
+            "summary": benchmark_payload.get("summary"),
+            "evidence_sources": benchmark_payload.get("evidence_sources"),
+            "top_pairs": (benchmark_payload.get("address_pairs") or [])[:5],
+        }
+    except Exception as exc:
+        context["address_benchmarks_error"] = type(exc).__name__
+
     return json.dumps(context, default=str)
 
 
@@ -652,6 +810,7 @@ FleetPulse is a GeoTab-powered fleet management platform that provides real-time
 - Fuel and route metrics when present in the supplied context
 - Maintenance and diagnostics when present in the supplied context
 - Lane stability metrics from read-only Xcelerator/Fabric projections when present in the supplied context
+- Pickup/delivery historical benchmark metrics from read-only Xcelerator projections when present in the supplied context
 - Driver behavior analysis
 - Cost optimization only when the supplied data supports it
 
