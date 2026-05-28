@@ -367,12 +367,12 @@ def test_live_data_fallback_includes_long_stop_location_details(monkeypatch):
 def test_live_data_fallback_answers_historical_address_benchmark_question(monkeypatch):
     ai_chat = _load_ai_chat(monkeypatch)
 
-    monkeypatch.setattr(
-        "services.address_benchmark_service.get_address_benchmark_dataset",
-        lambda days=180: {
+    def fake_address_benchmark_dataset(days=180, pickup=None, delivery=None):
+        return {
             "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows + configured voice/email evidence",
             "projection_mode": "read_only",
             "period": {"start": "2026-05-01", "end": "2026-05-27", "days": days},
+            "filters": {"pickup": pickup, "delivery": delivery},
             "thresholds": {"stop_threshold_minutes": 60},
             "summary": {
                 "address_pairs": 1,
@@ -403,7 +403,11 @@ def test_live_data_fallback_answers_historical_address_benchmark_question(monkey
                     },
                 }
             ],
-        },
+        }
+
+    monkeypatch.setattr(
+        "services.address_benchmark_service.get_address_benchmark_dataset",
+        fake_address_benchmark_dataset,
     )
     monkeypatch.setattr(
         "services.fleet_service.get_fleet_overview",
@@ -428,6 +432,63 @@ def test_live_data_fallback_answers_historical_address_benchmark_question(monkey
     assert "Stops >60m" in response.insights[0]
     assert response.data[0]["voice_matches"] == 1
     assert response.data[0]["email_matches"] == 1
+
+
+def test_live_data_fallback_applies_pickup_delivery_filters(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+    calls: list[dict[str, object]] = []
+
+    def fake_address_benchmark_dataset(days=180, pickup=None, delivery=None):
+        calls.append({"days": days, "pickup": pickup, "delivery": delivery})
+        return {
+            "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows + configured voice/email evidence",
+            "projection_mode": "read_only",
+            "period": {"start": "2026-05-01", "end": "2026-05-27", "days": days},
+            "filters": {"pickup": pickup, "delivery": delivery},
+            "thresholds": {"stop_threshold_minutes": 60},
+            "summary": {
+                "address_pairs": 1,
+                "measured_orders": 2,
+                "drivers_compared": 2,
+                "opportunity_minutes_vs_pair_average": 22.5,
+            },
+            "evidence_sources": {"status": "pending_config", "voice_recordings": 0, "emails": 0},
+            "address_pairs": [
+                {
+                    "pickup_address": "Fort Worth Yard",
+                    "delivery_address": "Dallas DC",
+                    "avg_route_minutes": 82.5,
+                    "measured_orders": 2,
+                    "stop_events_over_threshold": 1,
+                    "opportunity_minutes_vs_pair_average": 22.5,
+                    "driver_benchmarks": [{"driver_name": "D1", "avg_route_minutes": 60.0}],
+                    "evidence": {
+                        "voice_recordings": {"match_count": 0},
+                        "emails": {"match_count": 0},
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "services.address_benchmark_service.get_address_benchmark_dataset",
+        fake_address_benchmark_dataset,
+    )
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(
+                message=(
+                    "Scan history from Fort Worth Yard to Dallas DC and compare average "
+                    "time by driver with voice and email evidence."
+                )
+            )
+        )
+    )
+
+    assert calls == [{"days": 180, "pickup": "Fort Worth Yard", "delivery": "Dallas DC"}]
+    assert "for pickup Fort Worth Yard and delivery Dallas DC" in response.response
+    assert "Fort Worth Yard to Dallas DC" in response.response
 
 
 def test_live_data_fallback_explains_scored_lanes(monkeypatch):

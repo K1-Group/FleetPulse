@@ -427,6 +427,81 @@ def _address_pair_label(pair: dict[str, Any]) -> str:
     return f"{pickup} to {delivery}"
 
 
+def _clean_address_filter(value: str | None) -> str | None:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n.,;:!?\"'")
+    if not text:
+        return None
+    words = {word for word in re.split(r"\W+", text.casefold()) if word}
+    generic_words = {
+        "a",
+        "address",
+        "addresses",
+        "all",
+        "and",
+        "any",
+        "average",
+        "avg",
+        "before",
+        "check",
+        "compare",
+        "delivery",
+        "driver",
+        "drivers",
+        "email",
+        "emails",
+        "faster",
+        "history",
+        "pickup",
+        "recording",
+        "recordings",
+        "route",
+        "scan",
+        "stop",
+        "stops",
+        "the",
+        "time",
+        "voice",
+        "worth",
+    }
+    if words and words <= generic_words:
+        return None
+    return text[:120]
+
+
+def _address_benchmark_filters_from_message(message: str) -> dict[str, str | None]:
+    stop_terms = (
+        r"(?=$|[?.!,;]|\s+(?:and\s+)?(?:compare|check|show|scan|history|historical|average|avg|drivers?|"
+        r"faster|time|times|voice|recordings?|emails?|stops?|cost|worth|opportunity|for)\b)"
+    )
+    patterns = [
+        rf"\bpickup(?:\s+address)?\s+(?P<pickup>.+?)\s+(?:delivery(?:\s+address)?|destination|drop\s*off)\s+(?P<delivery>.+?){stop_terms}",
+        rf"\bfrom\s+(?P<pickup>.+?)\s+to\s+(?P<delivery>.+?){stop_terms}",
+        rf"\bbetween\s+(?P<pickup>.+?)\s+and\s+(?P<delivery>.+?){stop_terms}",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if not match:
+            continue
+        pickup = _clean_address_filter(match.group("pickup"))
+        delivery = _clean_address_filter(match.group("delivery"))
+        if pickup and delivery:
+            return {"pickup": pickup, "delivery": delivery}
+    return {"pickup": None, "delivery": None}
+
+
+def _address_filter_text(payload: dict[str, Any]) -> str:
+    filters = payload.get("filters") or {}
+    pickup = filters.get("pickup")
+    delivery = filters.get("delivery")
+    if pickup and delivery:
+        return f" for pickup {pickup} and delivery {delivery}"
+    if pickup:
+        return f" for pickup {pickup}"
+    if delivery:
+        return f" for delivery {delivery}"
+    return ""
+
+
 def _minutes_text(value: Any) -> str:
     try:
         return f"{float(value):.1f} min"
@@ -441,11 +516,12 @@ def _address_benchmark_answer_from_payload(payload: dict[str, Any]) -> tuple[str
     evidence_sources = payload.get("evidence_sources") or {}
     period = payload.get("period") or {}
     stop_threshold = int(thresholds.get("stop_threshold_minutes") or 60)
+    filter_text = _address_filter_text(payload)
 
     if not pairs:
         response = (
             "The historical pickup/delivery benchmark scan is available, but no measured "
-            "address pairs were returned for the current filter window. "
+            f"address pairs were returned{filter_text} for the current filter window. "
             f"FleetPulse checked {summary.get('route_rows_in_period', 0)} in-period route rows "
             f"from {payload.get('source_authority', 'read-only Xcelerator rows')}."
         )
@@ -490,7 +566,7 @@ def _address_benchmark_answer_from_payload(payload: dict[str, Any]) -> tuple[str
 
     response = (
         "FleetPulse can run the historical pickup/delivery scan as a read-only projection. "
-        f"For {period.get('start', 'the window')} through {period.get('end', 'now')}, "
+        f"For {period.get('start', 'the window')} through {period.get('end', 'now')}{filter_text}, "
         f"it found {summary.get('address_pairs', 0)} address pair(s), "
         f"{summary.get('measured_orders', 0)} measured order(s), "
         f"{summary.get('drivers_compared', 0)} driver comparison(s), and "
@@ -517,7 +593,12 @@ async def _live_data_fallback_response(message: str) -> ChatResponse:
         try:
             from services.address_benchmark_service import get_address_benchmark_dataset
 
-            benchmark_payload = get_address_benchmark_dataset(days=180)
+            filters = _address_benchmark_filters_from_message(message)
+            benchmark_payload = get_address_benchmark_dataset(
+                days=180,
+                pickup=filters["pickup"],
+                delivery=filters["delivery"],
+            )
             response, insights, data = _address_benchmark_answer_from_payload(benchmark_payload)
             return ChatResponse(
                 response=response,
