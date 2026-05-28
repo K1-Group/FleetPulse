@@ -560,7 +560,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   icon={locationIcon(loc)}
                 >
                   <Popup className="dark-popup">
-                    <div className="text-sm">
+                    <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                       <div className="font-semibold text-white mb-1">{loc.name}</div>
                       <div className="text-gray-300 space-y-1">
                         <div>🚗 {loc.vehicle_count} vehicles</div>
@@ -598,7 +598,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   </div>
                 </Tooltip>
                 <Popup className="dark-popup">
-                  <div className="text-sm">
+                  <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                     <div className="font-semibold text-white mb-1 flex items-center gap-2">
                       {statusEmoji[v.status]} Asset {assetLabel(v)}
                     </div>
@@ -640,7 +640,7 @@ export default function FleetMap({ vehicles, locations, trailers, selectedVehicl
                   </div>
                 </Tooltip>
                 <Popup className="dark-popup">
-                  <div className="text-sm">
+                  <div className="rounded-lg bg-gray-950 p-3 text-sm shadow-xl">
                     <div className="font-semibold text-white mb-1 flex items-center gap-2">
                       Trailer {trailer.trailer_id}
                     </div>
