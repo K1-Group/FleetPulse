@@ -18,6 +18,7 @@ Optional query parameters:
 - The dashboard displays configured evidence subjects/summaries, source system, order match, transcript availability, and evidence links when those fields are present. FleetPulse does not transcribe recordings in this projection; transcripts must come from the configured evidence feed.
 - Driver comparison rows include visible action guidance so benchmark drivers, drivers above the lane average, and evidence-driven dwell reviews can be handled before changing coaching, incentives, or route expectations.
 - `stop_threshold_minutes` defaults to 60 and is applied only to configured stop/dwell evidence fields such as `stop_minutes`, `idle_minutes`, `dwell_minutes`, or `geotab_stop_minutes`.
+- When present in the read-only route rows, `stop_address` or `stop_geofence` details are displayed with the matching >60m stop. Missing stop locations remain blank; FleetPulse does not infer or geocode them.
 
 ## Required Configuration
 
@@ -39,6 +40,8 @@ Optional benchmark tuning:
 Optional voice/email evidence annotations:
 
 - `FLEETPULSE_ADDRESS_BENCHMARK_EVIDENCE_PATH`
+
+Useful optional route columns for long-stop location proof include `stop_address`, `long_stop_address`, `geotab_stop_address`, `stop_geofence`, `geofence_name`, and `site_name`.
 
 The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id` or pickup/delivery pair. Driver-only evidence is treated as too broad for address-pair proof and is not attached to a lane. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
 Useful optional columns include `source_system`, `subject`, `summary`, `transcript`, `source_uri`, `occurred_at`, `driver_id`, `order_id`, `pickup_address`, and `delivery_address`.

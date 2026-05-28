@@ -161,6 +161,46 @@ function DriverActionNotes({ pair }: { pair: AddressBenchmarkPair }) {
   )
 }
 
+function LongStopEvidence({ pair }: { pair: AddressBenchmarkPair }) {
+  const stops = (pair.long_stop_evidence || []).slice(0, 3)
+  if (!stops.length) return null
+
+  return (
+    <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 light:bg-amber-50">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.1em] text-amber-200 light:text-amber-800">
+        <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+        Stop locations &gt;{pair.stop_threshold_minutes}m
+      </div>
+      <div className="mt-2 grid gap-2 lg:grid-cols-3">
+        {stops.map(stop => {
+          const place = stop.stop_geofence || stop.stop_address || 'Location not available'
+          return (
+            <div key={`${stop.order_id}-${stop.route_date}`} className="rounded-md border border-amber-300/20 bg-black/15 p-2 text-xs light:border-amber-200 light:bg-white">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-semibold text-gray-200 light:text-gray-800" title={place}>
+                  {place}
+                </span>
+                <span className="shrink-0 text-amber-200 light:text-amber-800">
+                  {formatNumber(stop.stop_minutes, 'm')}
+                </span>
+              </div>
+              {stop.stop_geofence && stop.stop_address && (
+                <div className="mt-1 truncate text-gray-500 light:text-gray-600" title={stop.stop_address}>
+                  {stop.stop_address}
+                </div>
+              )}
+              <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-gray-500">
+                <span className="truncate">{stop.driver_name || stop.driver_id || 'Unassigned'}</span>
+                <span className="shrink-0">{shortDate(stop.route_date)}</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
   const fastest = bestDriver(pair)
   const voice = pair.evidence.voice_recordings
@@ -233,6 +273,8 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
           ))}
         </div>
       </div>
+
+      <LongStopEvidence pair={pair} />
 
       <DriverActionNotes pair={pair} />
 

@@ -459,6 +459,32 @@ def _warehouse_column_resolution(columns: list[str]) -> dict[str, Any]:
             "detention_minutes",
         ),
     )
+    stop_address_column = _pick_column(
+        columns,
+        (
+            "long_stop_address",
+            "geotab_stop_address",
+            "stop_address",
+            "stopped_address",
+            "idle_address",
+            "dwell_address",
+            "detention_address",
+            "stop_location",
+            "nearest_stop_address",
+        ),
+    )
+    stop_geofence_column = _pick_column(
+        columns,
+        (
+            "long_stop_geofence",
+            "geotab_stop_geofence",
+            "stop_geofence",
+            "geofence",
+            "geofence_name",
+            "zone_name",
+            "site_name",
+        ),
+    )
     revenue_column = _pick_column(columns, ("Grand Total", "grand_total", "GrandTotal", "Revenue"))
     driver_pay_column = _pick_column(columns, ("Driver Pay", "driver_pay", "DriverPay"))
     selected = {
@@ -471,6 +497,8 @@ def _warehouse_column_resolution(columns: list[str]) -> dict[str, Any]:
         "finish_columns": finish_columns,
         "route_minutes_column": route_minutes_column,
         "stop_minutes_column": stop_minutes_column,
+        "stop_address_column": stop_address_column,
+        "stop_geofence_column": stop_geofence_column,
         "revenue_column": revenue_column,
         "driver_pay_column": driver_pay_column,
     }
@@ -539,6 +567,8 @@ SELECT TOP ({max_rows})
     CONVERT(varchar(33), {finish_expr}, 126) AS delivery_arrival,
     {_number_sql(selected["route_minutes_column"])} AS route_minutes,
     {_number_sql(selected["stop_minutes_column"])} AS stop_minutes,
+    {_string_sql(selected["stop_address_column"], 512)} AS stop_address,
+    {_string_sql(selected["stop_geofence_column"], 255)} AS stop_geofence,
     {_number_sql(selected["revenue_column"])} AS revenue,
     {_number_sql(selected["driver_pay_column"])} AS driver_pay,
     CONVERT(varchar(33), {date_expr}, 126) AS date
@@ -738,6 +768,32 @@ def _normalize_route_instance(
             ),
         )
     )
+    stop_address = _first_text(
+        row,
+        (
+            "long_stop_address",
+            "geotab_stop_address",
+            "stop_address",
+            "stopped_address",
+            "idle_address",
+            "dwell_address",
+            "detention_address",
+            "stop_location",
+            "nearest_stop_address",
+        ),
+    )
+    stop_geofence = _first_text(
+        row,
+        (
+            "long_stop_geofence",
+            "geotab_stop_geofence",
+            "stop_geofence",
+            "geofence",
+            "geofence_name",
+            "zone_name",
+            "site_name",
+        ),
+    )
     address_pair_key = _address_pair_key(pickup_address, delivery_address)
     return {
         "order_id": order_id or _stable_id("order", pickup_address, delivery_address, route_date.isoformat(), driver_id),
@@ -752,6 +808,8 @@ def _normalize_route_instance(
         "route_minutes": route_minutes,
         "duration_source": duration_source,
         "stop_minutes": stop_minutes,
+        "stop_address": stop_address,
+        "stop_geofence": stop_geofence,
         "stop_over_threshold": bool(stop_minutes is not None and stop_minutes >= config.stop_threshold_minutes),
         "revenue": _positive_number(
             _find_value(row, ("Grand Total", "grand_total", "GrandTotal", "Revenue"))
@@ -863,6 +921,7 @@ def _build_pair_benchmark(
         "driver_pay_total": round(sum(float(row.get("driver_pay") or 0) for row in rows), 2),
         "driver_benchmarks": driver_benchmarks,
         "recent_orders": _recent_order_summaries(rows, config.max_recent_orders_per_pair),
+        "long_stop_evidence": _long_stop_summaries(rows, limit=5),
         "evidence": pair_evidence,
         "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows",
         "projection_mode": PROJECTION_MODE,
@@ -919,9 +978,36 @@ def _recent_order_summaries(rows: list[dict[str, Any]], limit: int) -> list[dict
                 "route_minutes": row.get("route_minutes"),
                 "duration_source": row.get("duration_source"),
                 "stop_minutes": row.get("stop_minutes"),
+                "stop_address": row.get("stop_address"),
+                "stop_geofence": row.get("stop_geofence"),
                 "stop_over_threshold": row.get("stop_over_threshold"),
             }
         )
+    return summaries
+
+
+def _long_stop_summaries(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    summaries = []
+    for row in rows:
+        if not row.get("stop_over_threshold"):
+            continue
+        summaries.append(
+            {
+                "order_id": row["order_id"],
+                "route_date": row["route_date"].isoformat(),
+                "driver_id": row.get("driver_id"),
+                "driver_name": row.get("driver_name"),
+                "stop_minutes": row.get("stop_minutes"),
+                "stop_address": row.get("stop_address"),
+                "stop_geofence": row.get("stop_geofence"),
+                "source_authority": "Configured stop/dwell evidence fields",
+                "projection_mode": PROJECTION_MODE,
+            }
+        )
+        if len(summaries) >= limit:
+            break
     return summaries
 
 

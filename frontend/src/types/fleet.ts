@@ -289,7 +289,21 @@ export interface AddressBenchmarkRecentOrder {
   route_minutes: number | null
   duration_source: string | null
   stop_minutes: number | null
+  stop_address: string | null
+  stop_geofence: string | null
   stop_over_threshold: boolean
+}
+
+export interface AddressBenchmarkLongStopEvidence {
+  order_id: string
+  route_date: string
+  driver_id: string | null
+  driver_name: string | null
+  stop_minutes: number | null
+  stop_address: string | null
+  stop_geofence: string | null
+  source_authority: string
+  projection_mode: 'read_only'
 }
 
 export interface AddressBenchmarkPair {
@@ -312,6 +326,7 @@ export interface AddressBenchmarkPair {
   driver_pay_total: number
   driver_benchmarks: AddressBenchmarkDriver[]
   recent_orders: AddressBenchmarkRecentOrder[]
+  long_stop_evidence: AddressBenchmarkLongStopEvidence[]
   evidence: {
     voice_recordings: AddressBenchmarkEvidenceBucket
     emails: AddressBenchmarkEvidenceBucket

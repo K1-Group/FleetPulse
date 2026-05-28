@@ -40,6 +40,8 @@ def test_address_benchmark_compares_drivers_by_pickup_delivery_pair():
             "Grand Total": "500",
             "Driver Pay": "180",
             "stop_minutes": "75",
+            "stop_address": "1200 Receiver Rd, Dallas, TX",
+            "stop_geofence": "Dallas DC Dock",
         },
         {
             "OrderTrackingID": "103",
@@ -69,6 +71,19 @@ def test_address_benchmark_compares_drivers_by_pickup_delivery_pair():
     assert driver_two["avg_route_minutes"] == 90.0
     assert driver_two["variance_vs_pair_average_minutes"] == 13.3
     assert driver_two["stop_events_over_threshold"] == 1
+    assert pair["long_stop_evidence"] == [
+        {
+            "order_id": "102",
+            "route_date": "2026-05-21",
+            "driver_id": "D2",
+            "driver_name": "D2",
+            "stop_minutes": 75.0,
+            "stop_address": "1200 Receiver Rd, Dallas, TX",
+            "stop_geofence": "Dallas DC Dock",
+            "source_authority": "Configured stop/dwell evidence fields",
+            "projection_mode": "read_only",
+        }
+    ]
 
 
 def test_address_benchmark_attaches_configured_voice_and_email_evidence():
