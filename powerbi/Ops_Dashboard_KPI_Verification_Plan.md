@@ -26,7 +26,7 @@ Power BI remains read-only. FleetPulse projects verified analytics rows. Geotab,
 | KPI | Source authority | Endpoint/table | Verification gate |
 | --- | --- | --- | --- |
 | Total, active, idle, parked, offline vehicles | Geotab | `/api/dashboard/overview`, `/api/powerbi/overview`, `FleetPulseOverview` | Values match between dashboard and Power BI overview for one refresh window |
-| Trips today, stops today, miles today, average trip hours | Geotab | `/api/dashboard/overview`, `/api/powerbi/overview` | Non-empty live Geotab projection; `source_authority = Geotab`; no fabricated trip rows |
+| Trips today, Stops >60m, miles today, average trip hours | Geotab | `/api/dashboard/overview`, `/api/powerbi/overview` | Non-empty live Geotab projection; `source_authority = Geotab`; no fabricated trip rows; `Stops >60m` remains backed by `total_stops_today` |
 | 12-hour trip target attainment | Geotab + FleetPulse projection | `FleetPulseOverview` | Target numerator and denominator reconcile to trip session rows |
 | Vehicle map and last contact freshness | Geotab | `/api/powerbi/vehicles`, `FleetPulseVehicles` | Vehicle count equals scoped Geotab device count; stale/offline count exposed |
 | Safety score, high-risk vehicles, event mix | Geotab | `/api/powerbi/safety-scores`, `FleetPulseSafetyScores` | Period filter applied; score rows include event mix and read-only projection metadata |
@@ -71,7 +71,7 @@ Power BI remains read-only. FleetPulse projects verified analytics rows. Geotab,
 
 1. Fleet Operations
    - Audience: Fleet Ops Manager.
-   - Contents: vehicle status, trips, stops, miles, trip target attainment, terminal coverage, safety snapshot, stale/offline list.
+   - Contents: vehicle status, trips, Stops >60m, miles, trip target attainment, terminal coverage, safety snapshot, stale/offline list.
    - Certification rule: green only when Geotab endpoint row counts reconcile and every exported row has `projection_mode = read_only`.
 
 2. Track & Trace

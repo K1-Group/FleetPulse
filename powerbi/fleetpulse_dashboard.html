@@ -516,7 +516,7 @@
         ["Total Vehicles", wholeFmt.format(overview.total_vehicles || 0), "Fleet size in Geotab projection"],
         ["Active", wholeFmt.format(overview.active || 0), "Currently moving or active"],
         ["Offline", wholeFmt.format(overview.offline || 0), "No current contact signal"],
-        ["Trips Today", wholeFmt.format(overview.total_trips_today || 0), `${wholeFmt.format(overview.total_stops_today || 0)} stops tracked`],
+        ["Trips Today", wholeFmt.format(overview.total_trips_today || 0), `${wholeFmt.format(overview.total_stops_today || 0)} Stops >60m`],
         ["Trip Target", percentFmt.format(targetPct), `${wholeFmt.format(overview.trips_meeting_target || 0)} of ${wholeFmt.format(overview.total_trips_today || 0)} trips`],
         ["Miles Today", numberFmt.format(overview.total_distance_miles || 0), "Total trip distance"],
         ["Avg Trip Hours", numberFmt.format(overview.avg_trip_duration_hours || 0), "Target is 12.0 hours"],
@@ -672,4 +672,3 @@
   </script>
 </body>
 </html>
-

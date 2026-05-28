@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import sys
 from pathlib import Path
 
@@ -138,6 +139,91 @@ def test_fleet_overview_uses_cached_live_data_after_timeout(monkeypatch):
     assert first.total_vehicles == 2
     assert second.total_vehicles == 2
     assert second.source_mode == "cached_after_geotab_timeout"
+
+
+def test_fleet_overview_exposes_long_stop_location_details(monkeypatch):
+    class LongStopGeotabClient(FakeGeotabClient):
+        def get_trips(self, *_args, **_kwargs):
+            return [
+                {
+                    "device": {"id": "truck-active", "name": "Truck Active"},
+                    "driver": {"id": "driver-1", "name": "Driver One"},
+                    "startDateTime": "2026-05-10T18:00:00Z",
+                    "stopDateTime": "2026-05-10T19:00:00Z",
+                    "stopPoint": {"x": -97.2197, "y": 32.8012},
+                    "distance": 50,
+                },
+                {
+                    "device": {"id": "truck-active", "name": "Truck Active"},
+                    "driver": {"id": "driver-1", "name": "Driver One"},
+                    "startDateTime": "2026-05-10T20:30:00Z",
+                    "stopDateTime": "2026-05-10T21:30:00Z",
+                    "distance": 50,
+                },
+            ]
+
+    monkeypatch.setattr(fleet_service.GeotabClient, "get", lambda: LongStopGeotabClient())
+    monkeypatch.setenv("FLEETPULSE_STOP_THRESHOLD_MINUTES", "60")
+
+    overview = fleet_service.get_fleet_overview()
+
+    assert overview.total_stops_today == 1
+    assert overview.stop_threshold_minutes == 60
+    assert len(overview.long_stops_today) == 1
+    stop = overview.long_stops_today[0]
+    assert stop.driver_name == "Driver One"
+    assert stop.device_name == "Truck Active"
+    assert stop.duration_minutes == 90
+    assert stop.geofence == "Fort Worth Yard"
+    assert stop.address == "4200 Gravel Dr, Fort Worth, TX 76118"
+    assert stop.source_authority == "Geotab"
+    assert stop.projection_mode == "read_only"
+
+
+def test_fleet_overview_includes_current_not_moving_after_last_trip(monkeypatch):
+    class CurrentStoppedGeotabClient(FakeGeotabClient):
+        def get_device_status_info(self):
+            now = datetime.now(timezone.utc)
+            return [
+                {
+                    "device": {"id": "truck-active"},
+                    "dateTime": now.isoformat(),
+                    "isDriving": False,
+                    "speed": 0,
+                    "latitude": 32.8012,
+                    "longitude": -97.2197,
+                }
+            ]
+
+        def get_trips(self, *_args, **_kwargs):
+            now = datetime.now(timezone.utc)
+            return [
+                {
+                    "device": {"id": "truck-active", "name": "Truck Active"},
+                    "driver": {"id": "driver-1", "name": "Driver One"},
+                    "startDateTime": (now - timedelta(minutes=150)).isoformat(),
+                    "stopDateTime": (now - timedelta(minutes=90)).isoformat(),
+                    "stopPoint": {"x": -97.2197, "y": 32.8012},
+                    "distance": 50,
+                }
+            ]
+
+    monkeypatch.setattr(fleet_service.GeotabClient, "get", lambda: CurrentStoppedGeotabClient())
+    monkeypatch.setenv("FLEETPULSE_STOP_THRESHOLD_MINUTES", "60")
+
+    overview = fleet_service.get_fleet_overview()
+
+    assert overview.total_stops_today == 1
+    assert len(overview.long_stops_today) == 1
+    stop = overview.long_stops_today[0]
+    assert stop.driver_name == "Driver One"
+    assert stop.device_name == "Truck Active"
+    assert stop.duration_minutes >= 89
+    assert stop.resumed_at is None
+    assert stop.geofence == "Fort Worth Yard"
+    assert stop.address == "4200 Gravel Dr, Fort Worth, TX 76118"
+    assert stop.source_authority == "Geotab"
+    assert stop.projection_mode == "read_only"
 
 
 def test_vehicle_list_returns_empty_without_cache_after_timeout(monkeypatch):

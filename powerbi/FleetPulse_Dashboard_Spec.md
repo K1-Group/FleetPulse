@@ -29,7 +29,7 @@ Top KPI cards:
 - Parked Vehicles
 - Offline Vehicles
 - Trips Today
-- Stops Today
+- Stops >60m
 - Miles Today
 - Average Trip Duration Hours
 - Trips Meeting 12 Hour Target

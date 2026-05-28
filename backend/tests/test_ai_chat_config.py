@@ -298,6 +298,111 @@ def test_live_data_fallback_summarizes_fleet_status(monkeypatch):
     assert "13.3%" in response.response
 
 
+def test_live_data_fallback_includes_long_stop_location_details(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    overview = SimpleNamespace(
+        active=6,
+        avg_trip_distance_miles=125.0,
+        avg_trip_duration_hours=7.5,
+        idle=0,
+        long_stops_today=[
+            SimpleNamespace(
+                driver_key="driver-1",
+                driver_name="Driver One",
+                device_key="truck-active",
+                device_name="Truck Active",
+                duration_minutes=90,
+                location_label="Fort Worth Yard",
+                address="4200 Gravel Dr, Fort Worth, TX 76118",
+                geofence="Fort Worth Yard",
+                latitude=32.8012,
+                longitude=-97.2197,
+                stopped_at="2026-05-10T19:00:00Z",
+                resumed_at="2026-05-10T20:30:00Z",
+                source_authority="Geotab",
+                projection_mode="read_only",
+            )
+        ],
+        offline=3,
+        parked=36,
+        source_mode="live_filtered",
+        total_distance_miles=1000.0,
+        total_stops_today=1,
+        total_trips_today=8,
+        total_vehicles=45,
+        trip_definition="driver_session_with_stops_over_60_min",
+    )
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [])
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(
+            ai_chat.ChatMessage(message="Which drivers are stopped over 60 minutes?")
+        )
+    )
+
+    assert response.model == "live-data-fallback"
+    assert "Stops >60m: 1" in response.response
+    assert "Driver One / Truck Active at Fort Worth Yard for 90 min" in response.response
+    assert response.data[0]["address"] == "4200 Gravel Dr, Fort Worth, TX 76118"
+    assert response.data[0]["geofence"] == "Fort Worth Yard"
+    assert response.data[0]["source_authority"] == "Geotab"
+
+
+def test_live_data_fallback_marks_current_not_moving_stop(monkeypatch):
+    ai_chat = _load_ai_chat(monkeypatch)
+
+    overview = SimpleNamespace(
+        active=6,
+        avg_trip_distance_miles=125.0,
+        avg_trip_duration_hours=7.5,
+        idle=0,
+        long_stops_today=[
+            SimpleNamespace(
+                driver_key="driver-1",
+                driver_name="Driver One",
+                device_key="truck-active",
+                device_name="Truck Active",
+                duration_minutes=90,
+                location_label="Fort Worth Yard",
+                address="4200 Gravel Dr, Fort Worth, TX 76118",
+                geofence="Fort Worth Yard",
+                latitude=32.8012,
+                longitude=-97.2197,
+                stopped_at="2026-05-10T19:00:00Z",
+                resumed_at=None,
+                source_authority="Geotab",
+                projection_mode="read_only",
+            )
+        ],
+        offline=3,
+        parked=36,
+        source_mode="live_filtered",
+        total_distance_miles=1000.0,
+        total_stops_today=1,
+        total_trips_today=8,
+        total_vehicles=45,
+        trip_definition="driver_session_with_stops_over_60_min",
+    )
+
+    monkeypatch.setattr("services.fleet_service.get_fleet_overview", lambda: overview)
+    monkeypatch.setattr("services.alert_service.get_recent_alerts", lambda: [])
+    monkeypatch.setattr("services.safety_service.get_safety_scores", lambda: [])
+
+    response = asyncio.run(
+        ai_chat.process_chat_query(ai_chat.ChatMessage(message="Which drivers are not moving over 60 minutes?"))
+    )
+
+    assert response.model == "live-data-fallback"
+    assert "Driver One / Truck Active currently at Fort Worth Yard for 90 min" in response.response
+    assert response.data[0]["resumed_at"] == ""
+    assert response.data[0]["address"] == "4200 Gravel Dr, Fort Worth, TX 76118"
+    assert response.data[0]["geofence"] == "Fort Worth Yard"
+
+
 def test_live_data_fallback_explains_scored_lanes(monkeypatch):
     ai_chat = _load_ai_chat(monkeypatch)
 
