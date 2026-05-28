@@ -200,6 +200,30 @@ class DriverTripSessionTests(unittest.TestCase):
         self.assertEqual(stop["address"], "4200 Gravel Dr, Fort Worth, TX 76118")
         self.assertEqual(stop["location_source"], "configured_fleet_hub_geofence")
 
+    def test_current_stop_requires_geotab_motion_signal(self):
+        trips = [
+            {
+                "driver": {"id": "driver-open", "name": "Driver Open"},
+                "device": {"id": "truck-open", "name": "Truck Open"},
+                "start": _dt(6),
+                "stop": _dt(7),
+                "distance": 40,
+            },
+        ]
+        statuses = [{"device": {"id": "truck-open"}, "dateTime": _dt(8, 30)}]
+
+        metrics = summarize_driver_trip_sessions(
+            trips,
+            now=_dt(8, 30),
+            stop_threshold_minutes=60,
+            driver_logout_gap_minutes=600,
+            target_trip_hours=12,
+            current_statuses=statuses,
+        )
+
+        self.assertEqual(metrics["total_stops"], 0)
+        self.assertEqual(metrics["long_stops"], [])
+
     def test_long_logout_gap_starts_a_new_driver_trip(self):
         trips = [
             {

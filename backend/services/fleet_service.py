@@ -37,7 +37,7 @@ LOCATIONS = get_fleet_hubs()
 def _classify_status(device_status: dict[str, Any]) -> VehicleStatus:
     """Classify a vehicle as active/idle/parked based on DeviceStatusInfo."""
     speed = device_status.get("speed", 0) or 0
-    is_driving = device_status.get("isDriving", False)
+    is_driving = _bool_value(device_status.get("isDriving", False))
     if is_driving or speed > 3:
         return VehicleStatus.ACTIVE
     if speed > 0:
@@ -111,6 +111,14 @@ def _bool_env(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _csv_env(name: str, default: str) -> set[str]:
@@ -405,8 +413,14 @@ def _device_status_map(current_statuses: Any | None) -> dict[str, dict[str, Any]
 
 
 def _is_currently_not_moving(status: dict[str, Any]) -> bool:
-    speed = _float_value(status.get("speed")) or 0.0
-    return not bool(status.get("isDriving")) and speed <= 3
+    speed = _float_value(status.get("speed"))
+    has_driving_signal = "isDriving" in status
+    has_speed_signal = speed is not None
+    if not has_driving_signal and not has_speed_signal:
+        return False
+    if _bool_value(status.get("isDriving", False)):
+        return False
+    return speed is None or speed <= 3
 
 
 def _device_group_ids(device: dict[str, Any]) -> set[str]:
