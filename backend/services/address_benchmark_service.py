@@ -263,7 +263,7 @@ def _load_xcelerator_route_rows(
             "configured_xcelerator_source": configured_source,
             "effective_xcelerator_source": ROUTE_SOURCE_REVIEW_ORDERS_STATE,
             "message": "ReviewOrders state is too large for synchronous benchmark reads.",
-            "state_path": str(exc.path),
+            "state_path_configured": True,
             "state_size_bytes": exc.size,
             "max_sync_state_bytes": exc.max_size,
             "fallback_errors": fallback_errors,

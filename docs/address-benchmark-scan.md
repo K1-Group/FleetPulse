@@ -48,3 +48,4 @@ The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-del
 Useful optional columns include `source_system`, `service`, `platform`, `subject`, `title`, `summary`, `snippet`, `body_preview`, `transcript`, `transcription`, `source_uri`, `webLink`, `recording_link`, `message_url`, `sharepoint_url`, `teams_url`, `drive_url`, `occurred_at`, `received_at`, `sent_at`, `driver_id`, `order_id`, `load_id`, `pickup_address`, and `delivery_address`.
 Evidence links are rendered only when the configured URI is `http` or `https`; unsafe or local URI schemes are suppressed.
 The API reports whether an evidence path is configured but does not return the configured filesystem path.
+The API also suppresses the local ReviewOrders state path when the fallback state file is unavailable or too large.

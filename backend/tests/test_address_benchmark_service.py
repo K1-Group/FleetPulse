@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from configs.address_benchmark import AddressBenchmarkConfig
 import services.address_benchmark_service as service
 from services.address_benchmark_service import build_address_benchmark_dataset
+from services.xcelerator_review_orders_import_service import XceleratorReviewOrdersStateTooLarge
 
 
 def _now() -> datetime:
@@ -304,6 +305,28 @@ def test_address_benchmark_does_not_expose_configured_evidence_path(tmp_path):
     assert "path" not in dataset["evidence_sources"]
     assert "path" not in dataset["source_meta"]["evidence"]
     assert str(evidence_path) not in str(dataset)
+
+
+def test_address_benchmark_does_not_expose_review_orders_state_path(tmp_path):
+    state_path = tmp_path / "private-review-orders.json"
+
+    def raise_too_large():
+        raise XceleratorReviewOrdersStateTooLarge(state_path, 10_000_000, 5_000_000)
+
+    dataset = service.get_address_benchmark_dataset(
+        config=AddressBenchmarkConfig(
+            period_days=30,
+            xcelerator_source="review_orders_state",
+        ),
+        store=SimpleNamespace(rows=raise_too_large),
+        now=_now(),
+    )
+
+    xcelerator_meta = dataset["source_meta"]["xcelerator"]
+    assert xcelerator_meta["status"] == "unavailable"
+    assert xcelerator_meta["state_path_configured"] is True
+    assert "state_path" not in xcelerator_meta
+    assert str(state_path) not in str(dataset)
 
 
 def test_address_benchmark_can_read_configured_fabric_warehouse(monkeypatch):
