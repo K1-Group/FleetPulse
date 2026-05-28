@@ -395,7 +395,7 @@ export interface AddressBenchmarkResponse {
     projection_mode: 'read_only'
     message: string
     required_config: string[]
-    path: string | null
+    path_configured: boolean
     voice_recordings: number
     emails: number
   }

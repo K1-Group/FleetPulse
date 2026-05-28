@@ -262,6 +262,50 @@ def test_address_benchmark_accepts_connector_export_field_names():
     assert evidence["emails"]["matches"][0]["source_uri"] == "https://outlook.example.test/messages/501"
 
 
+def test_address_benchmark_does_not_expose_configured_evidence_path(tmp_path):
+    evidence_path = tmp_path / "private-evidence.json"
+    evidence_path.write_text(
+        """
+        [
+          {
+            "evidence_type": "email",
+            "order_id": "601",
+            "source_system": "Outlook",
+            "subject": "Receiver delay",
+            "message_url": "https://outlook.example.test/messages/601"
+          }
+        ]
+        """,
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "OrderTrackingID": "601",
+            "DriverNo": "D11",
+            "pickup_address": "Fort Worth",
+            "delivery_address": "Dallas",
+            "pickup_departure": "2026-05-26T08:00:00Z",
+            "delivery_arrival": "2026-05-26T09:00:00Z",
+        }
+    ]
+
+    dataset = service.get_address_benchmark_dataset(
+        config=AddressBenchmarkConfig(
+            period_days=30,
+            minimum_history_samples=1,
+            xcelerator_source="review_orders_state",
+            evidence_path=str(evidence_path),
+        ),
+        store=SimpleNamespace(rows=lambda: rows),
+        now=_now(),
+    )
+
+    assert dataset["evidence_sources"]["path_configured"] is True
+    assert "path" not in dataset["evidence_sources"]
+    assert "path" not in dataset["source_meta"]["evidence"]
+    assert str(evidence_path) not in str(dataset)
+
+
 def test_address_benchmark_can_read_configured_fabric_warehouse(monkeypatch):
     monkeypatch.setattr(
         service.FabricWarehouseSqlConfig,

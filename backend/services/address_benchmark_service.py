@@ -604,7 +604,7 @@ def _load_evidence_rows(config: AddressBenchmarkConfig) -> tuple[list[dict[str, 
             "source_authority": "Configured read-only voice/email evidence",
             "projection_mode": PROJECTION_MODE,
             "message": "Configured voice/email evidence path does not exist.",
-            "path": str(path),
+            "path_configured": True,
         }
 
     try:
@@ -613,7 +613,7 @@ def _load_evidence_rows(config: AddressBenchmarkConfig) -> tuple[list[dict[str, 
             "status": "healthy",
             "source_authority": "Configured read-only voice/email evidence",
             "projection_mode": PROJECTION_MODE,
-            "path": str(path),
+            "path_configured": True,
             "row_count": len(rows),
         }
     except Exception as exc:
@@ -622,7 +622,7 @@ def _load_evidence_rows(config: AddressBenchmarkConfig) -> tuple[list[dict[str, 
             "source_authority": "Configured read-only voice/email evidence",
             "projection_mode": PROJECTION_MODE,
             "message": f"Evidence feed unavailable: {type(exc).__name__}",
-            "path": str(path),
+            "path_configured": True,
         }
 
 
@@ -1134,7 +1134,7 @@ def _build_evidence_source_status(
         "projection_mode": PROJECTION_MODE,
         "message": meta.get("message", ""),
         "required_config": meta.get("required_config", []),
-        "path": meta.get("path") or config.evidence_path or None,
+        "path_configured": bool(meta.get("path_configured") or config.evidence_path),
         "voice_recordings": voice_count,
         "emails": email_count,
     }
