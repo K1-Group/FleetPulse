@@ -776,7 +776,7 @@ def _normalize_evidence(row: dict[str, Any]) -> dict[str, Any] | None:
     delivery_address = _first_text(row, ("delivery_address", "delivery", "destination", "delivery_location"))
     order_id = _first_text(row, ("order_id", "order_tracking_id", "OrderTrackingID", "ticket_id"))
     driver_id = _first_text(row, ("driver_id", "driver_no", "DriverNo", "Driver"))
-    if not any((order_id, pickup_address and delivery_address, driver_id)):
+    if not any((order_id, pickup_address and delivery_address)):
         return None
     summary = _truncate(
         _first_text(row, ("summary", "issue_summary", "notes", "body_preview", "transcript_summary")),
@@ -931,18 +931,13 @@ def _match_evidence(
 ) -> dict[str, Any]:
     order_ids = {str(row.get("order_id") or "").casefold() for row in route_rows if row.get("order_id")}
     pair_keys = {row.get("address_pair_key") for row in route_rows if row.get("address_pair_key")}
-    driver_ids = {str(row.get("driver_id") or "").casefold() for row in route_rows if row.get("driver_id")}
     matches = []
     for evidence in evidence_rows:
         evidence_order = str(evidence.get("order_id") or "").casefold()
-        evidence_driver = str(evidence.get("driver_id") or "").casefold()
         if evidence_order and evidence_order in order_ids:
             matches.append(evidence)
             continue
         if evidence.get("address_pair_key") in pair_keys:
-            matches.append(evidence)
-            continue
-        if evidence_driver and evidence_driver in driver_ids:
             matches.append(evidence)
 
     voice = [row for row in matches if row["evidence_type"] == "voice_recording"]

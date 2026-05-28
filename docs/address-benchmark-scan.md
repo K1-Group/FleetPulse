@@ -40,6 +40,6 @@ Optional voice/email evidence annotations:
 
 - `FLEETPULSE_ADDRESS_BENCHMARK_EVIDENCE_PATH`
 
-The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id`, pickup/delivery pair, or driver. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
+The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id` or pickup/delivery pair. Driver-only evidence is treated as too broad for address-pair proof and is not attached to a lane. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
 Useful optional columns include `source_system`, `subject`, `summary`, `transcript`, `source_uri`, `occurred_at`, `driver_id`, `order_id`, `pickup_address`, and `delivery_address`.
 Evidence links are rendered only when the configured URI is `http` or `https`; unsafe or local URI schemes are suppressed.

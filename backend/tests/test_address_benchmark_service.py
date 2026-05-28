@@ -155,6 +155,42 @@ def test_address_benchmark_reports_pending_evidence_config_without_fabricating_m
     ]
 
 
+def test_address_benchmark_does_not_attach_driver_only_evidence_to_address_pair():
+    config = AddressBenchmarkConfig(period_days=30, minimum_history_samples=1)
+    rows = [
+        {
+            "OrderTrackingID": "401",
+            "DriverNo": "D9",
+            "pickup_address": "Fort Worth",
+            "delivery_address": "Dallas",
+            "pickup_departure": "2026-05-25T08:00:00Z",
+            "delivery_arrival": "2026-05-25T09:00:00Z",
+        }
+    ]
+    evidence_rows = [
+        {
+            "evidence_type": "voice_recording",
+            "driver_id": "D9",
+            "source_system": "Grasshopper",
+            "summary": "Driver had a delay on an unrelated route.",
+            "transcript": "Unrelated route delay.",
+        }
+    ]
+
+    dataset = build_address_benchmark_dataset(
+        rows,
+        evidence_rows=evidence_rows,
+        config=config,
+        now=_now(),
+        source_meta={"evidence": {"status": "healthy", "row_count": 1}},
+    )
+
+    pair = dataset["address_pairs"][0]
+    assert pair["evidence"]["voice_recordings"]["status"] == "no_matching_evidence"
+    assert pair["evidence"]["voice_recordings"]["match_count"] == 0
+    assert dataset["evidence_sources"]["voice_recordings"] == 0
+
+
 def test_address_benchmark_can_read_configured_fabric_warehouse(monkeypatch):
     monkeypatch.setattr(
         service.FabricWarehouseSqlConfig,
