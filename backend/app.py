@@ -142,6 +142,7 @@ _ROUTERS = [
     ("operating_system", "/api/operating-system", ["K1 Operating System"]),
     ("data_connector", "/api/data-connector", ["Data Connector"]),
     ("driver_workforce", "/api/driver-workforce", ["Driver Workforce"]),
+    ("address_benchmarks", "/api/address-benchmarks", ["Address Benchmarks"]),
     ("hr_recruiting", "/api/hr-recruiting", ["HR Recruiting"]),
     ("hr_recruiting_powerbi", "/api/powerbi", ["Power BI"]),
     ("hr_call_analysis", "/api/hr-call-analysis", ["HR Call Analysis"]),

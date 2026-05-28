@@ -249,6 +249,161 @@ export interface DriverWorkforceResponse {
   validation: DriverWorkforceValidation
 }
 
+export interface AddressBenchmarkEvidenceMatch {
+  source_system: string | null
+  order_id: string | null
+  driver_id: string | null
+  occurred_at: string | null
+  subject: string | null
+  summary: string | null
+  transcript_available: boolean
+  source_uri: string | null
+}
+
+export interface AddressBenchmarkEvidenceBucket {
+  status: 'matched' | 'no_matching_evidence' | string
+  match_count: number
+  matches: AddressBenchmarkEvidenceMatch[]
+  message: string
+}
+
+export interface AddressBenchmarkDriver {
+  driver_id: string | null
+  driver_name: string
+  measured_orders: number
+  avg_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  variance_vs_pair_average_minutes: number | null
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  stop_events_over_threshold: number
+  coaching_direction: string
+}
+
+export interface AddressBenchmarkRecentOrder {
+  order_id: string
+  route_date: string
+  driver_id: string | null
+  driver_name: string | null
+  route_minutes: number | null
+  duration_source: string | null
+  stop_minutes: number | null
+  stop_address: string | null
+  stop_geofence: string | null
+  stop_over_threshold: boolean
+}
+
+export interface AddressBenchmarkLongStopEvidence {
+  order_id: string
+  route_date: string
+  driver_id: string | null
+  driver_name: string | null
+  stop_minutes: number | null
+  stop_address: string | null
+  stop_geofence: string | null
+  source_authority: string
+  projection_mode: 'read_only'
+}
+
+export interface AddressBenchmarkPair {
+  address_pair_key: string
+  pickup_address: string
+  delivery_address: string
+  orders: number
+  measured_orders: number
+  missing_actual_time_orders: number
+  avg_route_minutes: number | null
+  median_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  route_minutes_source: string
+  stop_threshold_minutes: number
+  stop_events_over_threshold: number
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  revenue_total: number
+  driver_pay_total: number
+  driver_benchmarks: AddressBenchmarkDriver[]
+  recent_orders: AddressBenchmarkRecentOrder[]
+  long_stop_evidence: AddressBenchmarkLongStopEvidence[]
+  evidence: {
+    voice_recordings: AddressBenchmarkEvidenceBucket
+    emails: AddressBenchmarkEvidenceBucket
+  }
+  source_authority: string
+  projection_mode: 'read_only'
+}
+
+export interface AddressBenchmarkDecisionCandidate {
+  driver_id: string | null
+  driver_name: string
+  pickup_address: string
+  delivery_address: string
+  variance_vs_pair_average_minutes: number
+  measured_orders: number
+  avg_route_minutes: number | null
+}
+
+export interface AddressBenchmarkDecisionSummary {
+  status: 'ready' | 'needs_history' | string
+  company_action: string
+  driver_action: string
+  evidence_action: string
+  recoverable_minutes_vs_pair_average: number
+  estimated_recoverable_cost_vs_pair_average: number | null
+  long_stop_events_over_threshold: number
+  evidence_matches: number
+  benchmark_driver_candidates: AddressBenchmarkDecisionCandidate[]
+  review_driver_candidates: AddressBenchmarkDecisionCandidate[]
+  guardrails: string[]
+}
+
+export interface AddressBenchmarkResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  period: {
+    start: string
+    end: string
+    days: number
+  }
+  thresholds: {
+    stop_threshold_minutes: number
+    minimum_history_samples: number
+    cost_per_truck_hour: number | null
+  }
+  filters: {
+    pickup: string | null
+    delivery: string | null
+  }
+  summary: {
+    address_pairs: number
+    route_rows_read: number
+    route_rows_in_period: number
+    invalid_route_rows: number
+    measured_orders: number
+    drivers_compared: number
+    opportunity_minutes_vs_pair_average: number
+    estimated_opportunity_cost_vs_pair_average: number | null
+    evidence_matches: number
+  }
+  address_pairs: AddressBenchmarkPair[]
+  evidence_sources: {
+    status: string
+    source_authority: string
+    projection_mode: 'read_only'
+    message: string
+    required_config: string[]
+    path_configured: boolean
+    voice_recordings: number
+    emails: number
+  }
+  source_meta: Record<string, any>
+  decision_summary: AddressBenchmarkDecisionSummary
+  recommendations: string[]
+}
+
 export interface SafetyBreakdown {
   speeding: number
   harsh_braking: number
