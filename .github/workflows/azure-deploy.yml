@@ -38,6 +38,9 @@ jobs:
             backend/tests/test_hr_call_analysis_service.py \
             backend/tests/test_hr_call_analysis_router.py \
             backend/tests/test_auth_session_router.py \
+            backend/tests/test_address_benchmark_service.py \
+            backend/tests/test_address_benchmarks_router.py \
+            backend/tests/test_ai_chat_config.py \
             backend/tests/test_fleet_hubs.py \
             backend/tests/test_app_monitor_startup.py
 
