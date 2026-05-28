@@ -96,6 +96,29 @@ jobs:
             return 1
           }
 
+          check_json_url() {
+            local name="$1"
+            local url="$2"
+            local status=""
+            local content_type=""
+
+            for attempt in $(seq 1 12); do
+              headers="$(mktemp)"
+              status=$(curl --connect-timeout 5 --max-time 20 -sS -D "$headers" -o /dev/null -w "%{http_code}" "$url" || true)
+              content_type=$(grep -i '^content-type:' "$headers" || true)
+              rm -f "$headers"
+              echo "$name attempt $attempt status: $status content-type: $content_type"
+              if [ "$status" = "200" ] && echo "$content_type" | grep -qi 'application/json'; then
+                return 0
+              fi
+              sleep 15
+            done
+
+            echo "$name smoke test failed after warm-up retries. Expected HTTP 200 with application/json. Last status: $status content-type: $content_type"
+            return 1
+          }
+
           check_url "Health check" "https://${{ env.APP_NAME }}.azurewebsites.net/api/health"
           check_url "AI config auth gate" "https://${{ env.APP_NAME }}.azurewebsites.net/api/ai/config" "401"
+          check_json_url "Address benchmark API" "https://${{ env.APP_NAME }}.azurewebsites.net/api/address-benchmarks?days=30"
           echo "Deployment successful!"
