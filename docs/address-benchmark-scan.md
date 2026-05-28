@@ -15,6 +15,7 @@ Optional query parameters:
 - Xcelerator ReviewOrders rows remain authoritative for pickup/delivery addresses, lifecycle timestamps, revenue, and driver pay.
 - FleetPulse computes pickup-to-delivery averages, driver variance, and opportunity minutes as a projection only.
 - Voice recordings and emails are attached only when a configured read-only evidence file exists. Missing recordings, transcripts, or emails are reported as missing or pending config; they are not fabricated.
+- The dashboard displays configured evidence subjects/summaries, source system, order match, transcript availability, and evidence links when those fields are present. FleetPulse does not transcribe recordings in this projection; transcripts must come from the configured evidence feed.
 - `stop_threshold_minutes` defaults to 60 and is applied only to configured stop/dwell evidence fields such as `stop_minutes`, `idle_minutes`, `dwell_minutes`, or `geotab_stop_minutes`.
 
 ## Required Configuration
@@ -39,3 +40,4 @@ Optional voice/email evidence annotations:
 - `FLEETPULSE_ADDRESS_BENCHMARK_EVIDENCE_PATH`
 
 The evidence file may be JSON, JSONL, CSV, TSV, pipe-delimited, or semicolon-delimited. Rows can match by `order_id`, pickup/delivery pair, or driver. Supported evidence types include `voice_recording`, `recording`, `call`, `voicemail`, `email`, and `outlook`.
+Useful optional columns include `source_system`, `subject`, `summary`, `transcript`, `source_uri`, `occurred_at`, `driver_id`, `order_id`, `pickup_address`, and `delivery_address`.

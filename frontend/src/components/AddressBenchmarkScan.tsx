@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Clock3, Mail, MapPin, Mic, Route, Search, Timer, Truck } from 'lucide-react'
-import type { AddressBenchmarkPair, AddressBenchmarkResponse } from '../types/fleet'
+import { AlertTriangle, Clock3, ExternalLink, Mail, MapPin, Mic, Route, Search, Timer, Truck } from 'lucide-react'
+import type { AddressBenchmarkEvidenceBucket, AddressBenchmarkPair, AddressBenchmarkResponse } from '../types/fleet'
 
 const DEFAULT_DAYS = 180
 
@@ -67,6 +67,74 @@ function ScanMetric({
         {value}
       </div>
       <div className="mt-1 truncate text-[11px] text-gray-500 light:text-gray-500" title={hint}>{hint}</div>
+    </div>
+  )
+}
+
+function EvidenceList({
+  icon,
+  label,
+  bucket,
+}: {
+  icon: 'voice' | 'email'
+  label: string
+  bucket: AddressBenchmarkEvidenceBucket
+}) {
+  const Icon = icon === 'voice' ? Mic : Mail
+  const matches = bucket.matches.slice(0, 2)
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/15 p-3 light:border-gray-200 light:bg-gray-50">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-white light:text-gray-950">
+          <Icon className="h-4 w-4 shrink-0 text-emerald-300 light:text-emerald-700" aria-hidden="true" />
+          <span className="truncate">{label}</span>
+        </div>
+        <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${statusTone(bucket.status)}`}>
+          {bucket.match_count}
+        </span>
+      </div>
+
+      {matches.length ? (
+        <div className="mt-3 space-y-2">
+          {matches.map((match, index) => {
+            const headline = match.subject || match.summary || match.source_system || `${label} ${index + 1}`
+            return (
+              <div key={`${match.source_uri || match.order_id || headline}-${index}`} className="rounded-md border border-white/10 bg-white/[0.035] p-2 text-xs light:border-gray-200 light:bg-white">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold text-gray-200 light:text-gray-800" title={headline}>
+                      {headline}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-500">
+                      {match.source_system && <span>{match.source_system}</span>}
+                      {match.order_id && <span>Order {match.order_id}</span>}
+                      {match.transcript_available && <span>Transcript available</span>}
+                    </div>
+                  </div>
+                  {match.source_uri && (
+                    <a
+                      href={match.source_uri}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-gray-400 transition hover:border-sky-300/40 hover:text-sky-200 light:border-gray-200 light:text-gray-500 light:hover:text-sky-700"
+                      title="Open evidence"
+                      aria-label="Open evidence"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+                {match.summary && match.subject && (
+                  <div className="mt-2 line-clamp-2 text-gray-500 light:text-gray-600">{match.summary}</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="mt-3 text-xs leading-5 text-gray-500">{bucket.message}</div>
+      )}
     </div>
   )
 }
@@ -142,6 +210,11 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <EvidenceList icon="voice" label="Voice evidence" bucket={voice} />
+        <EvidenceList icon="email" label="Email evidence" bucket={emails} />
       </div>
     </article>
   )
