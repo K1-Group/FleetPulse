@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign, Truck, type LucideIcon } from 'lucide-react'
 import Dashboard from './components/Dashboard'
@@ -30,6 +30,7 @@ import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
 import DriverWorkforce from './components/DriverWorkforce'
 import UserLoginStatus from './components/UserLoginStatus'
+import AccessPreviewCard from './components/AccessPreviewCard'
 import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useFuelTrends, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
 
 type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
@@ -82,10 +83,12 @@ function getInitialTab(): AppTab {
 
 function FleetNav({
   activeTab,
+  items = navigationItems,
   onSelect,
   variant,
 }: {
   activeTab: AppTab
+  items?: NavItem[]
   onSelect: (tab: AppTab) => void
   variant: 'sidebar' | 'mobile'
 }) {
@@ -96,7 +99,7 @@ function FleetNav({
       aria-label="FleetPulse sections"
       className={sidebar ? 'space-y-1.5' : 'flex min-w-max gap-1.5'}
     >
-      {navigationItems.map(({ tab, label, shortLabel, Icon }) => {
+      {items.map(({ tab, label, shortLabel, Icon }) => {
         const active = activeTab === tab
         return (
           <button
@@ -130,6 +133,7 @@ function FleetNav({
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab)
+  const [accessPreview, setAccessPreview] = useState<{ id: string; label: string; tabs: string[] } | null>(null)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
   
   const dashboardActive = activeTab === 'dashboard'
@@ -179,6 +183,19 @@ export default function App() {
     setActiveTab(tab)
     window.history.replaceState(null, '', `#${tab}`)
   }, [])
+
+  const visibleNavigationItems = useMemo(() => {
+    if (!accessPreview) return navigationItems
+    const previewTabs = new Set(accessPreview.tabs)
+    return navigationItems.filter(item => previewTabs.has(item.tab))
+  }, [accessPreview])
+
+  const applyAccessPreview = useCallback((preview: { id: string; label: string; tabs: string[] }) => {
+    setAccessPreview(preview)
+    if (!preview.tabs.includes(activeTab)) {
+      selectTab('dashboard')
+    }
+  }, [activeTab, selectTab])
 
   const pageVariants = {
     initial: { opacity: 0, y: 20 },
@@ -235,14 +252,14 @@ export default function App() {
           </div>
 
           <div className="-mx-4 mt-3 overflow-x-auto border-t border-gray-900 px-4 pt-3 light:border-gray-200 sm:-mx-6 sm:px-6 lg:hidden">
-            <FleetNav activeTab={activeTab} onSelect={selectTab} variant="mobile" />
+            <FleetNav activeTab={activeTab} items={visibleNavigationItems} onSelect={selectTab} variant="mobile" />
           </div>
         </div>
       </motion.header>
 
       <div className="mx-auto flex max-w-[1800px]">
         <aside className="sticky top-[73px] hidden h-[calc(100vh-73px)] w-64 shrink-0 border-r border-gray-900/80 px-4 py-5 light:border-gray-200 lg:block">
-          <FleetNav activeTab={activeTab} onSelect={selectTab} variant="sidebar" />
+          <FleetNav activeTab={activeTab} items={visibleNavigationItems} onSelect={selectTab} variant="sidebar" />
           <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900/40 p-3 light:border-gray-200 light:bg-white">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">Source Status</p>
             <div className="mt-3 space-y-2 text-xs text-gray-400 light:text-gray-600">
@@ -310,6 +327,17 @@ export default function App() {
             validation={dashboardValidation.data}
           />
         </section>
+
+        <AccessPreviewCard
+          activePreviewId={accessPreview?.id}
+          activeTab={activeTab}
+          navItems={navigationItems}
+          onApplyPreview={applyAccessPreview}
+          onClearPreview={() => setAccessPreview(null)}
+          onSelectTab={tab => selectTab(tab as AppTab)}
+          session={authSession.data}
+          loading={authSession.loading}
+        />
 
         <section>
           <DriverWorkforce
