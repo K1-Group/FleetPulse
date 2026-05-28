@@ -784,12 +784,13 @@ function ExecutiveKpiCard({ card, index }: { card: KpiCard; index: number }) {
   return (
     <motion.article
       aria-label={`${card.label}: ${formattedValue(card)} ${card.unit || ''}. ${card.stateLabel || statusLabels[card.status]}`}
-      className="group relative min-h-[116px] overflow-hidden rounded-[18px] border border-white/10 bg-gray-900/70 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm transition duration-200 hover:-translate-y-0.5 hover:border-white/20 hover:bg-gray-900/80 light:border-gray-200 light:bg-white light:shadow-sm light:hover:border-gray-300"
+      className="group relative min-h-[124px] overflow-hidden rounded-lg border border-white/10 bg-[linear-gradient(145deg,rgba(15,23,42,0.94),rgba(17,24,39,0.74))] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_14px_34px_rgba(2,6,23,0.22)] backdrop-blur-sm transition duration-200 hover:-translate-y-0.5 hover:border-white/20 light:border-gray-200 light:bg-white light:shadow-sm light:hover:border-gray-300"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.015, duration: 0.25 }}
     >
-      <div className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r ${accentStyles[tone]}`} />
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${accentStyles[tone]}`} />
+      <div className="absolute right-[-42px] top-[-42px] h-24 w-24 rounded-full bg-white/[0.035] blur-2xl light:bg-gray-200/50" />
       <div className="flex items-start justify-between gap-3">
         <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${toneStyles[tone]}`}>
           <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
@@ -824,6 +825,109 @@ function ExecutiveKpiCard({ card, index }: { card: KpiCard; index: number }) {
         {footerText(card)}
       </div>
     </motion.article>
+  )
+}
+
+function numericCardValue(card: KpiCard | undefined): number | null {
+  if (!card || typeof card.value !== 'number' || !Number.isFinite(card.value)) return null
+  return card.value
+}
+
+function displayCardValue(card: KpiCard | undefined) {
+  if (!card) return '—'
+  const unit = card.unit && card.status !== 'pending' && card.status !== 'error' ? card.unit : ''
+  return `${formattedValue(card)}${unit}`
+}
+
+function DashboardCommandSummary({ cards }: { cards: KpiCard[] }) {
+  const totalFleet = cards.find(card => card.id === 'total-fleet')
+  const active = cards.find(card => card.id === 'active')
+  const idle = cards.find(card => card.id === 'idle')
+  const parked = cards.find(card => card.id === 'parked')
+  const utilization = cards.find(card => card.id === 'utilization')
+  const safety = cards.find(card => card.id === 'safety-percent')
+  const verifiedCount = cards.filter(card => card.status === 'verified').length
+  const attentionCount = cards.filter(card => card.status === 'error' || card.status === 'stale' || card.status === 'pending').length
+  const fleetTotal = numericCardValue(totalFleet) || 0
+  const activeCount = numericCardValue(active) || 0
+  const activePct = fleetTotal > 0 ? Math.round((activeCount / fleetTotal) * 100) : null
+  const stateBars = [
+    { label: 'Active', card: active, color: 'bg-emerald-400' },
+    { label: 'Idle', card: idle, color: 'bg-amber-400' },
+    { label: 'Parked', card: parked, color: 'bg-slate-400' },
+  ].map(item => {
+    const value = numericCardValue(item.card) || 0
+    return {
+      ...item,
+      value,
+      width: fleetTotal > 0 ? Math.max(4, Math.round((value / fleetTotal) * 100)) : 0,
+    }
+  })
+
+  return (
+    <motion.section
+      aria-label="Fleet command summary"
+      className="relative overflow-hidden rounded-lg border border-white/10 bg-[linear-gradient(135deg,rgba(8,13,24,0.98),rgba(17,24,39,0.92)_46%,rgba(12,38,45,0.76))] p-5 shadow-[0_22px_60px_rgba(2,6,23,0.28)] light:border-gray-200 light:bg-white light:shadow-sm"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-sky-400/70 via-emerald-300/60 to-amber-300/60" />
+      <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-lg font-semibold text-white light:text-gray-950">Fleet Command View</h2>
+            <span className="rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-200 light:text-emerald-700">
+              Read-only projection
+            </span>
+          </div>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-400 light:text-gray-600">
+            Live operational posture from Geotab, Xcelerator-linked service metrics, and approved finance feeds. FleetPulse displays the consolidated view without becoming the source of truth.
+          </p>
+
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: 'Fleet assets', value: displayCardValue(totalFleet), hint: totalFleet?.stateLabel || statusLabels[totalFleet?.status || 'no-data'] },
+              { label: 'Active share', value: activePct === null ? '—' : `${activePct}%`, hint: `${displayCardValue(active)} active` },
+              { label: 'Utilization', value: displayCardValue(utilization), hint: utilization?.delta || utilization?.stateLabel || 'Previous 7 days' },
+              { label: 'Safety', value: displayCardValue(safety), hint: safety?.delta || safety?.stateLabel || 'Geotab score' },
+            ].map(item => (
+              <div key={item.label} className="min-h-[88px] rounded-lg border border-white/10 bg-white/[0.045] p-3 light:border-gray-200 light:bg-gray-50">
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-500 light:text-gray-500">{item.label}</div>
+                <div className="mt-2 text-2xl font-semibold text-white light:text-gray-950" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>{item.value}</div>
+                <div className="mt-1 truncate text-[11px] text-gray-500 light:text-gray-500" title={String(item.hint)}>{item.hint}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-black/20 p-4 light:border-gray-200 light:bg-white">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-white light:text-gray-950">Operational Mix</div>
+              <div className="mt-1 text-xs text-gray-500 light:text-gray-500">{verifiedCount}/{cards.length} metrics verified · {attentionCount} need attention</div>
+            </div>
+            <div className="text-right text-2xl font-semibold text-white light:text-gray-950" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
+              {fleetTotal || '—'}
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {stateBars.map(item => (
+              <div key={item.label}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="text-gray-400 light:text-gray-600">{item.label}</span>
+                  <span className="font-medium text-gray-200 light:text-gray-700">{item.value.toLocaleString()}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-white/10 light:bg-gray-100">
+                  <div className={`h-full rounded-full ${item.color}`} style={{ width: `${item.width}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </motion.section>
   )
 }
 
@@ -894,19 +998,30 @@ export default function Dashboard({
 
   return (
     <div className="space-y-5">
+      <DashboardCommandSummary cards={cards} />
+
       {KPI_GROUPS.map(group => {
         const groupCards = cards.filter(card => card.group === group)
         const verifiedCount = groupCards.filter(card => card.status === 'verified').length
+        const completion = groupCards.length ? Math.round((verifiedCount / groupCards.length) * 100) : 0
 
         return (
-          <section key={group} aria-label={`${group} KPI group`} className="space-y-2.5">
+          <section key={group} aria-label={`${group} KPI group`} className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 light:text-gray-500">
-                {group}
-              </h2>
-              <span className="text-[11px] text-gray-600 light:text-gray-500" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
-                {verifiedCount}/{groupCards.length} verified
-              </span>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="h-2 w-2 rounded-full bg-sky-400" />
+                <h2 className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 light:text-gray-500">
+                  {group}
+                </h2>
+              </div>
+              <div className="flex min-w-[150px] items-center justify-end gap-2">
+                <div className="hidden h-1.5 w-20 overflow-hidden rounded-full bg-white/10 light:bg-gray-100 sm:block">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${completion}%` }} />
+                </div>
+                <span className="text-[11px] text-gray-600 light:text-gray-500" style={{ fontVariantNumeric: 'tabular-nums lining-nums' }}>
+                  {verifiedCount}/{groupCards.length} verified
+                </span>
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
               {groupCards.map((card, index) => (

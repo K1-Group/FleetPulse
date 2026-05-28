@@ -326,9 +326,10 @@ export default function App() {
         {/* Fleet Analytics */}
         <section>
           <FleetAnalytics
-            loading={overview.loading || fuelTrends.loading || alerts.loading}
+            loading={overview.loading || fuelTrends.loading || alerts.loading || vehicles.loading}
             overview={overview.data}
             locations={locations.data}
+            vehicles={vehicles.data}
             alerts={alerts.data}
             fuelTrends={fuelTrends.data}
           />
