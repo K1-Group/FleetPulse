@@ -90,6 +90,7 @@ def test_address_benchmark_attaches_configured_voice_and_email_evidence():
             "source_system": "Grasshopper",
             "summary": "Receiver requested a later dock door.",
             "transcript": "Receiver requested a later dock door.",
+            "recording_url": "https://voice.example.test/recordings/201",
         },
         {
             "evidence_type": "email",
@@ -98,6 +99,7 @@ def test_address_benchmark_attaches_configured_voice_and_email_evidence():
             "source_system": "Outlook",
             "subject": "Dock delay",
             "summary": "Email confirms the receiver delay.",
+            "message_url": "javascript:alert(1)",
         },
     ]
 
@@ -113,8 +115,10 @@ def test_address_benchmark_attaches_configured_voice_and_email_evidence():
     assert evidence["voice_recordings"]["status"] == "matched"
     assert evidence["voice_recordings"]["match_count"] == 1
     assert evidence["voice_recordings"]["matches"][0]["transcript_available"] is True
+    assert evidence["voice_recordings"]["matches"][0]["source_uri"] == "https://voice.example.test/recordings/201"
     assert evidence["emails"]["status"] == "matched"
     assert evidence["emails"]["match_count"] == 1
+    assert evidence["emails"]["matches"][0]["source_uri"] is None
     assert dataset["evidence_sources"]["status"] == "healthy"
 
 

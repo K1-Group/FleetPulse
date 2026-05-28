@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 from statistics import median
 from typing import Any
+from urllib.parse import urlparse
 
 from configs.address_benchmark import AddressBenchmarkConfig
 from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig, execute_sql_query
@@ -796,7 +797,9 @@ def _normalize_evidence(row: dict[str, Any]) -> dict[str, Any] | None:
         "subject": _truncate(_first_text(row, ("subject", "title", "filename")), 140),
         "summary": summary,
         "transcript_available": bool(transcript),
-        "source_uri": _first_text(row, ("source_uri", "url", "web_url", "recording_url", "message_url")),
+        "source_uri": _safe_source_uri(
+            _first_text(row, ("source_uri", "url", "web_url", "recording_url", "message_url"))
+        ),
         "projection_mode": PROJECTION_MODE,
     }
 
@@ -1179,6 +1182,16 @@ def _truncate(value: str | None, limit: int) -> str | None:
     if len(text) <= limit:
         return text
     return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def _safe_source_uri(value: str | None) -> str | None:
+    uri = str(value or "").strip()
+    if not uri:
+        return None
+    parsed = urlparse(uri)
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return uri
 
 
 def _money_from_minutes(minutes: float | None, hourly_rate: float | None) -> float | None:
