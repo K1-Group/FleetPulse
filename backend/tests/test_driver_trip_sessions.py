@@ -158,6 +158,48 @@ class DriverTripSessionTests(unittest.TestCase):
         self.assertEqual(stop["address"], "4200 Gravel Dr, Fort Worth, TX 76118")
         self.assertEqual(stop["location_source"], "configured_fleet_hub_geofence")
 
+    def test_current_not_moving_after_last_trip_is_reported_as_open_long_stop(self):
+        trips = [
+            {
+                "driver": {"id": "driver-open", "name": "Driver Open"},
+                "device": {"id": "truck-open", "name": "Truck Open"},
+                "start": _dt(6),
+                "stop": _dt(7),
+                "stopPoint": {"x": -97.2197, "y": 32.8012},
+                "distance": 40,
+            },
+        ]
+        statuses = [
+            {
+                "device": {"id": "truck-open"},
+                "dateTime": _dt(8, 30),
+                "isDriving": False,
+                "speed": 0,
+                "latitude": 32.8012,
+                "longitude": -97.2197,
+            }
+        ]
+
+        metrics = summarize_driver_trip_sessions(
+            trips,
+            now=_dt(8, 30),
+            stop_threshold_minutes=60,
+            driver_logout_gap_minutes=600,
+            target_trip_hours=12,
+            current_statuses=statuses,
+        )
+
+        self.assertEqual(metrics["total_stops"], 1)
+        self.assertEqual(len(metrics["long_stops"]), 1)
+        stop = metrics["long_stops"][0]
+        self.assertEqual(stop["driver_name"], "Driver Open")
+        self.assertEqual(stop["device_name"], "Truck Open")
+        self.assertEqual(stop["duration_minutes"], 90)
+        self.assertIsNone(stop["resumed_at"])
+        self.assertEqual(stop["geofence"], "Fort Worth Yard")
+        self.assertEqual(stop["address"], "4200 Gravel Dr, Fort Worth, TX 76118")
+        self.assertEqual(stop["location_source"], "configured_fleet_hub_geofence")
+
     def test_long_logout_gap_starts_a_new_driver_trip(self):
         trips = [
             {
