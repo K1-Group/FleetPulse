@@ -189,6 +189,12 @@ def build_address_benchmark_dataset(
         "address_pairs": address_pairs,
         "evidence_sources": _build_evidence_source_status(source_meta, normalized_evidence, config),
         "source_meta": source_meta or {},
+        "decision_summary": _build_decision_summary(
+            address_pairs,
+            opportunity_minutes=opportunity_minutes,
+            evidence_matches=evidence_matches,
+            config=config,
+        ),
         "recommendations": _build_recommendations(address_pairs, config),
     }
 
@@ -1101,6 +1107,72 @@ def _build_recommendations(
             "Configure FLEETPULSE_ADDRESS_BENCHMARK_COST_PER_TRUCK_HOUR to convert recoverable minutes into a company cost estimate."
         )
     return recommendations
+
+
+def _build_decision_summary(
+    address_pairs: list[dict[str, Any]],
+    *,
+    opportunity_minutes: float,
+    evidence_matches: int,
+    config: AddressBenchmarkConfig,
+) -> dict[str, Any]:
+    long_stop_count = sum(int(pair.get("stop_events_over_threshold") or 0) for pair in address_pairs)
+    incentive_candidates: list[dict[str, Any]] = []
+    review_candidates: list[dict[str, Any]] = []
+
+    for pair in address_pairs:
+        for driver in pair.get("driver_benchmarks", []):
+            variance = driver.get("variance_vs_pair_average_minutes")
+            if variance is None:
+                continue
+            candidate = {
+                "driver_id": driver.get("driver_id"),
+                "driver_name": driver.get("driver_name"),
+                "pickup_address": pair.get("pickup_address"),
+                "delivery_address": pair.get("delivery_address"),
+                "variance_vs_pair_average_minutes": variance,
+                "measured_orders": driver.get("measured_orders"),
+                "avg_route_minutes": driver.get("avg_route_minutes"),
+            }
+            if float(variance) <= -5:
+                incentive_candidates.append(candidate)
+            elif float(variance) >= 15:
+                review_candidates.append(candidate)
+
+    incentive_candidates.sort(key=lambda item: float(item["variance_vs_pair_average_minutes"]))
+    review_candidates.sort(key=lambda item: float(item["variance_vs_pair_average_minutes"]), reverse=True)
+    status = "ready" if address_pairs else "needs_history"
+    return {
+        "status": status,
+        "company_action": (
+            "Use lane averages to target recoverable minutes while keeping Xcelerator as the operational source of truth."
+            if address_pairs
+            else "Connect historical Xcelerator ReviewOrders rows before pricing recoverable route time."
+        ),
+        "driver_action": (
+            "Verify load, dwell, and dispatch comparability before coaching or incentive decisions."
+            if address_pairs
+            else "No driver comparison is available until historical pickup/delivery rows are loaded."
+        ),
+        "evidence_action": (
+            f"Review {long_stop_count} configured stops over {config.stop_threshold_minutes} minutes and {evidence_matches} voice/email matches before changing expectations."
+            if address_pairs
+            else "Configure read-only voice/email evidence before using prior issues as proof."
+        ),
+        "recoverable_minutes_vs_pair_average": opportunity_minutes,
+        "estimated_recoverable_cost_vs_pair_average": _money_from_minutes(
+            opportunity_minutes,
+            config.cost_per_truck_hour,
+        ),
+        "long_stop_events_over_threshold": long_stop_count,
+        "evidence_matches": evidence_matches,
+        "benchmark_driver_candidates": incentive_candidates[:5],
+        "review_driver_candidates": review_candidates[:5],
+        "guardrails": [
+            "Do not write benchmark outcomes back to Xcelerator, Geotab, payroll, or dispatch records from FleetPulse.",
+            "Use configured voice/email evidence as review context only; missing evidence must stay missing.",
+        ],
+    }
 
 
 def _driver_direction(variance: float | None) -> str:

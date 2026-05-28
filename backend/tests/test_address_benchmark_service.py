@@ -71,6 +71,13 @@ def test_address_benchmark_compares_drivers_by_pickup_delivery_pair():
     assert driver_two["avg_route_minutes"] == 90.0
     assert driver_two["variance_vs_pair_average_minutes"] == 13.3
     assert driver_two["stop_events_over_threshold"] == 1
+    decision_summary = dataset["decision_summary"]
+    assert decision_summary["status"] == "ready"
+    assert decision_summary["recoverable_minutes_vs_pair_average"] == 16.6
+    assert decision_summary["estimated_recoverable_cost_vs_pair_average"] == 24.9
+    assert decision_summary["long_stop_events_over_threshold"] == 1
+    assert decision_summary["benchmark_driver_candidates"][0]["driver_id"] == "D1"
+    assert decision_summary["review_driver_candidates"] == []
     assert pair["long_stop_evidence"] == [
         {
             "order_id": "102",

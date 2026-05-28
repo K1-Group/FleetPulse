@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Clock3, ExternalLink, Mail, MapPin, Mic, Route, Search, Timer, Truck } from 'lucide-react'
-import type { AddressBenchmarkEvidenceBucket, AddressBenchmarkPair, AddressBenchmarkResponse } from '../types/fleet'
+import type { AddressBenchmarkDecisionCandidate, AddressBenchmarkEvidenceBucket, AddressBenchmarkPair, AddressBenchmarkResponse } from '../types/fleet'
 
 const DEFAULT_DAYS = 180
 
@@ -157,6 +157,77 @@ function DriverActionNotes({ pair }: { pair: AddressBenchmarkPair }) {
           <div className="mt-2 leading-5 text-gray-500 light:text-gray-600">{driver.coaching_direction}</div>
         </div>
       ))}
+    </div>
+  )
+}
+
+function CandidateLine({ candidate }: { candidate: AddressBenchmarkDecisionCandidate }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/15 p-2 text-xs light:border-gray-200 light:bg-white">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-semibold text-gray-200 light:text-gray-800">{candidate.driver_name}</span>
+        <span className="shrink-0 text-gray-500">{formatNumber(candidate.variance_vs_pair_average_minutes, 'm')} vs avg</span>
+      </div>
+      <div className="mt-1 truncate text-gray-500" title={`${candidate.pickup_address} to ${candidate.delivery_address}`}>
+        {candidate.pickup_address} to {candidate.delivery_address}
+      </div>
+    </div>
+  )
+}
+
+function DecisionSummary({ data }: { data: AddressBenchmarkResponse }) {
+  const summary = data.decision_summary
+  if (!summary) return null
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-3">
+      <div className="rounded-lg border border-white/10 bg-black/15 p-3 light:border-gray-200 light:bg-gray-50">
+        <div className="flex items-center gap-2 text-sm font-semibold text-white light:text-gray-950">
+          <Truck className="h-4 w-4 text-sky-300 light:text-sky-700" aria-hidden="true" />
+          Company action
+        </div>
+        <div className="mt-2 text-xs leading-5 text-gray-500 light:text-gray-600">{summary.company_action}</div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+          <span className="rounded-md border border-sky-400/20 bg-sky-400/10 px-2 py-1 text-sky-200 light:text-sky-700">
+            {formatNumber(summary.recoverable_minutes_vs_pair_average, 'm')} recoverable
+          </span>
+          <span className="rounded-md border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-emerald-200 light:text-emerald-700">
+            {formatMoney(summary.estimated_recoverable_cost_vs_pair_average)}
+          </span>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-black/15 p-3 light:border-gray-200 light:bg-gray-50">
+        <div className="flex items-center gap-2 text-sm font-semibold text-white light:text-gray-950">
+          <Timer className="h-4 w-4 text-emerald-300 light:text-emerald-700" aria-hidden="true" />
+          Driver action
+        </div>
+        <div className="mt-2 text-xs leading-5 text-gray-500 light:text-gray-600">{summary.driver_action}</div>
+        <div className="mt-3 space-y-2">
+          {summary.benchmark_driver_candidates.slice(0, 2).map(candidate => (
+            <CandidateLine key={`benchmark-${candidate.driver_id || candidate.driver_name}-${candidate.pickup_address}-${candidate.delivery_address}`} candidate={candidate} />
+          ))}
+          {!summary.benchmark_driver_candidates.length && (
+            <div className="text-xs text-gray-500">No benchmark driver candidate yet.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-black/15 p-3 light:border-gray-200 light:bg-gray-50">
+        <div className="flex items-center gap-2 text-sm font-semibold text-white light:text-gray-950">
+          <AlertTriangle className="h-4 w-4 text-amber-300 light:text-amber-700" aria-hidden="true" />
+          Evidence action
+        </div>
+        <div className="mt-2 text-xs leading-5 text-gray-500 light:text-gray-600">{summary.evidence_action}</div>
+        <div className="mt-3 space-y-2">
+          {summary.review_driver_candidates.slice(0, 2).map(candidate => (
+            <CandidateLine key={`review-${candidate.driver_id || candidate.driver_name}-${candidate.pickup_address}-${candidate.delivery_address}`} candidate={candidate} />
+          ))}
+          {!summary.review_driver_candidates.length && (
+            <div className="text-xs text-gray-500">No driver review candidate yet.</div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -434,6 +505,8 @@ export default function AddressBenchmarkScan() {
               </div>
             </div>
           </div>
+
+          <DecisionSummary data={data} />
 
           {data.address_pairs.length ? (
             <div className="space-y-3">

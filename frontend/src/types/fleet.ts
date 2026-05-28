@@ -335,6 +335,30 @@ export interface AddressBenchmarkPair {
   projection_mode: 'read_only'
 }
 
+export interface AddressBenchmarkDecisionCandidate {
+  driver_id: string | null
+  driver_name: string
+  pickup_address: string
+  delivery_address: string
+  variance_vs_pair_average_minutes: number
+  measured_orders: number
+  avg_route_minutes: number | null
+}
+
+export interface AddressBenchmarkDecisionSummary {
+  status: 'ready' | 'needs_history' | string
+  company_action: string
+  driver_action: string
+  evidence_action: string
+  recoverable_minutes_vs_pair_average: number
+  estimated_recoverable_cost_vs_pair_average: number | null
+  long_stop_events_over_threshold: number
+  evidence_matches: number
+  benchmark_driver_candidates: AddressBenchmarkDecisionCandidate[]
+  review_driver_candidates: AddressBenchmarkDecisionCandidate[]
+  guardrails: string[]
+}
+
 export interface AddressBenchmarkResponse {
   generated_at: string
   projection_mode: 'read_only'
@@ -376,6 +400,7 @@ export interface AddressBenchmarkResponse {
     emails: number
   }
   source_meta: Record<string, any>
+  decision_summary: AddressBenchmarkDecisionSummary
   recommendations: string[]
 }
 
