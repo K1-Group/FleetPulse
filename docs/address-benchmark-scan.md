@@ -16,6 +16,7 @@ Optional query parameters:
 - FleetPulse computes pickup-to-delivery averages, driver variance, and opportunity minutes as a projection only.
 - Voice recordings and emails are attached only when a configured read-only evidence file exists. Missing recordings, transcripts, or emails are reported as missing or pending config; they are not fabricated.
 - The dashboard displays configured evidence subjects/summaries, source system, order match, transcript availability, and evidence links when those fields are present. FleetPulse does not transcribe recordings in this projection; transcripts must come from the configured evidence feed.
+- Driver comparison rows include visible action guidance so benchmark drivers, drivers above the lane average, and evidence-driven dwell reviews can be handled before changing coaching, incentives, or route expectations.
 - `stop_threshold_minutes` defaults to 60 and is applied only to configured stop/dwell evidence fields such as `stop_minutes`, `idle_minutes`, `dwell_minutes`, or `geotab_stop_minutes`.
 
 ## Required Configuration

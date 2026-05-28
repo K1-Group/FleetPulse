@@ -139,6 +139,28 @@ function EvidenceList({
   )
 }
 
+function DriverActionNotes({ pair }: { pair: AddressBenchmarkPair }) {
+  const drivers = pair.driver_benchmarks
+    .filter(driver => driver.coaching_direction)
+    .slice(0, 4)
+
+  if (!drivers.length) return null
+
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      {drivers.map(driver => (
+        <div key={`${driver.driver_id || driver.driver_name}-action`} className="rounded-lg border border-white/10 bg-white/[0.035] p-3 text-xs light:border-gray-200 light:bg-gray-50">
+          <div className="flex items-center justify-between gap-3">
+            <span className="truncate font-semibold text-gray-200 light:text-gray-800">{driver.driver_name}</span>
+            <span className="shrink-0 text-gray-500">{formatNumber(driver.variance_vs_pair_average_minutes, 'm')} vs avg</span>
+          </div>
+          <div className="mt-2 leading-5 text-gray-500 light:text-gray-600">{driver.coaching_direction}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
   const fastest = bestDriver(pair)
   const voice = pair.evidence.voice_recordings
@@ -211,6 +233,8 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
           ))}
         </div>
       </div>
+
+      <DriverActionNotes pair={pair} />
 
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <EvidenceList icon="voice" label="Voice evidence" bucket={voice} />
