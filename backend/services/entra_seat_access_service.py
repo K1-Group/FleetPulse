@@ -202,6 +202,14 @@ def get_seat_access_config() -> SeatAccessConfig:
 def build_seat_access(principal: dict[str, Any], authenticated: bool) -> dict[str, Any]:
     config = get_seat_access_config()
     group_ids = {value.casefold() for value in _claim_values(principal, GROUP_CLAIM_TYPES)}
+    available_seats = [
+        {
+            "display_name": definition["display_name"],
+            "id": definition["id"],
+            "tabs": definition["tabs"],
+        }
+        for definition in config.seat_definitions
+    ]
     seats = [
         {
             "display_name": definition["display_name"],
@@ -220,6 +228,7 @@ def build_seat_access(principal: dict[str, Any], authenticated: bool) -> dict[st
         "allowed_tabs": allowed_tabs,
         "authorization_mode": "enforced" if config.enforce_access else "optional",
         "authorized": authorized,
+        "available_seats": available_seats,
         "config_ready": config_ready,
         "denied_reason": None if authorized else "entra_seat_required",
         "primary_seat": seats[0] if seats else None,
