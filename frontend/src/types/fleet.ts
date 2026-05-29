@@ -53,6 +53,7 @@ export interface AuthSeatAccess {
   allowed_tabs: string[]
   authorization_mode: 'optional' | 'enforced'
   authorized: boolean
+  available_seats?: AuthSeat[]
   config_ready: boolean
   denied_reason: string | null
   primary_seat: AuthSeat | null

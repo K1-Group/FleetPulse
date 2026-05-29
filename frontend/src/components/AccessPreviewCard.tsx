@@ -129,7 +129,7 @@ function stringArray(value: unknown) {
   return []
 }
 
-function configuredProfiles(rawJson: string | undefined, publicTabs: string[]) {
+function configuredProfiles(rawJson: string | undefined, publicTabs: string[], seatDefinitions: SeatDefinition[]) {
   if (!rawJson) return []
 
   try {
@@ -147,7 +147,7 @@ function configuredProfiles(rawJson: string | undefined, publicTabs: string[]) {
             : email
       const seatIds = stringArray(candidate.seat_ids || candidate.seatIds)
       const directTabs = stringArray(candidate.tabs)
-      const seatTabs = seatIds.flatMap(seatId => SEAT_DEFINITIONS.find(seat => seat.id === seatId)?.tabs || [])
+      const seatTabs = seatIds.flatMap(seatId => seatDefinitions.find(seat => seat.id === seatId)?.tabs || [])
       const tabs = unique([...publicTabs, ...seatTabs, ...directTabs])
 
       if (!displayName || tabs.length === 0) return []
@@ -203,7 +203,22 @@ export default function AccessPreviewCard({
     ? session.seat_access.public_tabs
     : DEFAULT_PUBLIC_TABS
   const allowedTabs = session?.seat_access.allowed_tabs?.length ? session.seat_access.allowed_tabs : publicTabs
-  const currentSeats = session?.seat_access.seats.map(seat => seat.id) || []
+  const currentSeats = useMemo(
+    () => session?.seat_access.seats.map(seat => seat.id) || [],
+    [session?.seat_access.seats],
+  )
+  const seatDefinitions = useMemo(
+    () => (
+      session?.seat_access.available_seats?.length
+        ? session.seat_access.available_seats.map(seat => ({
+            displayName: seat.display_name,
+            id: seat.id,
+            tabs: seat.tabs,
+          }))
+        : SEAT_DEFINITIONS
+    ),
+    [session?.seat_access.available_seats],
+  )
 
   const profiles = useMemo(() => {
     const publicProfile: PreviewProfile = {
@@ -221,17 +236,21 @@ export default function AccessPreviewCard({
       source: 'current',
       tabs: allowedTabs,
     }
-    const seatProfiles: PreviewProfile[] = SEAT_DEFINITIONS.map(seat => ({
+    const seatProfiles: PreviewProfile[] = seatDefinitions.map(seat => ({
       id: `seat-${seat.id}`,
       label: seat.displayName,
       seatIds: [seat.id],
       source: 'seat',
       tabs: unique([...publicTabs, ...seat.tabs]),
     }))
-    const userProfiles = configuredProfiles(import.meta.env.VITE_ACCESS_PREVIEW_USERS_JSON, publicTabs)
+    const userProfiles = configuredProfiles(
+      import.meta.env.VITE_ACCESS_PREVIEW_USERS_JSON,
+      publicTabs,
+      seatDefinitions,
+    )
 
     return [publicProfile, currentProfile, ...userProfiles, ...seatProfiles]
-  }, [allowedTabs, currentSeats, publicTabs, session?.user?.display_name, session?.user?.email])
+  }, [allowedTabs, currentSeats, publicTabs, seatDefinitions, session?.user?.display_name, session?.user?.email])
 
   const [selectedProfileId, setSelectedProfileId] = useState('current')
 
@@ -245,6 +264,8 @@ export default function AccessPreviewCard({
   const sourceAuthority = session?.seat_access.source_authority || 'Microsoft Entra security groups'
   const authorizationMode = session?.seat_access.authorization_mode || 'optional'
   const configReady = session?.seat_access.config_ready
+  const labelForSeat = (seatId: string) =>
+    seatDefinitions.find(seat => seat.id === seatId)?.displayName || seatLabel(seatId)
 
   return (
     <section className="rounded-lg border border-sky-400/20 bg-gray-950/70 p-4 shadow-sm light:border-sky-200 light:bg-white sm:p-5">
@@ -329,7 +350,7 @@ export default function AccessPreviewCard({
         <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-3 light:border-gray-200 light:bg-gray-50">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Seat</p>
           <p className="mt-2 truncate text-sm font-semibold text-white light:text-gray-950">
-            {selectedProfile.seatIds.length ? selectedProfile.seatIds.map(seatLabel).join(', ') : 'No assigned seat'}
+            {selectedProfile.seatIds.length ? selectedProfile.seatIds.map(labelForSeat).join(', ') : 'No assigned seat'}
           </p>
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-3 light:border-gray-200 light:bg-gray-50">

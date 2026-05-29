@@ -102,6 +102,7 @@ def test_session_maps_easy_auth_groups_to_fleetpulse_seats(monkeypatch):
     assert access["source_authority"] == "Microsoft Entra security groups"
     assert access["write_back_allowed"] is False
     assert access["primary_seat"]["id"] == "executive_command"
+    assert any(seat["id"] == "executive_command" for seat in access["available_seats"])
     assert "finance" in access["allowed_tabs"]
 
 
