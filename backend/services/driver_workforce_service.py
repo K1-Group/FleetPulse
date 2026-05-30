@@ -129,6 +129,7 @@ def _build_driver_workforce_dataset(
         xcelerator_last_updated=xcelerator_last_updated,
         geotab_last_updated=geotab_data.get("last_updated"),
         geotab_error=geotab_data.get("error"),
+        route_source_meta=route_source_meta,
         config=config,
         now=now,
     )
@@ -675,6 +676,7 @@ def _load_route_ticket_rows(
     config: DriverWorkforceConfig,
 ) -> tuple[list[dict[str, Any]], datetime | None, dict[str, Any]]:
     route_source = _route_ticket_source(config)
+    fallback_source = _route_ticket_fallback_source(config)
     rows: list[dict[str, Any]] = []
     meta: dict[str, Any] = {
         "xcelerator_source": route_source,
@@ -691,6 +693,7 @@ def _load_route_ticket_rows(
         "review_orders_rows": 0,
         "ceo_powerbi_rows": 0,
         "fabric_warehouse_rows": 0,
+        "required_config": _route_ticket_required_config(route_source, fallback_source),
         "errors": [],
     }
     if route_source == ROUTE_SOURCE_CEO_POWERBI:
@@ -701,7 +704,7 @@ def _load_route_ticket_rows(
             return rows, datetime.now(timezone.utc), meta
         except Exception as exc:
             meta["errors"].append(f"ceo_powerbi_route_tickets:{type(exc).__name__}")
-            if _route_ticket_fallback_source(config) == ROUTE_SOURCE_FABRIC_WAREHOUSE:
+            if fallback_source == ROUTE_SOURCE_FABRIC_WAREHOUSE:
                 try:
                     rows = _load_fabric_warehouse_route_ticket_rows()
                     meta["fabric_warehouse_rows"] = len(rows)
@@ -775,6 +778,29 @@ def _route_ticket_fallback_source(config: DriverWorkforceConfig) -> str:
     if fallback in {"fabric", "fabric_warehouse", "fabric_warehouse_sql", "warehouse", "warehouse_sql"}:
         return ROUTE_SOURCE_FABRIC_WAREHOUSE
     return ""
+
+
+def _route_ticket_required_config(route_source: str, fallback_source: str = "") -> list[str]:
+    required: list[str]
+    if route_source == ROUTE_SOURCE_CEO_POWERBI:
+        required = [
+            "FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=ceo_powerbi",
+            "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN or client credentials",
+        ]
+    elif route_source == ROUTE_SOURCE_FABRIC_WAREHOUSE:
+        required = [
+            "FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=fabric_warehouse_sql",
+            "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*",
+        ]
+    else:
+        required = [
+            "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH",
+            "POST /api/control-tower/xcelerator/events/import route_ticket_window rows",
+        ]
+    if fallback_source == ROUTE_SOURCE_FABRIC_WAREHOUSE and route_source != ROUTE_SOURCE_FABRIC_WAREHOUSE:
+        required.append("FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql")
+        required.append("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*")
+    return list(dict.fromkeys(required))
 
 
 def _load_ceo_powerbi_route_ticket_rows() -> list[dict[str, Any]]:
@@ -1070,12 +1096,34 @@ def _build_validation(
     xcelerator_last_updated: datetime | None,
     geotab_last_updated: datetime | None,
     geotab_error: str | None,
+    route_source_meta: dict[str, Any],
     config: DriverWorkforceConfig,
     now: datetime,
 ) -> dict[str, Any]:
     stale_cutoff = now - timedelta(minutes=config.source_stale_minutes)
     joined = sum(1 for item in workdays if str(item.get("source") or "").startswith("xcelerator_ticket_geotab"))
     if ticket_count == 0:
+        source_errors = [str(error) for error in route_source_meta.get("errors", []) if error]
+        event_state_missing = (
+            route_source_meta.get("effective_xcelerator_source") == ROUTE_SOURCE_EVENT_STATE
+            and not route_source_meta.get("xcelerator_event_state_configured")
+        )
+        if source_errors or event_state_missing:
+            source_name = route_source_meta.get("effective_xcelerator_source") or route_source_meta.get("xcelerator_source")
+            reason = "; ".join(source_errors) if source_errors else "event state path is not configured"
+            return {
+                "state": "route_ticket_source_unavailable",
+                "status": "pending",
+                "message": (
+                    f"Driver Workforce route-ticket source '{source_name}' is unavailable: {reason}. "
+                    "Configure the read-only Xcelerator route-ticket source before treating this as no scheduled work."
+                ),
+                "row_count": 0,
+                "joined_count": 0,
+                "invalid_ticket_count": invalid_ticket_count,
+                "required_config": route_source_meta.get("required_config", []),
+                "source_status": "unavailable",
+            }
         return {
             "state": "no_data" if route_row_count == 0 else "pending",
             "status": "pending_no_data",

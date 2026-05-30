@@ -208,6 +208,8 @@ export interface DriverWorkforceValidation {
   row_count: number
   joined_count: number
   invalid_ticket_count: number
+  required_config?: string[]
+  source_status?: string
 }
 
 export interface DriverWorkforceResponse {
@@ -229,6 +231,237 @@ export interface DriverWorkforceResponse {
   alerts: Alert[]
   insights: string[]
   validation: DriverWorkforceValidation
+}
+
+export interface EmployeeWorkforceEmployee {
+  employee_id: string
+  employee_name: string
+  email: string | null
+  department: string | null
+  worked_hours: number
+  productive_hours: number | null
+  idle_hours: number
+  productivity_pct: number | null
+  days_reported: number
+  active_today: boolean
+  latest_activity_date: string | null
+  top_projects: string[]
+  source: string
+}
+
+export interface EmployeeWorkforceResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  period: {
+    start: string
+    end: string
+    days: number
+    timezone: string
+  }
+  config: Record<string, number | string | boolean>
+  summary: {
+    employees: number
+    active_today: number
+    worked_hours: number
+    idle_hours: number
+    avg_productivity_pct: number | null
+    activity_rows: number
+    invalid_rows: number
+    missing_timesheet_count: number
+  }
+  employees: EmployeeWorkforceEmployee[]
+  source_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    api_token_configured?: boolean
+    company_id_configured?: boolean
+    api_base_url_configured?: boolean
+  }
+  validation: {
+    status: DashboardValidationStatus
+    state: string
+    message: string
+    row_count: number
+    required_config?: string[]
+  }
+}
+
+export type DriverComplianceDocumentStatus = 'valid' | 'warning' | 'expired' | 'missing' | string
+
+export interface DriverComplianceDocument {
+  expires_on: string | null
+  days_remaining: number | null
+  status: DriverComplianceDocumentStatus
+}
+
+export interface DriverComplianceDriver {
+  driver_id: string
+  driver_name: string
+  email: string | null
+  phone: string | null
+  terminal: string | null
+  documents: {
+    medical_card: DriverComplianceDocument
+    drug_test: DriverComplianceDocument
+    mvr: DriverComplianceDocument
+  }
+  overall_status: DriverComplianceDocumentStatus
+  next_expiration_date: string | null
+  source: string
+}
+
+export interface DriverComplianceResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  config: Record<string, number | string>
+  summary: {
+    drivers: number
+    valid: number
+    warning: number
+    expired: number
+    missing: number
+    invalid_rows: number
+    medical_card_expiring: number
+    drug_test_expiring: number
+    mvr_expiring: number
+    document_status_counts: Record<string, Record<string, number>>
+  }
+  document_types: Array<{ key: 'medical_card' | 'drug_test' | 'mvr'; label: string; warning_days: number }>
+  drivers: DriverComplianceDriver[]
+  source_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    document_fields?: string[]
+    warning_days?: number
+  }
+  validation: {
+    status: DashboardValidationStatus
+    state: string
+    message: string
+    row_count: number
+    required_config?: string[]
+  }
+}
+
+export interface AddressBenchmarkEvidenceMatch {
+  source_system: string | null
+  order_id: string | null
+  driver_id: string | null
+  occurred_at: string | null
+  subject: string | null
+  summary: string | null
+  transcript_available: boolean
+  source_uri: string | null
+}
+
+export interface AddressBenchmarkEvidenceBucket {
+  status: 'matched' | 'no_matching_evidence' | string
+  match_count: number
+  matches: AddressBenchmarkEvidenceMatch[]
+  message: string
+}
+
+export interface AddressBenchmarkDriver {
+  driver_id: string | null
+  driver_name: string
+  measured_orders: number
+  avg_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  variance_vs_pair_average_minutes: number | null
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  stop_events_over_threshold: number
+  coaching_direction: string
+}
+
+export interface AddressBenchmarkRecentOrder {
+  order_id: string
+  route_date: string
+  driver_id: string | null
+  driver_name: string | null
+  route_minutes: number | null
+  duration_source: string | null
+  stop_minutes: number | null
+  stop_over_threshold: boolean
+}
+
+export interface AddressBenchmarkPair {
+  address_pair_key: string
+  pickup_address: string
+  delivery_address: string
+  orders: number
+  measured_orders: number
+  missing_actual_time_orders: number
+  avg_route_minutes: number | null
+  median_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  route_minutes_source: string
+  stop_threshold_minutes: number
+  stop_events_over_threshold: number
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  revenue_total: number
+  driver_pay_total: number
+  driver_benchmarks: AddressBenchmarkDriver[]
+  recent_orders: AddressBenchmarkRecentOrder[]
+  evidence: {
+    voice_recordings: AddressBenchmarkEvidenceBucket
+    emails: AddressBenchmarkEvidenceBucket
+  }
+  source_authority: string
+  projection_mode: 'read_only'
+}
+
+export interface AddressBenchmarkResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  period: {
+    start: string
+    end: string
+    days: number
+  }
+  thresholds: {
+    stop_threshold_minutes: number
+    minimum_history_samples: number
+    cost_per_truck_hour: number | null
+  }
+  filters: {
+    pickup: string | null
+    delivery: string | null
+  }
+  summary: {
+    address_pairs: number
+    route_rows_read: number
+    route_rows_in_period: number
+    invalid_route_rows: number
+    measured_orders: number
+    drivers_compared: number
+    opportunity_minutes_vs_pair_average: number
+    estimated_opportunity_cost_vs_pair_average: number | null
+    evidence_matches: number
+  }
+  address_pairs: AddressBenchmarkPair[]
+  evidence_sources: {
+    status: string
+    source_authority: string
+    projection_mode: 'read_only'
+    message: string
+    required_config: string[]
+    path: string | null
+    voice_recordings: number
+    emails: number
+  }
+  source_meta: Record<string, any>
+  recommendations: string[]
 }
 
 export interface SafetyBreakdown {

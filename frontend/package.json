@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:address-benchmark-ui": "node scripts/verify-address-benchmark-render.mjs",
+    "verify:workforce-foundation-ui": "node scripts/verify-workforce-foundation-render.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign, Truck, type LucideIcon } from 'lucide-react'
+import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign, Truck, Timer, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import FleetAnalytics from './components/FleetAnalytics'
 import FleetChat from './components/FleetChat'
@@ -28,26 +28,31 @@ import HrRecruitingWorklist from './components/HrRecruitingWorklist'
 import DashboardValidationSummary from './components/DashboardValidationSummary'
 import StabilityDashboard from './components/StabilityDashboard'
 import FinancialPerformanceDashboard from './components/FinancialPerformanceDashboard'
-import DriverWorkforce from './components/DriverWorkforce'
+import EmployeeWorkforce from './components/EmployeeWorkforce'
+import DriverCompliance from './components/DriverCompliance'
 import UserLoginStatus from './components/UserLoginStatus'
-import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useFuelTrends, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
+import AddressBenchmarkScan from './components/AddressBenchmarkScan'
+import { useAuthSession, useDashboardValidation, useFleetOverview, useVehicles, useSafetyScores, useLeaderboard, useAlerts, useLocations, useMonitorAlerts, useMonitorStatus, useControlTowerTrailerTracking, useDriverWorkforce, useEmployeeWorkforce, useDriverCompliance, useFuelTrends, useDataConnectorVehicleKpis, useDataConnectorSafetyScores, useEntityMarginYtd, useDeliveryCenterPerformanceYtd, useLaneStabilityWindow } from './hooks/useGeotab'
 
-type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'data-connector'
+type AppTab = 'dashboard' | 'control-tower' | 'finance' | 'operating-system' | 'employee-workforce' | 'hr-recruiting' | 'maintenance' | 'coaching' | 'replay' | 'address-benchmarks' | 'stability' | 'reports' | 'geofences' | 'fuel' | 'compliance' | 'driver-compliance' | 'data-connector'
 
 const appTabs: AppTab[] = [
   'dashboard',
   'control-tower',
   'finance',
   'operating-system',
+  'employee-workforce',
   'hr-recruiting',
   'maintenance',
   'coaching',
   'replay',
+  'address-benchmarks',
   'stability',
   'reports',
   'geofences',
   'fuel',
   'compliance',
+  'driver-compliance',
   'data-connector',
 ]
 
@@ -63,14 +68,17 @@ const navigationItems: NavItem[] = [
   { tab: 'control-tower', label: 'Control Tower', shortLabel: 'Tower', Icon: Activity },
   { tab: 'finance', label: 'Finance', shortLabel: 'Fin', Icon: DollarSign },
   { tab: 'operating-system', label: 'Org OS', shortLabel: 'Org', Icon: Users },
+  { tab: 'employee-workforce', label: 'Workforce', shortLabel: 'Work', Icon: Users },
   { tab: 'hr-recruiting', label: 'HR Recruiting', shortLabel: 'HR', Icon: Users },
   { tab: 'maintenance', label: 'Maintenance', shortLabel: 'Maint', Icon: Wrench },
   { tab: 'coaching', label: 'Coaching', shortLabel: 'Coach', Icon: GraduationCap },
   { tab: 'replay', label: 'Routes', shortLabel: 'Routes', Icon: Route },
+  { tab: 'address-benchmarks', label: 'Benchmarks', shortLabel: 'Bench', Icon: Timer },
   { tab: 'stability', label: 'Stability', shortLabel: 'Stable', Icon: LineChart },
   { tab: 'fuel', label: 'Fuel', shortLabel: 'Fuel', Icon: Fuel },
   { tab: 'geofences', label: 'Zones', shortLabel: 'Zones', Icon: MapPin },
   { tab: 'compliance', label: 'ELD', shortLabel: 'ELD', Icon: Shield },
+  { tab: 'driver-compliance', label: 'Driver Docs', shortLabel: 'Docs', Icon: ClipboardCheck },
   { tab: 'reports', label: 'Reports', shortLabel: 'Reports', Icon: FileText },
   { tab: 'data-connector', label: 'Connector', shortLabel: 'Data', Icon: Database },
 ]
@@ -133,6 +141,8 @@ export default function App() {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
   
   const dashboardActive = activeTab === 'dashboard'
+  const employeeWorkforceActive = dashboardActive || activeTab === 'employee-workforce'
+  const driverComplianceActive = activeTab === 'driver-compliance'
   const validationActive = dashboardActive || activeTab === 'operating-system'
   const overview = useFleetOverview(dashboardActive)
   const dashboardValidation = useDashboardValidation(validationActive)
@@ -145,6 +155,8 @@ export default function App() {
   const monitorStatus = useMonitorStatus(dashboardActive)
   const trailerTracking = useControlTowerTrailerTracking(dashboardActive)
   const driverWorkforce = useDriverWorkforce(dashboardActive)
+  const employeeWorkforce = useEmployeeWorkforce(employeeWorkforceActive)
+  const driverCompliance = useDriverCompliance(driverComplianceActive)
   const fuelTrends = useFuelTrends(dashboardActive)
   const utilization7d = useDataConnectorVehicleKpis(7, dashboardActive)
   const safety7d = useDataConnectorSafetyScores(7, dashboardActive)
@@ -312,10 +324,9 @@ export default function App() {
         </section>
 
         <section>
-          <DriverWorkforce
-            data={driverWorkforce.data}
-            loading={driverWorkforce.loading}
-            onSelectVehicle={setSelectedVehicleId}
+          <EmployeeWorkforce
+            data={employeeWorkforce.data}
+            loading={employeeWorkforce.loading}
           />
         </section>
 
@@ -458,6 +469,10 @@ export default function App() {
           <OperatingSystem validation={dashboardValidation.data} />
         )}
 
+        {activeTab === 'employee-workforce' && (
+          <EmployeeWorkforce data={employeeWorkforce.data} loading={employeeWorkforce.loading} />
+        )}
+
         {activeTab === 'hr-recruiting' && (
           <HrRecruitingWorklist />
         )}
@@ -470,11 +485,13 @@ export default function App() {
           <RouteReplay onClose={() => selectTab('dashboard')} />
         )}
 
+        {activeTab === 'address-benchmarks' && <AddressBenchmarkScan />}
         {activeTab === 'stability' && <StabilityDashboard />}
         {activeTab === 'reports' && <FleetReports />}
         {activeTab === 'geofences' && <GeofenceManager />}
         {activeTab === 'fuel' && <FuelAnalytics />}
         {activeTab === 'compliance' && <ComplianceDashboard />}
+        {activeTab === 'driver-compliance' && <DriverCompliance data={driverCompliance.data} loading={driverCompliance.loading} />}
         {activeTab === 'data-connector' && <DataConnector />}
         </motion.main>
       </div>

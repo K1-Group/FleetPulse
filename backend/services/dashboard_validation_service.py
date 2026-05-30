@@ -16,6 +16,8 @@ from configs.operating_system import OperatingSystemRuntimeConfig
 from services.alert_service import get_recent_alerts
 from services.fleet_service import get_fleet_overview, get_location_stats, get_vehicles
 from services.driver_workforce_service import get_driver_workforce_dataset
+from services.employee_workforce_service import get_employee_workforce_dataset
+from services.driver_compliance_service import get_driver_compliance_dataset
 from services.k1l_operating_kpi_service import (
     POWERBI_REVENUE_SOURCE,
     WAREHOUSE_SQL_REVENUE_SOURCE,
@@ -941,6 +943,14 @@ def _validate_driver_workforce_surface() -> ValidationItem:
             validation.get("message")
             or "Xcelerator route tickets + Geotab activity"
         )
+        required_config = validation.get("required_config") or [
+            "FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE",
+            "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN/client credentials",
+            "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*",
+            "GEOTAB_DATABASE",
+            "GEOTAB_USERNAME",
+            "GEOTAB_PASSWORD",
+        ]
         blocked_by = None if status == "verified" else validation.get("state")
         next_check = None if status == "verified" else _next_check_iso()
         if status == "pending" and row_count > 0:
@@ -966,12 +976,7 @@ def _validate_driver_workforce_surface() -> ValidationItem:
                 "overdue",
                 "avg_time_worked_minutes",
             ],
-            required_config=[
-                "FLEETPULSE_XCELERATOR_EVENT_STATE_PATH",
-                "GEOTAB_DATABASE",
-                "GEOTAB_USERNAME",
-                "GEOTAB_PASSWORD",
-            ],
+            required_config=required_config,
             blocked_by=blocked_by,
             next_check=next_check,
             contract={
@@ -999,6 +1004,107 @@ def _validate_driver_workforce_surface() -> ValidationItem:
         )
 
 
+def _validate_employee_workforce_surface() -> ValidationItem:
+    try:
+        payload = get_employee_workforce_dataset()
+        validation = payload.get("validation") or {}
+        summary = payload.get("summary") or {}
+        status = str(validation.get("status") or "pending")
+        row_count = _int_value(validation.get("row_count"))
+        return _item(
+            "employee_workforce",
+            "Employee Workforce - Time Doctor",
+            status,
+            source_authority="Time Doctor employee time and activity export",
+            message=str(validation.get("message") or "Time Doctor employee activity evidence."),
+            row_count=row_count,
+            metrics=[
+                "employees",
+                "active_today",
+                "worked_hours",
+                "avg_productivity_pct",
+                "missing_timesheet_count",
+            ],
+            required_config=validation.get("required_config")
+            or (payload.get("source_status") or {}).get("required_config")
+            or [
+                "FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_PATH or FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_URL",
+                "FLEETPULSE_TIMEDOCTOR_API_TOKEN",
+            ],
+            blocked_by=None if status == "verified" else validation.get("state"),
+            next_check=None if status == "verified" else _next_check_iso(),
+            contract={
+                "name": "employee_workforce_time_doctor",
+                "source_status": (payload.get("source_status") or {}).get("status"),
+                "row_count": summary.get("activity_rows", row_count),
+                "projection_mode": "read_only",
+            },
+        )
+    except Exception as exc:
+        return _item(
+            "employee_workforce",
+            "Employee Workforce - Time Doctor",
+            "failed",
+            source_authority="Time Doctor employee time and activity export",
+            message=f"Employee workforce validation failed: {exc}",
+            required_config=[
+                "FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_PATH or FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_URL",
+                "FLEETPULSE_TIMEDOCTOR_API_TOKEN",
+            ],
+        )
+
+
+def _validate_driver_compliance_surface() -> ValidationItem:
+    try:
+        payload = get_driver_compliance_dataset()
+        validation = payload.get("validation") or {}
+        summary = payload.get("summary") or {}
+        status = str(validation.get("status") or "pending")
+        row_count = _int_value(validation.get("row_count"))
+        return _item(
+            "driver_compliance",
+            "Driver Compliance Documents",
+            status,
+            source_authority="Configured driver qualification document register",
+            message=str(validation.get("message") or "Driver compliance document register."),
+            row_count=row_count,
+            metrics=[
+                "drivers",
+                "medical_card_expiring",
+                "drug_test_expiring",
+                "mvr_expiring",
+                "expired",
+            ],
+            required_config=validation.get("required_config")
+            or (payload.get("source_status") or {}).get("required_config")
+            or [
+                "FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_PATH or FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_URL",
+                "FLEETPULSE_DRIVER_COMPLIANCE_WARNING_DAYS",
+            ],
+            blocked_by=None if status == "verified" else validation.get("state"),
+            next_check=None if status == "verified" else _next_check_iso(),
+            contract={
+                "name": "driver_compliance_document_expiration",
+                "source_status": (payload.get("source_status") or {}).get("status"),
+                "document_types": ["medical_card", "drug_test", "mvr"],
+                "row_count": summary.get("drivers", row_count),
+                "projection_mode": "read_only",
+            },
+        )
+    except Exception as exc:
+        return _item(
+            "driver_compliance",
+            "Driver Compliance Documents",
+            "failed",
+            source_authority="Configured driver qualification document register",
+            message=f"Driver compliance validation failed: {exc}",
+            required_config=[
+                "FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_PATH or FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_URL",
+                "FLEETPULSE_DRIVER_COMPLIANCE_WARNING_DAYS",
+            ],
+        )
+
+
 def get_dashboard_validation_snapshot() -> dict[str, Any]:
     sections: dict[str, ValidationItem] = {}
     metrics: dict[str, ValidationItem] = {}
@@ -1012,6 +1118,10 @@ def get_dashboard_validation_snapshot() -> dict[str, Any]:
     sections.update(_validate_vehicle_surfaces())
     driver_workforce = _validate_driver_workforce_surface()
     sections[driver_workforce["key"]] = driver_workforce
+    employee_workforce = _validate_employee_workforce_surface()
+    sections[employee_workforce["key"]] = employee_workforce
+    driver_compliance = _validate_driver_compliance_surface()
+    sections[driver_compliance["key"]] = driver_compliance
     sections.update(_validate_safety_surfaces())
     sections.update(_validate_alert_surfaces())
     sections.update(_validate_static_or_config_surfaces())
