@@ -27,6 +27,7 @@ import type {
   HrRecruitingDataset,
   LaneStabilityPayload,
   OperatingSystemConfigurationResponse,
+  OperatingSystemDepartmentScorecardsResponse,
   LocationStats,
   OperatingSystemOrgChartResponse,
   OperatingSystemTaskKpiMatrixResponse,
@@ -299,6 +300,10 @@ export function useOperatingSystemOrgChart() {
 
 export function useOperatingSystemTaskKpiMatrix(enabled = true) {
   return useFetch<OperatingSystemTaskKpiMatrixResponse>(`${API}/operating-system/task-kpi-matrix`, 60000, enabled)
+}
+
+export function useOperatingSystemDepartmentScorecards(enabled = true) {
+  return useFetch<OperatingSystemDepartmentScorecardsResponse>(`${API}/operating-system/department-scorecards`, 60000, enabled)
 }
 
 export function useOperatingSystemConfiguration() {

@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from configs.operating_system import OperatingSystemRuntimeConfig
 from models import (
     OperatingSystemConfigurationResponse,
+    OperatingSystemDepartmentScorecardsResponse,
     OperatingSystemOrgChartResponse,
     OperatingSystemSeatResponse,
     OperatingSystemTaskKpiMatrixResponse,
 )
+from services import department_scorecard_service
 from services import operating_system_service
 
 router = APIRouter()
@@ -46,6 +48,15 @@ def configuration():
 )
 def org_chart():
     return operating_system_service.get_org_chart()
+
+
+@router.get(
+    "/department-scorecards",
+    response_model=OperatingSystemDepartmentScorecardsResponse,
+    dependencies=[Depends(validate_operating_system_api_key)],
+)
+def department_scorecards():
+    return department_scorecard_service.get_department_scorecards()
 
 
 @router.get(

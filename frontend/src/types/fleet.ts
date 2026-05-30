@@ -853,6 +853,29 @@ export interface OperatingSystemManagerNode {
   functional_seats: OperatingSystemSeatContract[]
 }
 
+export interface OperatingSystemDepartmentScorecardSummary {
+  total: number
+  healthy: number
+  warning: number
+  awaiting_feed: number
+  unavailable: number
+  coverage_pct: number
+}
+
+export interface OperatingSystemDepartmentScorecard {
+  department_id: string
+  department_label: string
+  manager_seat_id: string
+  manager_label: string
+  entity_scope: string
+  source_authorities: string[]
+  scorecard_weights: Record<string, number>
+  managed_seats: OperatingSystemSeatContract[]
+  kpi_summary: OperatingSystemDepartmentScorecardSummary
+  kpis: ControlTowerSeatKpiItem[]
+  source_message: string
+}
+
 export interface OperatingSystemOrgChartResponse {
   generated_at: string
   projection_mode: 'read_only'
@@ -873,6 +896,14 @@ export interface OperatingSystemTaskKpiMatrixResponse {
   projection_mode: 'read_only'
   seats: OperatingSystemSeatContract[]
   scorecard_weights: Record<string, number>
+}
+
+export interface OperatingSystemDepartmentScorecardsResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  scorecard_weights: Record<string, number>
+  departments: OperatingSystemDepartmentScorecard[]
 }
 
 export interface OperatingSystemConfigurationItem {

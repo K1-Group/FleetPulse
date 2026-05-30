@@ -30,6 +30,7 @@ from models import (
 
 ENDPOINT_CONTRACT = [
     "GET /api/operating-system/org-chart",
+    "GET /api/operating-system/department-scorecards",
     "GET /api/operating-system/task-kpi-matrix",
     "GET /api/operating-system/task-kpi-matrix/{seat_id}",
     "GET /api/operating-system/seats/{seat_id}",

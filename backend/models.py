@@ -632,6 +632,31 @@ class OperatingSystemManagerNode(BaseModel):
     functional_seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
 
 
+class OperatingSystemDepartmentScorecardSummary(BaseModel):
+    total: int = 0
+    healthy: int = 0
+    warning: int = 0
+    awaiting_feed: int = 0
+    unavailable: int = 0
+    coverage_pct: float = 0
+
+
+class OperatingSystemDepartmentScorecard(BaseModel):
+    department_id: str
+    department_label: str
+    manager_seat_id: str
+    manager_label: str
+    entity_scope: str
+    source_authorities: list[str] = Field(default_factory=list)
+    scorecard_weights: dict[str, int] = Field(default_factory=dict)
+    managed_seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
+    kpi_summary: OperatingSystemDepartmentScorecardSummary = Field(
+        default_factory=OperatingSystemDepartmentScorecardSummary
+    )
+    kpis: list[ControlTowerSeatKpiItem] = Field(default_factory=list)
+    source_message: str
+
+
 class OperatingSystemOrgChartResponse(BaseModel):
     generated_at: datetime
     projection_mode: str = "read_only"
@@ -652,6 +677,14 @@ class OperatingSystemTaskKpiMatrixResponse(BaseModel):
     projection_mode: str = "read_only"
     seats: list[OperatingSystemSeatContract] = Field(default_factory=list)
     scorecard_weights: dict[str, int] = Field(default_factory=dict)
+
+
+class OperatingSystemDepartmentScorecardsResponse(BaseModel):
+    generated_at: datetime
+    projection_mode: str = "read_only"
+    source_authority: str = "K1 fixed-seat operating system + FleetPulse KPI coverage registry"
+    scorecard_weights: dict[str, int] = Field(default_factory=dict)
+    departments: list[OperatingSystemDepartmentScorecard] = Field(default_factory=list)
 
 
 class OperatingSystemSeatResponse(BaseModel):

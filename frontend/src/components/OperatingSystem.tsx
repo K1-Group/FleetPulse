@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
+  BarChart3,
   Building2,
   CheckCircle2,
   Network,
@@ -13,21 +14,26 @@ import {
 import {
   useOperatingSystemOrgChart,
   useOperatingSystemConfiguration,
+  useOperatingSystemDepartmentScorecards,
   useOperatingSystemTaskKpiMatrix,
 } from '../hooks/useGeotab'
 import K1OperatingCostKpi from './K1OperatingCostKpi'
 import ValidationBadge from './ValidationBadge'
 import type {
+  ControlTowerSeatKpiItem,
+  ControlTowerStatus,
   DashboardValidationResponse,
   OperatingSystemConfigurationItem,
+  OperatingSystemDepartmentScorecard,
   OperatingSystemSeatContract,
   OperatingSystemSourceBoundary,
 } from '../types/fleet'
 
-type ViewKey = 'chart' | 'matrix' | 'boundaries'
+type ViewKey = 'chart' | 'scorecards' | 'matrix' | 'boundaries'
 
 const views: Array<{ key: ViewKey; label: string; icon: typeof Network }> = [
   { key: 'chart', label: 'Org Chart', icon: Network },
+  { key: 'scorecards', label: 'Scorecards', icon: BarChart3 },
   { key: 'matrix', label: 'Seat Matrix', icon: Target },
   { key: 'boundaries', label: 'Boundaries', icon: ShieldCheck },
 ]
@@ -35,6 +41,14 @@ const views: Array<{ key: ViewKey; label: string; icon: typeof Network }> = [
 const sectionStyles: Record<string, string> = {
   accountability: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200',
   functional: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
+}
+
+const kpiStatusStyles: Record<ControlTowerStatus, string> = {
+  healthy: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200 light:text-emerald-700',
+  warning: 'border-amber-500/30 bg-amber-500/10 text-amber-200 light:text-amber-700',
+  critical: 'border-red-500/30 bg-red-500/10 text-red-200 light:text-red-700',
+  awaiting_feed: 'border-gray-600/40 bg-gray-800/60 text-gray-300 light:border-gray-300 light:bg-gray-100 light:text-gray-700',
+  unavailable: 'border-red-500/30 bg-red-500/10 text-red-200 light:text-red-700',
 }
 
 function Panel({ children, className = '' }: { children?: ReactNode; className?: string }) {
@@ -62,6 +76,18 @@ function titleize(value: string) {
   return value.replace(/_/g, ' ')
 }
 
+function statusLabel(status: ControlTowerStatus) {
+  if (status === 'healthy') return 'Live'
+  if (status === 'warning') return 'Partial'
+  if (status === 'critical') return 'Critical'
+  if (status === 'unavailable') return 'Unavailable'
+  return 'Awaiting feed'
+}
+
+function formatCoverage(value: number) {
+  return `${Number(value || 0).toFixed(1)}%`
+}
+
 function SeatPill({ seat }: { seat: OperatingSystemSeatContract }) {
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize ${sectionStyles[seat.seat_type]}`}>
@@ -82,6 +108,197 @@ function MetricGrid({ targets }: { targets: Record<string, string> }) {
         </div>
       ))}
     </div>
+  )
+}
+
+function KpiContractRow({ item }: { item: ControlTowerSeatKpiItem }) {
+  return (
+    <div className="rounded-lg border border-gray-700/40 bg-gray-950/35 p-3 light:border-gray-200 light:bg-gray-50">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-white light:text-gray-900">{item.label}</p>
+          <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{item.target}</p>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${kpiStatusStyles[item.status]}`}>
+          {statusLabel(item.status)}
+        </span>
+      </div>
+      <p className="mt-2 text-xs text-gray-400 light:text-gray-600">{item.source_authority}</p>
+      {item.blocker && (
+        <p className="mt-1 text-xs text-amber-200 light:text-amber-700">{titleize(item.blocker)}</p>
+      )}
+      <p className="mt-2 text-xs text-gray-300 light:text-gray-700">{item.owner_action}</p>
+    </div>
+  )
+}
+
+function scorecardStatus(scorecard: OperatingSystemDepartmentScorecard): ControlTowerStatus {
+  if (scorecard.kpis.some(item => item.status === 'critical')) return 'critical'
+  return scorecard.kpi_summary.awaiting_feed || scorecard.kpi_summary.unavailable ? 'warning' : 'healthy'
+}
+
+function scorecardTopIssue(scorecard: OperatingSystemDepartmentScorecard) {
+  return (
+    scorecard.kpis.find(item => item.status === 'awaiting_feed' || item.status === 'unavailable')
+    || scorecard.kpis.find(item => item.status === 'warning' || item.status === 'critical')
+    || scorecard.kpis[0]
+    || null
+  )
+}
+
+function DepartmentScorecardCard({
+  scorecard,
+  selected,
+  onSelect,
+}: {
+  scorecard: OperatingSystemDepartmentScorecard
+  selected: boolean
+  onSelect: () => void
+}) {
+  const covered = scorecard.kpi_summary.healthy + scorecard.kpi_summary.warning
+  const missing = scorecard.kpi_summary.awaiting_feed + scorecard.kpi_summary.unavailable
+  const status = scorecardStatus(scorecard)
+  const topIssue = scorecardTopIssue(scorecard)
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`min-h-[236px] rounded-lg border p-4 text-left shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-emerald-500/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950 light:shadow-sm ${
+        selected
+          ? 'border-emerald-500/50 bg-emerald-500/10 light:bg-emerald-50'
+          : 'border-gray-700/50 bg-gray-900/70 light:border-gray-200 light:bg-white'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-lg font-semibold text-white light:text-gray-900">{scorecard.department_label}</p>
+          <p className="mt-1 line-clamp-2 text-xs text-gray-400 light:text-gray-600">{scorecard.manager_label}</p>
+        </div>
+        <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium ${kpiStatusStyles[status]}`}>
+          {formatCoverage(scorecard.kpi_summary.coverage_pct)}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {scorecard.source_authorities.map(authority => (
+          <span key={authority} className="rounded border border-gray-700/50 px-2 py-1 text-[10px] font-medium text-gray-300 light:border-gray-200 light:text-gray-700">
+            {authority}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 border-y border-gray-800 py-3 light:border-gray-200">
+        <div>
+          <p className="text-[10px] uppercase text-gray-500 light:text-gray-600">Live</p>
+          <p className="mt-1 text-xl font-bold text-emerald-200 light:text-emerald-700">{scorecard.kpi_summary.healthy}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-gray-500 light:text-gray-600">Partial</p>
+          <p className="mt-1 text-xl font-bold text-amber-200 light:text-amber-700">{scorecard.kpi_summary.warning}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-gray-500 light:text-gray-600">Missing</p>
+          <p className="mt-1 text-xl font-bold text-white light:text-gray-900">{missing}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 text-xs text-gray-400 light:text-gray-600">
+        <span>{covered}/{scorecard.kpi_summary.total} KPI contracts covered</span>
+        <span>{scorecard.managed_seats.length} seats</span>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[10px] uppercase text-gray-500 light:text-gray-600">Top blocker / action</p>
+        <p className="mt-1 line-clamp-3 text-xs leading-5 text-gray-300 light:text-gray-700">
+          {topIssue?.blocker ? titleize(topIssue.blocker) : topIssue?.owner_action || 'All registered KPI contracts have source coverage.'}
+        </p>
+      </div>
+    </button>
+  )
+}
+
+function ScorecardDetailPanel({
+  scorecard,
+  onSelectSeat,
+}: {
+  scorecard: OperatingSystemDepartmentScorecard
+  onSelectSeat: (seatId: string) => void
+}) {
+  const weights = Object.entries(scorecard.scorecard_weights)
+  const status = scorecardStatus(scorecard)
+
+  return (
+    <Panel className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-semibold text-white light:text-gray-900">{scorecard.department_label} Seat KPI Detail</h3>
+            <span className={`rounded-full border px-3 py-1 text-xs font-medium ${kpiStatusStyles[status]}`}>
+              {statusLabel(status)}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-gray-400 light:text-gray-600">{scorecard.source_message}</p>
+        </div>
+        <span className="rounded-full border border-gray-700 px-3 py-1 text-xs text-gray-300 light:border-gray-300 light:text-gray-700">
+          {scorecard.entity_scope}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+        <div>
+          <p className="mb-2 text-xs uppercase text-gray-500 light:text-gray-600">KPI Contracts</p>
+          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+            {scorecard.kpis.length ? (
+              scorecard.kpis.map(item => <KpiContractRow key={`${scorecard.department_id}-${item.key}`} item={item} />)
+            ) : (
+              <EmptyState label="No KPI contracts are registered for this department yet." />
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-xs uppercase text-gray-500 light:text-gray-600">Managed Seats</p>
+            <div className="flex flex-wrap gap-2">
+              {scorecard.managed_seats.map(seat => (
+                <button
+                  key={seat.seat_id}
+                  onClick={() => onSelectSeat(seat.seat_id)}
+                  className="rounded-lg border border-gray-700/60 bg-gray-800/60 px-3 py-2 text-left text-xs text-gray-300 transition hover:border-emerald-500/50 hover:text-white light:border-gray-200 light:bg-gray-50 light:text-gray-700 light:hover:text-gray-900"
+                >
+                  {seat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs uppercase text-gray-500 light:text-gray-600">Source Authorities</p>
+            <div className="flex flex-wrap gap-2">
+              {scorecard.source_authorities.map(authority => (
+                <span key={authority} className="rounded-lg border border-gray-700/50 bg-gray-800/60 px-3 py-1 text-xs text-gray-300 light:bg-gray-50 light:border-gray-200 light:text-gray-700">
+                  {authority}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs uppercase text-gray-500 light:text-gray-600">Scorecard Weights</p>
+            <div className="grid grid-cols-3 gap-2">
+              {weights.map(([key, value]) => (
+                <div key={key} className="rounded-lg border border-gray-700/40 bg-gray-950/35 p-2 light:border-gray-200 light:bg-gray-50">
+                  <p className="text-[10px] uppercase text-gray-500 light:text-gray-600">{titleize(key)}</p>
+                  <p className="mt-1 text-lg font-bold text-white light:text-gray-900">{value}%</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Panel>
   )
 }
 
@@ -197,10 +414,12 @@ interface Props {
 }
 
 export default function OperatingSystem({ validation }: Props) {
-  const [active, setActive] = useState<ViewKey>('chart')
+  const [active, setActive] = useState<ViewKey>('scorecards')
   const [selectedSeatId, setSelectedSeatId] = useState('executive_command')
+  const [selectedScorecardId, setSelectedScorecardId] = useState('revenue_manager')
   const org = useOperatingSystemOrgChart()
   const matrix = useOperatingSystemTaskKpiMatrix()
+  const scorecards = useOperatingSystemDepartmentScorecards()
   const config = useOperatingSystemConfiguration()
 
   const seatMap = useMemo(() => {
@@ -210,6 +429,14 @@ export default function OperatingSystem({ validation }: Props) {
   }, [matrix.data])
 
   const selectedSeat = seatMap.get(selectedSeatId) || matrix.data?.seats[0] || null
+  const selectedScorecard = useMemo(
+    () => (
+      scorecards.data?.departments.find(scorecard => scorecard.department_id === selectedScorecardId)
+      || scorecards.data?.departments[0]
+      || null
+    ),
+    [scorecards.data, selectedScorecardId],
+  )
   const managerSeats = matrix.data?.seats.filter(seat => seat.seat_type === 'accountability') || []
   const functionalSeats = matrix.data?.seats.filter(seat => seat.seat_type === 'functional') || []
   const operatingValidation = validation?.sections?.operating_system
@@ -305,6 +532,40 @@ export default function OperatingSystem({ validation }: Props) {
                 </Panel>
               ))}
             </div>
+          )}
+        </motion.div>
+      )}
+
+      {active === 'scorecards' && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+          {scorecards.loading ? (
+            <EmptyState label="Loading department scorecards..." />
+          ) : scorecards.error ? (
+            <EmptyState label={`Department scorecards unavailable: ${scorecards.error}`} />
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                {scorecards.data?.departments.map(scorecard => (
+                  <DepartmentScorecardCard
+                    key={scorecard.department_id}
+                    scorecard={scorecard}
+                    selected={selectedScorecard?.department_id === scorecard.department_id}
+                    onSelect={() => setSelectedScorecardId(scorecard.department_id)}
+                  />
+                ))}
+              </div>
+              {selectedScorecard ? (
+                <ScorecardDetailPanel
+                  scorecard={selectedScorecard}
+                  onSelectSeat={seatId => {
+                    setSelectedSeatId(seatId)
+                    setActive('matrix')
+                  }}
+                />
+              ) : (
+                <EmptyState label="No manager-seat KPI scorecards returned yet." />
+              )}
+            </>
           )}
         </motion.div>
       )}
