@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type {
   Alert,
+  AddressBenchmarkResponse,
   AuthSession,
   ControlTowerAgentsResponse,
   ControlTowerAttentionResponse,
@@ -15,7 +16,9 @@ import type {
   DashboardValidationResponse,
   DeliveryCenterPerformanceSnapshot,
   DepartmentCallAnalysisDataset,
+  DriverComplianceResponse,
   DriverWorkforceResponse,
+  EmployeeWorkforceResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
   EntityMarginSnapshot,
@@ -44,6 +47,21 @@ function currentYearStart() {
 function currentReturnTo() {
   if (typeof window === 'undefined') return '/'
   return `${window.location.pathname}${window.location.search}${window.location.hash || ''}`
+}
+
+type AddressBenchmarkParams = {
+  pickup?: string
+  delivery?: string
+  days?: number
+}
+
+function addressBenchmarkQuery(params: AddressBenchmarkParams) {
+  const query = new URLSearchParams({ days: String(params.days ?? 180) })
+  const pickup = params.pickup?.trim()
+  const delivery = params.delivery?.trim()
+  if (pickup) query.set('pickup', pickup)
+  if (delivery) query.set('delivery', delivery)
+  return query.toString()
 }
 
 // Fetch with timeout to prevent infinite loading
@@ -159,6 +177,14 @@ export function useDriverWorkforce(enabled = true) {
   return useFetch<DriverWorkforceResponse>(`${API}/driver-workforce`, 30000, enabled)
 }
 
+export function useEmployeeWorkforce(enabled = true) {
+  return useFetch<EmployeeWorkforceResponse>(`${API}/employee-workforce`, 60000, enabled, 30000)
+}
+
+export function useDriverCompliance(enabled = true) {
+  return useFetch<DriverComplianceResponse>(`${API}/driver-compliance`, 300000, enabled, 30000)
+}
+
 export function useMonitorAlerts(enabled = true) {
   return useFetch<Alert[]>(`${API}/monitor/alerts`, 15000, enabled)
 }
@@ -265,6 +291,15 @@ export function useOperatingCostWindow(days = 364, enabled = true) {
 
 export function useLaneStabilityWindow(windowDays: 42 | 91 | 182 | 364 = 364, enabled = true) {
   return useFetch<LaneStabilityPayload>(`${API}/lane-stability?window=${windowDays}`, 300000, enabled, 60000)
+}
+
+export function useAddressBenchmarks(params: AddressBenchmarkParams = {}, enabled = true) {
+  return useFetch<AddressBenchmarkResponse>(
+    `${API}/address-benchmarks?${addressBenchmarkQuery(params)}`,
+    300000,
+    enabled,
+    60000,
+  )
 }
 
 export function useEntityMarginYtd(enabled = true) {

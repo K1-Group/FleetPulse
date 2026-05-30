@@ -116,7 +116,7 @@ export default function DriverWorkforce({ data, loading, onSelectVehicle }: Prop
         metrics: [],
         next_check: null,
         projection_mode: 'read_only' as const,
-        required_config: [],
+        required_config: data.validation.required_config || [],
         row_count: data.validation.row_count,
         source_authority: data.source_authority,
         status: data.validation.status,

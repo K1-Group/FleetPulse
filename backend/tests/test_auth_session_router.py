@@ -14,6 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 from routers import auth  # noqa: E402
+from services.entra_seat_access_service import tab_for_path  # noqa: E402
 
 
 def _client() -> TestClient:
@@ -102,6 +103,9 @@ def test_session_maps_easy_auth_groups_to_fleetpulse_seats(monkeypatch):
     assert access["source_authority"] == "Microsoft Entra security groups"
     assert access["write_back_allowed"] is False
     assert access["primary_seat"]["id"] == "executive_command"
+    assert "address-benchmarks" in access["allowed_tabs"]
+    assert "employee-workforce" in access["allowed_tabs"]
+    assert "driver-compliance" in access["allowed_tabs"]
     assert "finance" in access["allowed_tabs"]
 
 
@@ -121,6 +125,16 @@ def test_seat_access_endpoint_returns_projection(monkeypatch):
     payload = response.json()
     assert payload["primary_seat"]["id"] == "fleet_compliance_manager"
     assert "maintenance" in payload["allowed_tabs"]
+
+
+def test_seat_access_maps_address_benchmark_api_to_benchmarks_tab():
+    assert tab_for_path("/api/address-benchmarks") == "address-benchmarks"
+    assert tab_for_path("/api/address-benchmarks/drivers") == "address-benchmarks"
+
+
+def test_seat_access_maps_workforce_and_driver_compliance_tabs():
+    assert tab_for_path("/api/employee-workforce") == "employee-workforce"
+    assert tab_for_path("/api/driver-compliance") == "driver-compliance"
 
 
 def test_session_rejects_external_return_url(monkeypatch):

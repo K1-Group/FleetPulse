@@ -23,8 +23,8 @@ class DriverWorkforceConfig:
     completion_tolerance_minutes: int = 10
     source_stale_minutes: int = 180
     timezone: str = "America/Chicago"
-    xcelerator_source: str = "auto"
-    ceo_powerbi_fallback_source: str = ""
+    xcelerator_source: str = "ceo_powerbi"
+    ceo_powerbi_fallback_source: str = "fabric_warehouse_sql"
 
     @classmethod
     def from_env(cls) -> "DriverWorkforceConfig":
@@ -55,15 +55,16 @@ class DriverWorkforceConfig:
             ).strip()
             or "America/Chicago",
             xcelerator_source=(
-                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE", "auto")
+                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE", "ceo_powerbi")
                 .strip()
                 .casefold()
-                or "auto"
+                or "ceo_powerbi"
             ),
             ceo_powerbi_fallback_source=(
-                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK", "")
+                os.getenv("FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK", "fabric_warehouse_sql")
                 .strip()
                 .casefold()
+                or "fabric_warehouse_sql"
             ),
         )
 
