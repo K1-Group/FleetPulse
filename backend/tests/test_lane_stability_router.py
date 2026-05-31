@@ -65,3 +65,35 @@ def test_lane_stability_route_validates_window(monkeypatch):
     response = _client(monkeypatch).get("/api/lane-stability?window=1201")
 
     assert response.status_code == 422
+
+
+def test_lane_stability_route_returns_unified_scorecard(monkeypatch):
+    monkeypatch.setattr(
+        lane_stability,
+        "get_unified_route_lh_scorecard",
+        lambda: {
+            "generated_at": "2026-05-31T12:00:00+00:00",
+            "period_end": "2026-05-23",
+            "projection_mode": "read_only",
+            "feed_status": "healthy",
+            "summary": {"missed_hour_revenue": 89879.35},
+            "items": [],
+            "capacity_windows": [
+                {
+                    "route_lh": "DFW 001",
+                    "timeline_hours": 12.0,
+                    "gaps": [{"gap_start_minute": 420, "gap_end_minute": 720}],
+                }
+            ],
+            "source_boundaries": [],
+        },
+    )
+
+    response = _client(monkeypatch).get("/api/lane-stability/unified-scorecard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["period_end"] == "2026-05-23"
+    assert payload["projection_mode"] == "read_only"
+    assert payload["summary"]["missed_hour_revenue"] == 89879.35
+    assert payload["capacity_windows"][0]["timeline_hours"] == 12.0
