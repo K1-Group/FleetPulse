@@ -10,9 +10,17 @@ from services.lakehouse_lane_stability_service import (
     MAX_WINDOW_DAYS,
     get_lane_stability_daily,
 )
+from services.unified_route_lh_scorecard_service import get_unified_route_lh_scorecard
 
 
 router = APIRouter()
+
+
+@router.get("/unified-scorecard")
+async def unified_route_lh_scorecard() -> dict[str, Any]:
+    """Return the read-only May 23 unified route/LH scorecard artifact."""
+
+    return get_unified_route_lh_scorecard()
 
 
 @router.get("")
