@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, DollarSign, RefreshCw, Route, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Clock3, DollarSign, RefreshCw, Route, ShieldCheck } from 'lucide-react'
 
 type FeedStatus = 'healthy' | 'awaiting_feed' | 'unavailable'
 
@@ -12,6 +12,11 @@ interface UnifiedRouteLHScorecardSummary {
   missed_hour_revenue: number
   local_missed_hour_revenue: number
   lh_missed_hour_revenue: number
+  capacity_window_count: number
+  actionable_gap_count: number
+  actionable_gap_hours: number
+  capacity_timeline_hours: number
+  capacity_gap_threshold_minutes: number
   avg_stability_pct: number | null
   avg_on_time_pct: number | null
   avg_tech_pct: number | null
@@ -49,6 +54,48 @@ interface UnifiedRouteLHActionSummary {
   missed_hour_revenue: number
 }
 
+interface UnifiedRouteLHCapacitySegment {
+  type?: string
+  label: string
+  start_minute: number
+  end_minute: number
+  hours: number
+}
+
+interface UnifiedRouteLHCapacityGap {
+  gap_type: string
+  gap_window: string
+  gap_hours: number
+  display_gap_hours: number
+  gap_start_minute: number
+  gap_end_minute: number
+  injection_guidance: string
+}
+
+interface UnifiedRouteLHCapacityWindow {
+  entity: string
+  route_lh: string
+  date: string
+  primary_driver: string
+  shift_window: string
+  active_stop_windows: string
+  capacity_gaps: string
+  gap_count: number
+  actionable_gap_hours: number
+  display_gap_hours: number
+  suggested_added_stops: number
+  timeline_start: string
+  timeline_end: string
+  timeline_hours: number
+  paid_window_basis: string
+  source_file: string
+  source_sheet: string
+  active_segments: UnifiedRouteLHCapacitySegment[]
+  gaps: UnifiedRouteLHCapacityGap[]
+  injection_guidance: string
+  source_boundary: string
+}
+
 interface UnifiedRouteLHSourceNote {
   metric: string
   definition: string
@@ -72,6 +119,7 @@ interface UnifiedRouteLHScorecardPayload {
   required_config: string[]
   summary: UnifiedRouteLHScorecardSummary
   items: UnifiedRouteLHScorecardItem[]
+  capacity_windows: UnifiedRouteLHCapacityWindow[]
   action_summary: UnifiedRouteLHActionSummary[]
   source_notes: UnifiedRouteLHSourceNote[]
   source_boundaries: UnifiedRouteLHSourceBoundary[]
@@ -100,6 +148,23 @@ function formatMoney(value: number | null | undefined): string {
 
 function formatNumber(value: number | null | undefined, digits = 0): string {
   return Number(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function formatHours(value: number | null | undefined): string {
+  return `${formatNumber(value, 1)}h`
+}
+
+function timeLabel(value: string): string {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+function segmentStyle(startMinute: number, endMinute: number, totalMinutes: number) {
+  const left = Math.max(0, Math.min(100, (startMinute / totalMinutes) * 100))
+  const right = Math.max(left, Math.min(100, (endMinute / totalMinutes) * 100))
+  return { left: `${left}%`, width: `${Math.max(1, right - left)}%` }
 }
 
 function statusClass(status: FeedStatus) {
@@ -142,6 +207,77 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
+function CapacityTimelineRow({ window }: { window: UnifiedRouteLHCapacityWindow }) {
+  const totalMinutes = Math.max((window.timeline_hours || 12) * 60, 1)
+  const startLabel = timeLabel(window.timeline_start)
+  const endLabel = timeLabel(window.timeline_end)
+  const primaryGap = window.gaps[0]
+
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/35 p-3 light:border-gray-200 light:bg-gray-50">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-white light:text-gray-900">{window.route_lh}</p>
+          <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
+            {window.date} · {window.entity}
+            {window.primary_driver ? ` · Driver ${window.primary_driver}` : ''}
+          </p>
+        </div>
+        <div className="text-left lg:text-right">
+          <p className="text-sm font-semibold text-amber-200 light:text-amber-700">
+            {formatHours(window.actionable_gap_hours)} open
+          </p>
+          <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
+            {window.gap_count} gap{window.gap_count === 1 ? '' : 's'} · {window.paid_window_basis || 'Planning basis'}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="relative h-5 overflow-hidden rounded bg-gray-800 light:bg-gray-200" aria-label={`${window.route_lh} 12 hour capacity timeline`}>
+          <div className="absolute inset-0 bg-gray-700/55 light:bg-gray-300" />
+          {window.active_segments.map((segment, index) => (
+            <div
+              key={`${segment.label}-${index}`}
+              className="absolute inset-y-0 bg-emerald-500/80 light:bg-emerald-500"
+              style={segmentStyle(segment.start_minute, segment.end_minute, totalMinutes)}
+              title={`Active stop/work window: ${segment.label}`}
+            />
+          ))}
+          {window.gaps.map((gap, index) => (
+            <div
+              key={`${gap.gap_window}-${index}`}
+              className="absolute inset-y-0 bg-amber-400 light:bg-amber-500"
+              style={segmentStyle(gap.gap_start_minute, gap.gap_end_minute, totalMinutes)}
+              title={`${gap.gap_type || 'Capacity gap'}: ${gap.gap_window}`}
+            />
+          ))}
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500 light:text-gray-600">
+          <span>{startLabel || 'Window start'}</span>
+          <span>{formatHours(window.timeline_hours)} planning line</span>
+          <span>{endLabel || 'Window end'}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-gray-400 light:text-gray-700 lg:grid-cols-2">
+        <p>
+          <span className="text-gray-500 light:text-gray-600">Working:</span>{' '}
+          {window.active_stop_windows || 'No active stop windows supplied by source'}
+        </p>
+        <p>
+          <span className="text-gray-500 light:text-gray-600">Gap:</span>{' '}
+          {window.capacity_gaps || primaryGap?.gap_window || 'No gap window supplied'}
+        </p>
+      </div>
+      <p className="mt-2 text-xs text-gray-500 light:text-gray-600">
+        {window.injection_guidance || primaryGap?.injection_guidance}
+      </p>
+      <p className="mt-1 text-[11px] leading-4 text-gray-600 light:text-gray-500">{window.source_boundary}</p>
+    </div>
+  )
+}
+
 export default function UnifiedRouteLHScorecardPanel() {
   const [payload, setPayload] = useState<UnifiedRouteLHScorecardPayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -174,6 +310,7 @@ export default function UnifiedRouteLHScorecardPanel() {
   }, [fetchScorecard])
 
   const topItems = useMemo(() => (payload?.items ?? []).slice(0, 12), [payload])
+  const capacityWindows = useMemo(() => (payload?.capacity_windows ?? []).slice(0, 8), [payload])
   const sourceNotes = useMemo(
     () => (payload?.source_notes ?? []).filter(note => SOURCE_NOTE_KEYS.has(note.metric)),
     [payload],
@@ -277,6 +414,65 @@ export default function UnifiedRouteLHScorecardPanel() {
           ))}
         </div>
       ) : null}
+
+      {summary && (
+        <div className="mt-5 rounded-lg border border-gray-800 bg-gray-950/25 p-4 light:border-gray-200 light:bg-gray-50">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Clock3 className="h-4 w-4 text-cyan-300" />
+                <h4 className="text-sm font-semibold text-white light:text-gray-900">12h Route/LH Capacity Gap Finder</h4>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-gray-500 light:text-gray-600">
+                Source-backed windows over {formatNumber(summary.capacity_gap_threshold_minutes)} minutes. Green is active stop/work time when supplied by the capacity plan; amber is open capacity. This is not live Geotab telemetry.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-[11px] text-gray-400 light:text-gray-600">
+              <span className="inline-flex items-center gap-1 rounded-full border border-gray-700 px-2 py-1 light:border-gray-300">
+                <span className="h-2 w-4 rounded bg-gray-600 light:bg-gray-300" /> 12h span
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-gray-700 px-2 py-1 light:border-gray-300">
+                <span className="h-2 w-4 rounded bg-emerald-500" /> Working
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-gray-700 px-2 py-1 light:border-gray-300">
+                <span className="h-2 w-4 rounded bg-amber-400" /> Gap &gt;60m
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <MetricTile
+              label="Gap Windows"
+              value={formatNumber(summary.capacity_window_count)}
+              helper={`${formatNumber(summary.actionable_gap_count)} source gaps`}
+              tone="warning"
+            />
+            <MetricTile
+              label="Gap Hours"
+              value={formatHours(summary.actionable_gap_hours)}
+              helper="No injected revenue math"
+              tone="warning"
+            />
+            <MetricTile
+              label="Line Basis"
+              value={formatHours(summary.capacity_timeline_hours)}
+              helper="Capacity plan, fallback to Gap Detail"
+            />
+          </div>
+
+          {capacityWindows.length ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {capacityWindows.map(window => (
+                <CapacityTimelineRow key={`${window.source_sheet}-${window.route_lh}-${window.date}-${window.primary_driver}`} window={window} />
+              ))}
+            </div>
+          ) : payload?.feed_status === 'healthy' ? (
+            <div className="mt-4">
+              <EmptyState label="No source-backed route/LH gaps over 60 minutes were returned." />
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {topItems.length ? (
         <div className="mt-5 overflow-x-auto rounded-lg border border-gray-800 light:border-gray-200">

@@ -78,6 +78,13 @@ def test_lane_stability_route_returns_unified_scorecard(monkeypatch):
             "feed_status": "healthy",
             "summary": {"missed_hour_revenue": 89879.35},
             "items": [],
+            "capacity_windows": [
+                {
+                    "route_lh": "DFW 001",
+                    "timeline_hours": 12.0,
+                    "gaps": [{"gap_start_minute": 420, "gap_end_minute": 720}],
+                }
+            ],
             "source_boundaries": [],
         },
     )
@@ -89,3 +96,4 @@ def test_lane_stability_route_returns_unified_scorecard(monkeypatch):
     assert payload["period_end"] == "2026-05-23"
     assert payload["projection_mode"] == "read_only"
     assert payload["summary"]["missed_hour_revenue"] == 89879.35
+    assert payload["capacity_windows"][0]["timeline_hours"] == 12.0
