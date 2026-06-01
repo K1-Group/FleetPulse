@@ -24,7 +24,7 @@ def _config(path: str = "/tmp/hr-call-analysis-test.json") -> HrCallAnalysisConf
         state_path=path,
         import_api_key="",
         hash_salt="fleetpulse-hr-call",
-        active_extensions=("4", "702", "722", "725"),
+        active_extensions=("4", "702", "722", "725", "728"),
         sharepoint_enabled=False,
         sharepoint_folder_url="",
         graph_tenant_id="",
@@ -368,6 +368,7 @@ Extensions
 702 - David Attar,72/564/13%,1/564/0%,0/564/0%,491/564/87%
 722 - Hamzeh Alghanem,8/675/1%,0/675/0%,0/675/0%,667/675/99%
 725 - Yara Azzouqah,11/394/3%,0/394/0%,0/394/0%,383/394/97%
+728 - HR Team Member,1/73/1%,0/73/0%,0/73/0%,72/73/99%
 """
 
     result = import_hr_call_analysis_snapshot(
@@ -377,7 +378,7 @@ Extensions
     )
 
     assert result["status"] == "ok"
-    assert result["activity_rows"] == 5
+    assert result["activity_rows"] == 6
 
     hr = asyncio.run(
         get_department_call_analysis_dataset(
@@ -398,7 +399,7 @@ Extensions
         )
     )
 
-    assert hr["summary"]["activity_calls"] == 1717
+    assert hr["summary"]["activity_calls"] == 1790
     assert hr["summary"]["activity_report_date"] == "2026-05-31"
     assert hr["summary"]["activity_period"] == "May 2026"
     assert hr["summary"]["total_call_legs"] == 0

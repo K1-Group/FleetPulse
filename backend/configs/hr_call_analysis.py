@@ -169,7 +169,7 @@ class HrCallAnalysisConfig:
             or "fleetpulse-hr-call",
             active_extensions=tuple(
                 part.strip()
-                for part in os.getenv("HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS", "4,702,722,725").split(",")
+                for part in os.getenv("HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS", "4,702,722,725,728").split(",")
                 if part.strip()
             ),
             sharepoint_enabled=_bool_env("HR_CALL_ANALYSIS_SHAREPOINT_ENABLED"),

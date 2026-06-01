@@ -41,7 +41,7 @@ HR_CALL_ANALYSIS_SHAREPOINT_ENABLED=true
 HR_CALL_ANALYSIS_SHAREPOINT_SITE_URL=https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures
 HR_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATH=Grasshopper/Call Analysis Reports/HR
 HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS=.txt,.csv
-HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
 ```
 
 The script creates these Key Vault secrets if values are not supplied by env:
@@ -135,7 +135,7 @@ HR_RECRUITING_WORKBOOK_PATH=/home/data/HR_Lead_KPI_Recheck_By_Phone.xlsx
 HR_RECRUITING_CONVERSION_WORKBOOK_PATH=/home/data/HR_Lead_Name_To_Xcelerator_Driver_Conversion.xlsx
 HR_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
 DEPARTMENT_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
-HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
 ```
 
 Required workbook tabs:

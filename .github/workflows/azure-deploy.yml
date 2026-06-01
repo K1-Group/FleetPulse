@@ -90,7 +90,7 @@ jobs:
           HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS: .txt,.csv
           HR_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
           DEPARTMENT_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
-          HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS: 4,702,722,725
+          HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS: 4,702,722,725,728
         run: |
           set -euo pipefail
 

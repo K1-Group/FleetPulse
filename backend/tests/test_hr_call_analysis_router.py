@@ -27,7 +27,7 @@ def _dataset() -> dict:
         "last_imported_at": "2026-05-21T12:00:00+00:00",
         "pii_suppressed": True,
         "phone_numbers_stored": False,
-        "active_extensions": ["4", "702", "722", "725"],
+        "active_extensions": ["4", "702", "722", "725", "728"],
         "coverage": {"start": "2026-03-01T00:00:00Z", "end": "2026-05-08T00:00:00Z", "months": ["2026-03"]},
         "summary": {
             "total_call_legs": 2,
