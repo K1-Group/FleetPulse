@@ -226,6 +226,8 @@ export interface DriverWorkforceValidation {
   row_count: number
   joined_count: number
   invalid_ticket_count: number
+  required_config?: string[]
+  source_status?: string
 }
 
 export interface DriverWorkforceResponse {
@@ -247,6 +249,328 @@ export interface DriverWorkforceResponse {
   alerts: Alert[]
   insights: string[]
   validation: DriverWorkforceValidation
+}
+
+export interface EmployeeWorkforceEmployee {
+  employee_id: string
+  employee_name: string
+  email: string | null
+  department: string | null
+  worked_hours: number
+  productive_hours: number | null
+  idle_hours: number
+  productivity_pct: number | null
+  days_reported: number
+  active_today: boolean
+  latest_activity_date: string | null
+  sign_in_count: number
+  successful_sign_ins: number
+  failed_sign_ins: number
+  interactive_sign_ins: number
+  last_sign_in_at: string | null
+  fleetpulse_session_hours: number
+  active_fleetpulse_session: boolean
+  hourly_role: string | null
+  payroll_review_required: boolean
+  payroll_review_hours: number
+  payroll_review_state: string
+  top_projects: string[]
+  evidence_sources: string[]
+  source: string
+}
+
+export interface EmployeeProjectionExclusionAudit {
+  employee_id: string
+  employee_name: string
+  email: string | null
+  reason: string
+  source: string
+  source_reference?: string
+  effective_date?: string
+  evidence_sources?: string[]
+  activity_rows?: number
+  sign_in_rows?: number
+  session_rows?: number
+  row_count?: number
+}
+
+export interface EmployeeProjectionExclusionStatus {
+  status: string
+  message: string
+  projection_mode: 'read_only'
+  source_authority: string
+  configured_count: number
+  sources: string[]
+  required_config: string[]
+  load_errors: string[]
+  excluded_employee_count: number
+  excluded_row_count?: number
+  excluded_activity_rows?: number
+  excluded_sign_in_rows?: number
+  excluded_session_rows?: number
+  source_row_count?: number
+  effective_row_count?: number
+  employees: EmployeeProjectionExclusionAudit[]
+}
+
+export interface EmployeeWorkforceResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  period: {
+    start: string
+    end: string
+    days: number
+    timezone: string
+  }
+  config: Record<string, number | string | boolean | string[]>
+  summary: {
+    employees: number
+    active_today: number
+    worked_hours: number
+    idle_hours: number
+    fleetpulse_session_hours: number
+    avg_productivity_pct: number | null
+    activity_rows: number
+    invalid_rows: number
+    sign_in_rows: number
+    invalid_sign_in_rows: number
+    sign_in_users: number
+    successful_sign_ins: number
+    failed_sign_ins: number
+    session_rows: number
+    invalid_session_rows: number
+    active_fleetpulse_sessions: number
+    hourly_employees: number
+    payroll_review_hours: number
+    payroll_review_required_count: number
+    identity_only_sign_in_count: number
+    missing_timesheet_count: number
+    excluded_employee_count?: number
+    excluded_activity_rows?: number
+    excluded_sign_in_rows?: number
+    excluded_session_rows?: number
+  }
+  employees: EmployeeWorkforceEmployee[]
+  source_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    api_token_configured?: boolean
+    company_id_configured?: boolean
+    api_base_url_configured?: boolean
+  }
+  sign_in_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    enabled?: boolean
+    graph_configured?: boolean
+    app_filter_count?: number
+  }
+  session_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    active_session_count?: number
+  }
+  employee_exclusions: EmployeeProjectionExclusionStatus
+  payroll_policy: {
+    approval_required: boolean
+    source_authority: string
+    auto_payroll_write_allowed: boolean
+    hourly_role_keywords: string[]
+  }
+  validation: {
+    status: DashboardValidationStatus
+    state: string
+    message: string
+    row_count: number
+    sign_in_row_count?: number
+    session_row_count?: number
+    required_config?: string[]
+  }
+}
+
+export type DriverComplianceDocumentStatus = 'valid' | 'warning' | 'expired' | 'missing' | string
+
+export interface DriverComplianceDocument {
+  expires_on: string | null
+  days_remaining: number | null
+  status: DriverComplianceDocumentStatus
+}
+
+export interface DriverComplianceDriver {
+  driver_id: string
+  driver_name: string
+  email: string | null
+  phone: string | null
+  terminal: string | null
+  documents: {
+    medical_card: DriverComplianceDocument
+    drug_test: DriverComplianceDocument
+    mvr: DriverComplianceDocument
+  }
+  overall_status: DriverComplianceDocumentStatus
+  next_expiration_date: string | null
+  source: string
+}
+
+export interface DriverComplianceResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  config: Record<string, number | string>
+  summary: {
+    drivers: number
+    valid: number
+    warning: number
+    expired: number
+    missing: number
+    invalid_rows: number
+    medical_card_expiring: number
+    drug_test_expiring: number
+    mvr_expiring: number
+    document_status_counts: Record<string, Record<string, number>>
+  }
+  document_types: Array<{ key: 'medical_card' | 'drug_test' | 'mvr'; label: string; warning_days: number }>
+  drivers: DriverComplianceDriver[]
+  source_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    document_fields?: string[]
+    warning_days?: number
+  }
+  validation: {
+    status: DashboardValidationStatus
+    state: string
+    message: string
+    row_count: number
+    required_config?: string[]
+  }
+}
+
+export interface AddressBenchmarkEvidenceMatch {
+  source_system: string | null
+  order_id: string | null
+  driver_id: string | null
+  occurred_at: string | null
+  subject: string | null
+  summary: string | null
+  transcript_available: boolean
+  source_uri: string | null
+}
+
+export interface AddressBenchmarkEvidenceBucket {
+  status: 'matched' | 'no_matching_evidence' | string
+  match_count: number
+  matches: AddressBenchmarkEvidenceMatch[]
+  message: string
+}
+
+export interface AddressBenchmarkDriver {
+  driver_id: string | null
+  driver_name: string
+  measured_orders: number
+  avg_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  variance_vs_pair_average_minutes: number | null
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  stop_events_over_threshold: number
+  coaching_direction: string
+}
+
+export interface AddressBenchmarkRecentOrder {
+  order_id: string
+  route_date: string
+  driver_id: string | null
+  driver_name: string | null
+  route: string | null
+  route_minutes: number | null
+  duration_source: string | null
+  stop_minutes: number | null
+  stop_over_threshold: boolean
+}
+
+export interface AddressBenchmarkPair {
+  address_pair_key: string
+  routes: string[]
+  pickup_address: string
+  delivery_address: string
+  orders: number
+  measured_orders: number
+  missing_actual_time_orders: number
+  avg_route_minutes: number | null
+  median_route_minutes: number | null
+  best_route_minutes: number | null
+  worst_route_minutes: number | null
+  route_minutes_source: string
+  stop_threshold_minutes: number
+  stop_events_over_threshold: number
+  opportunity_minutes_vs_pair_average: number | null
+  estimated_opportunity_cost_vs_pair_average: number | null
+  revenue_total: number
+  driver_pay_total: number
+  driver_benchmarks: AddressBenchmarkDriver[]
+  recent_orders: AddressBenchmarkRecentOrder[]
+  evidence: {
+    voice_recordings: AddressBenchmarkEvidenceBucket
+    emails: AddressBenchmarkEvidenceBucket
+  }
+  source_authority: string
+  projection_mode: 'read_only'
+}
+
+export interface AddressBenchmarkResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  period: {
+    start: string
+    end: string
+    days: number
+  }
+  thresholds: {
+    stop_threshold_minutes: number
+    minimum_history_samples: number
+    cost_per_truck_hour: number | null
+  }
+  filters: {
+    pickup: string | null
+    delivery: string | null
+    route: string | null
+  }
+  summary: {
+    address_pairs: number
+    route_rows_read: number
+    route_rows_in_period: number
+    invalid_route_rows: number
+    measured_orders: number
+    drivers_compared: number
+    opportunity_minutes_vs_pair_average: number
+    estimated_opportunity_cost_vs_pair_average: number | null
+    evidence_matches: number
+  }
+  address_pairs: AddressBenchmarkPair[]
+  evidence_sources: {
+    status: string
+    source_authority: string
+    projection_mode: 'read_only'
+    message: string
+    required_config: string[]
+    path: string | null
+    voice_recordings: number
+    emails: number
+  }
+  source_meta: Record<string, any>
+  recommendations: string[]
 }
 
 export interface SafetyBreakdown {
@@ -536,6 +860,8 @@ export interface ControlTowerFinancialResponse {
   generated_at: string
   projection_mode: 'read_only'
   source_authority: string
+  finance_publishable?: boolean
+  financial_warnings?: Record<string, unknown>[]
   accounts_payable: ControlTowerFinancialSummary
   accounts_receivable: ControlTowerFinancialBucket[]
   cash_flow: Record<string, number | null>
@@ -556,7 +882,7 @@ export interface ControlTowerSeatKpiItem {
   blocker: string | null
   required_config: string[]
   owner_action: string
-  metric_summary: Record<string, string | number | boolean | null>
+  metric_summary: Record<string, unknown>
 }
 
 export interface ControlTowerSeatKpiCoverageSummary {
@@ -943,6 +1269,31 @@ export interface HrRecruitingSummary {
   orientation_show_rate: number | null
 }
 
+export interface DashboardDateRange {
+  start: string
+  end: string
+  days: number
+  previous_start: string
+  previous_end: string
+}
+
+export interface WorkforcePeriodMetrics {
+  new_leads: number
+  new_applicants: number
+  interviews_scheduled: number
+  new_hires: number
+  follow_ups: number
+}
+
+export interface WorkforceTrendComparison {
+  current: Record<string, number>
+  previous: Record<string, number>
+  call_volume_change_pct?: number | null
+  lead_volume_change_pct?: number | null
+  hire_volume_change_pct?: number | null
+  follow_up_change_pct?: number | null
+}
+
 export type HrRecruitingHardTargetStatus = 'healthy' | 'warning' | 'awaiting_feed'
 
 export interface HrRecruitingHardTarget {
@@ -955,6 +1306,22 @@ export interface HrRecruitingHardTarget {
   cadence: string
   display_target: string
   status: HrRecruitingHardTargetStatus
+}
+
+export interface HrRecruitingTeamMember {
+  name: string
+  configured: boolean
+  status: 'configured' | 'source_backed' | string
+  evidence_sources: string[]
+  lead_count: number
+  first_outreach_leads: number
+  real_discussion_leads: number
+  within_24h: number
+  recovered_24_48h: number
+  late_48_72h: number
+  failed_over_72h: number
+  total_outbound_attempts: number
+  within_24h_rate: number | null
 }
 
 export interface HrRecruitingWorklistRow {
@@ -1017,6 +1384,86 @@ export interface HrRecruitingWorkbookSourceQa {
   first_columns: string
 }
 
+export interface HrRecruitingWorkbookException {
+  exception_id: string
+  lead_ref: string
+  masked_contact: string
+  category: string
+  reason: string
+  severity: 'critical' | 'warning' | string
+  source_sheet: string
+  source_system: string
+  source_authority: string
+  lead_created_date: string | null
+  status: string
+  first_outreach_bucket: string
+  real_discussion_bucket: string
+  age_hours: number | null
+  pii_suppressed: boolean
+  projection_mode: 'read_only'
+}
+
+export interface HrRecruitingConversionSummary {
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+  unfiltered_eligible_leads?: number
+}
+
+export interface HrRecruitingConversionTrendSummary {
+  current: HrRecruitingConversionSummary
+  previous: HrRecruitingConversionSummary
+  eligible_change_pct: number | null
+  converted_change_pct: number | null
+  conversion_rate_change_points: number | null
+}
+
+export interface HrRecruitingConversionGroup {
+  source_bucket?: string
+  sla_result?: string
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+}
+
+export interface HrRecruitingConversionTrendRow {
+  date: string
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+}
+
+export interface HrRecruitingConversionFunnel {
+  workbook_name: string | null
+  source_status: string
+  source_message: string | null
+  source_system: string
+  source_authority: string
+  projection_mode: 'read_only'
+  pii_suppressed: boolean
+  conversion_rule: string
+  date_range: DashboardDateRange | null
+  tabs: Array<{ sheet: string; row_count: number; status: string }>
+  missing_tabs: string[]
+  summary: HrRecruitingConversionSummary
+  trend_summary: HrRecruitingConversionTrendSummary | null
+  by_source: HrRecruitingConversionGroup[]
+  by_sla: HrRecruitingConversionGroup[]
+  trend: HrRecruitingConversionTrendRow[]
+}
+
 export interface HrRecruitingWorkbookEvidence {
   workbook_name: string | null
   tabs: Array<{ sheet: string; row_count: number; status: string }>
@@ -1027,6 +1474,9 @@ export interface HrRecruitingWorkbookEvidence {
   first_outreach_by_member: HrRecruitingWorkbookMemberKpi[]
   real_discussion_by_member: HrRecruitingWorkbookMemberKpi[]
   source_log_qa: HrRecruitingWorkbookSourceQa[]
+  exception_queue: HrRecruitingWorkbookException[]
+  exception_summary: Array<{ category: string; count: number }>
+  conversion_funnel?: HrRecruitingConversionFunnel | null
 }
 
 export interface HrRecruitingDataset {
@@ -1046,7 +1496,11 @@ export interface HrRecruitingDataset {
   hard_target_status: HrRecruitingHardTargetStatus
   hard_target_misses: string[]
   hard_target_pending: string[]
+  date_range: DashboardDateRange | null
+  period_metrics: WorkforcePeriodMetrics
+  trend_comparison: WorkforceTrendComparison | null
   summary: HrRecruitingSummary
+  team_members: HrRecruitingTeamMember[]
   by_worklist: HrRecruitingWorklistRow[]
   daily: HrRecruitingDailyRow[]
   status_counts: HrRecruitingStatusCount[]
@@ -1059,6 +1513,13 @@ export interface HrRecruitingDataset {
 // HR call-analysis and productivity monitor
 export interface HrCallAnalysisSummary {
   total_call_legs: number
+  activity_calls?: number
+  activity_voicemails?: number
+  activity_hangups?: number
+  activity_faxes?: number
+  activity_voice_calls?: number
+  activity_report_date?: string | null
+  activity_period?: string | null
   total_minutes: number
   avg_call_seconds: number
   outbound_attempts: number
@@ -1066,6 +1527,9 @@ export interface HrCallAnalysisSummary {
   connect_rate_pct: number | null
   voicemails: number
   hangups: number
+  answered_calls?: number
+  missed_calls?: number
+  follow_up_count?: number
   active_employee_count: number
   analysis_reports: number
   coaching_flags: number
@@ -1132,12 +1596,14 @@ export interface HrCallAnalysisDataset {
   pii_suppressed: boolean
   phone_numbers_stored: boolean
   active_extensions: string[]
+  date_range?: DashboardDateRange | null
   coverage: {
     start: string | null
     end: string | null
     months: string[]
   }
   summary: HrCallAnalysisSummary
+  trend_comparison?: WorkforceTrendComparison | null
   employee_productivity: HrCallEmployeeProductivity[]
   monthly_employee_productivity: Array<HrCallEmployeeProductivity & { month: string }>
   daily_volume: HrCallDailyVolume[]

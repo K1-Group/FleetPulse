@@ -9,6 +9,7 @@ env:
   REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_NAME: fleetpulse
   APP_NAME: ${{ secrets.AZURE_APP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
 
 jobs:
   build-and-deploy:
@@ -59,6 +60,37 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Configure Geotab read-only runtime settings
+        env:
+          GEOTAB_USERNAME: ${{ secrets.GEOTAB_USERNAME }}
+          GEOTAB_PASSWORD: ${{ secrets.GEOTAB_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_NAME:-}" ]; then
+            echo "Missing AZURE_APP_NAME repository secret."
+            exit 1
+          fi
+          if [ -z "${GEOTAB_USERNAME:-}" ] || [ -z "${GEOTAB_PASSWORD:-}" ]; then
+            echo "Missing GEOTAB_USERNAME or GEOTAB_PASSWORD repository secret."
+            exit 1
+          fi
+
+          resource_group="${AZURE_RESOURCE_GROUP:-k1-fleetpulse-rg}"
+
+          az webapp config appsettings set \
+            --name "$APP_NAME" \
+            --resource-group "$resource_group" \
+            --settings \
+              GEOTAB_USERNAME="$GEOTAB_USERNAME" \
+              GEOTAB_PASSWORD="$GEOTAB_PASSWORD" \
+              GEOTAB_DATABASE=K1logistics \
+              GEOTAB_SERVER=my.geotab.com \
+              GEOTAB_ODATA_SERVER=https://odata-connector-2.geotab.com/odata/v4/svc/ \
+              FLEETPULSE_DASHBOARD_VALIDATION_LIVE_PROBE=false \
+            --only-show-errors \
+            >/dev/null
+
       - name: Log in to ACR via Azure CLI
         run: az acr login --name k1fleetpulseacr
 
@@ -74,6 +106,38 @@ jobs:
         with:
           app-name: ${{ env.APP_NAME }}
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Configure live HR SharePoint runtime settings
+        env:
+          AZURE_APP_NAME: ${{ env.APP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_KEY_VAULT_NAME: ${{ secrets.AZURE_KEY_VAULT_NAME }}
+          FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME }}
+          FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME }}
+          FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME }}
+          HR_CALL_ANALYSIS_SHAREPOINT_ENABLED: "true"
+          HR_CALL_ANALYSIS_SHAREPOINT_SITE_URL: https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures
+          HR_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATH: Grasshopper/Call Analysis Reports/HR
+          HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS: .txt,.csv
+          HR_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
+          DEPARTMENT_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
+          HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS: 702,722,725,728,700
+        run: |
+          set -euo pipefail
+
+          for required in \
+            AZURE_KEY_VAULT_NAME \
+            FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME \
+            FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME \
+            FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME
+          do
+            if [ -z "${!required:-}" ]; then
+              echo "Missing ${required} repository secret."
+              exit 1
+            fi
+          done
+
+          bash scripts/configure_fleetpulse_feed_appsettings.sh
 
       - name: Smoke test
         run: |

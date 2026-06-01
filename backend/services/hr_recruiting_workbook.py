@@ -1,22 +1,27 @@
 """Read-only HR recruiting KPI workbook projection.
 
-The workbook parser only projects source-backed aggregate evidence. It never
-returns applicant names, phone numbers, or email addresses to FleetPulse.
+The workbook parser only projects source-backed aggregates and masked exception
+queue evidence. It never returns applicant names, phone numbers, or email
+addresses to FleetPulse.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
+from utils.dashboard_date_range import DashboardDateRange, dashboard_date_range, pct_change
 
 SOURCE_PROFILE = "kpi_workbook"
 SOURCE_SYSTEM = "HR Lead KPI Recheck workbook"
 SOURCE_AUTHORITY = "Grasshopper/SharePoint/Tenstreet HR KPI recheck workbook"
+CONVERSION_SOURCE_SYSTEM = "HR lead-to-Xcelerator conversion workbook"
+CONVERSION_SOURCE_AUTHORITY = "Xcelerator driver list exact-name conversion workbook"
 
 EXPECTED_TABS = (
     "Lead Level KPI",
@@ -26,6 +31,14 @@ EXPECTED_TABS = (
     "Failed Over 72h",
     "No Real Discussion",
     "Source Log QA",
+)
+CONVERSION_EXPECTED_TABS = (
+    "Summary",
+    "Lead Conversion Detail",
+    "Converted Leads",
+    "Not Converted Leads",
+    "Conversion by Source",
+    "Rules and Issues",
 )
 
 FIRST_OUTREACH_BUCKET_ORDER = (
@@ -42,6 +55,82 @@ REAL_DISCUSSION_BUCKET_ORDER = (
     "Over 72h failed",
     "No 1min+ discussion found",
 )
+EXCEPTION_TABS = (
+    "Failed No Outbound",
+    "Failed Over 72h",
+    "No Real Discussion",
+)
+EXCEPTION_TAB_SPECS = {
+    "Failed No Outbound": {
+        "category": "Failed No Outbound",
+        "reason": "No outbound found",
+        "severity": "critical",
+    },
+    "Failed Over 72h": {
+        "category": "Failed Over 72h",
+        "reason": "Over 72h failed",
+        "severity": "critical",
+    },
+    "No Real Discussion": {
+        "category": "No Real Discussion",
+        "reason": "No 1min+ discussion found",
+        "severity": "warning",
+    },
+}
+LEAD_CREATED_ALIASES = (
+    "Lead Created At",
+    "Created At",
+    "Submitted At",
+    "Application Date",
+    "Date",
+)
+STATUS_ALIASES = (
+    "App Status",
+    "Status",
+    "Application Status",
+    "Lead Status",
+)
+FIRST_OUTREACH_BUCKET_ALIASES = (
+    "First Outreach KPI Bucket",
+    "First Outreach Bucket",
+)
+REAL_DISCUSSION_BUCKET_ALIASES = (
+    "Real Discussion KPI Bucket",
+    "Real Discussion Bucket",
+)
+IDENTITY_ALIASES = (
+    "Lead ID",
+    "Lead Form ID",
+    "Application ID",
+    "Applicant ID",
+    "Lead Name",
+    "Name",
+    "Applicant",
+    "Candidate",
+    "Driver",
+    "Phone",
+    "Phone Number",
+    "Email",
+)
+OUTREACH_HOUR_ALIASES = (
+    "Hours to First Outreach",
+    "Hours To First Outreach",
+    "First Outreach Hours",
+)
+DISCUSSION_HOUR_ALIASES = (
+    "Hours to First Real Discussion",
+    "Hours To First Real Discussion",
+    "First Real Discussion Hours",
+)
+LEAD_INTAKE_DATE_FIELDS = ("Lead Created At", "Submitted At", "Created At")
+LEAD_OUTCOME_DATE_FIELDS = ("Interview Scheduled At", "Orientation Scheduled At", "Hire Date", "Hired At", "Completed At")
+CALL_ATTEMPT_DATE_FIELDS = ("Call Date/Time", "Created At")
+CONVERSION_INTAKE_DATE_FIELDS = ("Lead Created At", "Application Date")
+CONVERSION_CONVERTED_ALIASES = ("Converted By Rule", "Converted")
+CONVERSION_STILL_DRIVING_ALIASES = ("Still Driving Evidence", "Still Driving")
+CONVERSION_PHONE_MATCH_ALIASES = ("Phone Also Matches Driver", "Phone Match")
+CONVERSION_SOURCE_ALIASES = ("Source Systems", "Source")
+CONVERSION_SLA_ALIASES = ("SLA Result", "First Outreach SLA")
 
 
 def build_hr_recruiting_workbook_dataset(
@@ -52,10 +141,15 @@ def build_hr_recruiting_workbook_dataset(
     table_id: str,
     sla_hours: tuple[int, ...],
     hard_targets: dict[str, dict[str, Any]],
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
+    conversion_workbook_path: str = "",
 ) -> dict[str, Any]:
     """Build the HR recruiting dataset from the KPI recheck workbook."""
 
     path = Path(workbook_path).expanduser()
+    selected_range = dashboard_date_range(start_date, end_date)
+    conversion_funnel = _conversion_funnel_from_path(conversion_workbook_path, selected_range)
     if not workbook_path:
         return _empty_dataset(
             now=now,
@@ -65,6 +159,8 @@ def build_hr_recruiting_workbook_dataset(
             hard_targets=hard_targets,
             source_status="snapshot_not_configured",
             source_message="Configure HR_RECRUITING_WORKBOOK_PATH with the approved HR KPI recheck workbook.",
+            selected_range=selected_range,
+            conversion_funnel=conversion_funnel,
         )
     if not path.exists():
         return _empty_dataset(
@@ -76,6 +172,8 @@ def build_hr_recruiting_workbook_dataset(
             source_status="source_error",
             source_message="Configured HR_RECRUITING_WORKBOOK_PATH does not exist.",
             workbook_name=path.name,
+            selected_range=selected_range,
+            conversion_funnel=conversion_funnel,
         )
 
     try:
@@ -90,6 +188,8 @@ def build_hr_recruiting_workbook_dataset(
             source_status="source_error",
             source_message=f"HR KPI workbook could not be opened: {type(exc).__name__}.",
             workbook_name=path.name,
+            selected_range=selected_range,
+            conversion_funnel=conversion_funnel,
         )
 
     present_tabs = [sheet for sheet in EXPECTED_TABS if sheet in workbook.sheetnames]
@@ -106,6 +206,8 @@ def build_hr_recruiting_workbook_dataset(
             workbook_name=path.name,
             present_tabs=present_tabs,
             missing_tabs=missing_tabs,
+            selected_range=selected_range,
+            conversion_funnel=conversion_funnel,
         )
 
     leads = _records_for_sheet(
@@ -127,28 +229,45 @@ def build_hr_recruiting_workbook_dataset(
     source_log_qa = _source_log_qa_rows(
         _records_for_sheet(workbook, "Source Log QA", required_headers=("File", "Rows", "Used for Mapping"))
     )
-
-    if not leads:
-        return _empty_dataset(
-            now=now,
-            source=source,
-            table_id=table_id,
-            sla_hours=sla_hours,
-            hard_targets=hard_targets,
-            source_status="empty",
-            source_message="HR KPI workbook is present but Lead Level KPI contains no rows.",
-            workbook_name=path.name,
-            present_tabs=present_tabs,
-            missing_tabs=missing_tabs,
+    exception_records_by_tab = {
+        sheet: _filter_records_by_date_range(
+            _records_for_sheet(
+                workbook,
+                sheet,
+                required_headers=("Lead Created At", "First Outreach KPI Bucket", "Real Discussion KPI Bucket"),
+            ),
+            selected_range,
+            LEAD_INTAKE_DATE_FIELDS,
         )
+        for sheet in EXCEPTION_TABS
+    }
+    unfiltered_leads = leads
+    unfiltered_call_attempts = call_attempts
+    leads = _filter_records_by_date_range(
+        leads,
+        selected_range,
+        LEAD_INTAKE_DATE_FIELDS,
+    )
+    call_attempts = _filter_records_by_date_range(
+        call_attempts,
+        selected_range,
+        CALL_ATTEMPT_DATE_FIELDS,
+    )
 
     as_of = _ensure_aware(now)
-    source_status = "partial" if missing_tabs else "ok"
-    source_message = (
-        f"HR KPI workbook is missing optional evidence tab(s): {', '.join(missing_tabs)}."
-        if missing_tabs
-        else None
-    )
+    if not unfiltered_leads:
+        source_status = "empty"
+        source_message = "HR KPI workbook is present but Lead Level KPI contains no rows."
+    elif selected_range and not leads:
+        source_status = "empty"
+        source_message = "HR KPI workbook is present but no Lead Level KPI rows matched the selected date range."
+    else:
+        source_status = "partial" if missing_tabs else "ok"
+        source_message = (
+            f"HR KPI workbook is missing optional evidence tab(s): {', '.join(missing_tabs)}."
+            if missing_tabs
+            else None
+        )
 
     first_outreach_counts = Counter(_text(row.get("First Outreach KPI Bucket"), "Unknown") for row in leads)
     real_discussion_counts = Counter(_text(row.get("Real Discussion KPI Bucket"), "Unknown") for row in leads)
@@ -188,10 +307,19 @@ def build_hr_recruiting_workbook_dataset(
         "avg_hours_to_first_real_discussion": _mean(real_discussion_hours),
         "first_touch_24h_pct": first_touch_pct,
     }
+    exception_queue = _exception_queue_rows(
+        leads,
+        exception_records_by_tab,
+        as_of=as_of,
+    )
 
     summary = {
         "active_leads": lead_count,
-        "new_leads_today": sum(1 for row in leads if _same_day(row.get("Lead Created At"), as_of)),
+        "new_leads_today": (
+            _record_count_for_range(leads, selected_range, LEAD_INTAKE_DATE_FIELDS)
+            if selected_range
+            else sum(1 for row in leads if _same_day(row.get("Lead Created At"), as_of))
+        ),
         "avg_process_age_hours": kpi_summary["avg_hours_to_first_outreach"],
         "stale_leads": late_48_72 + failed_over_72 + no_outbound,
         "completed_today": 0,
@@ -247,6 +375,9 @@ def build_hr_recruiting_workbook_dataset(
         "hard_target_status": hard_target_status,
         "hard_target_misses": hard_target_misses,
         "hard_target_pending": hard_target_pending,
+        "date_range": selected_range.as_dict() if selected_range else None,
+        "period_metrics": _period_metrics(leads, call_attempts, selected_range),
+        "trend_comparison": _trend_comparison(unfiltered_leads, unfiltered_call_attempts, selected_range),
         "summary": summary,
         "by_worklist": _first_outreach_bucket_rows(leads, first_outreach_counts),
         "daily": _daily_rows(leads),
@@ -256,16 +387,22 @@ def build_hr_recruiting_workbook_dataset(
         ],
         "trend": _trend_rows(leads),
         "row_counts": {
-            "source_rows": lead_count,
+            "source_rows": len(unfiltered_leads),
             "deduped_leads": lead_count,
+            "unfiltered_deduped_leads": len(unfiltered_leads),
             "active_leads": lead_count,
             "completed_leads": 0,
             "invalid_rows": 0,
             "source_email_dedupe_rows": 0,
             "call_attempt_rows": len(call_attempts),
+            "unfiltered_call_attempt_rows": len(unfiltered_call_attempts),
             "source_log_qa_rows": len(source_log_qa),
+            "exception_queue_rows": len(exception_queue),
             "tabs_present": len(present_tabs),
             "tabs_missing": len(missing_tabs),
+            "conversion_source_rows": _conversion_count(conversion_funnel, "unfiltered_eligible_leads"),
+            "conversion_eligible_leads": _conversion_count(conversion_funnel, "eligible_leads"),
+            "conversion_converted_leads": _conversion_count(conversion_funnel, "converted_leads"),
         },
         "validation_errors": {"missing_tabs": len(missing_tabs)} if missing_tabs else {},
         "workbook_evidence": {
@@ -275,9 +412,12 @@ def build_hr_recruiting_workbook_dataset(
             "kpi_summary": kpi_summary,
             "first_outreach_buckets": _bucket_counts(first_outreach_counts, FIRST_OUTREACH_BUCKET_ORDER),
             "real_discussion_buckets": _bucket_counts(real_discussion_counts, REAL_DISCUSSION_BUCKET_ORDER),
-            "first_outreach_by_member": first_outreach_by_member,
-            "real_discussion_by_member": real_discussion_by_member,
+            "first_outreach_by_member": [] if selected_range else first_outreach_by_member,
+            "real_discussion_by_member": [] if selected_range else real_discussion_by_member,
             "source_log_qa": source_log_qa,
+            "exception_queue": exception_queue,
+            "exception_summary": _exception_summary(exception_queue),
+            "conversion_funnel": conversion_funnel,
         },
     }
 
@@ -294,6 +434,8 @@ def _empty_dataset(
     workbook_name: str | None = None,
     present_tabs: list[str] | None = None,
     missing_tabs: list[str] | None = None,
+    selected_range: DashboardDateRange | None = None,
+    conversion_funnel: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     as_of = _ensure_aware(now)
     hard_target_results = _build_hard_target_results(
@@ -318,6 +460,15 @@ def _empty_dataset(
         "hard_target_status": "awaiting_feed",
         "hard_target_misses": [],
         "hard_target_pending": list(hard_targets),
+        "date_range": selected_range.as_dict() if selected_range else None,
+        "period_metrics": {
+            "new_leads": 0,
+            "new_applicants": 0,
+            "interviews_scheduled": 0,
+            "new_hires": 0,
+            "follow_ups": 0,
+        },
+        "trend_comparison": None,
         "summary": {
             "active_leads": 0,
             "new_leads_today": 0,
@@ -341,14 +492,20 @@ def _empty_dataset(
         "row_counts": {
             "source_rows": 0,
             "deduped_leads": 0,
+            "unfiltered_deduped_leads": 0,
             "active_leads": 0,
             "completed_leads": 0,
             "invalid_rows": 0,
             "source_email_dedupe_rows": 0,
             "call_attempt_rows": 0,
+            "unfiltered_call_attempt_rows": 0,
             "source_log_qa_rows": 0,
+            "exception_queue_rows": 0,
             "tabs_present": len(present_tabs or []),
             "tabs_missing": len(missing_tabs or EXPECTED_TABS),
+            "conversion_source_rows": _conversion_count(conversion_funnel, "unfiltered_eligible_leads"),
+            "conversion_eligible_leads": _conversion_count(conversion_funnel, "eligible_leads"),
+            "conversion_converted_leads": _conversion_count(conversion_funnel, "converted_leads"),
         },
         "validation_errors": {"missing_tabs": len(missing_tabs or EXPECTED_TABS)},
         "workbook_evidence": {
@@ -364,6 +521,9 @@ def _empty_dataset(
             "first_outreach_by_member": [],
             "real_discussion_by_member": [],
             "source_log_qa": [],
+            "exception_queue": [],
+            "exception_summary": [],
+            "conversion_funnel": conversion_funnel,
         },
     }
 
@@ -564,6 +724,391 @@ def _source_log_qa_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _conversion_funnel_from_path(
+    workbook_path: str,
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not workbook_path:
+        return None
+
+    path = Path(workbook_path).expanduser()
+    if not path.exists():
+        return _empty_conversion_funnel(
+            workbook_name=path.name,
+            source_status="source_error",
+            source_message="Configured HR_RECRUITING_CONVERSION_WORKBOOK_PATH does not exist.",
+            selected_range=selected_range,
+        )
+
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001 - keep dashboard status available.
+        return _empty_conversion_funnel(
+            workbook_name=path.name,
+            source_status="source_error",
+            source_message=f"HR conversion workbook could not be opened: {type(exc).__name__}.",
+            selected_range=selected_range,
+        )
+
+    present_tabs = [sheet for sheet in CONVERSION_EXPECTED_TABS if sheet in workbook.sheetnames]
+    missing_tabs = [sheet for sheet in CONVERSION_EXPECTED_TABS if sheet not in workbook.sheetnames]
+    if "Lead Conversion Detail" not in workbook.sheetnames:
+        return _empty_conversion_funnel(
+            workbook_name=path.name,
+            source_status="source_error",
+            source_message="HR conversion workbook is missing required tab: Lead Conversion Detail.",
+            present_tabs=present_tabs,
+            missing_tabs=missing_tabs,
+            selected_range=selected_range,
+        )
+
+    detail_rows = _records_for_sheet(
+        workbook,
+        "Lead Conversion Detail",
+        required_headers=("Lead Created At", "Source Systems", "Converted By Rule"),
+    )
+    filtered_rows = _filter_records_by_date_range(
+        detail_rows,
+        selected_range,
+        CONVERSION_INTAKE_DATE_FIELDS,
+    )
+    source_status = "ok"
+    source_message: str | None = None
+    if not detail_rows:
+        source_status = "empty"
+        source_message = "HR conversion workbook is present but Lead Conversion Detail contains no rows."
+    elif selected_range and not filtered_rows:
+        source_status = "empty"
+        source_message = "HR conversion workbook is present but no conversion rows matched the selected lead intake date range."
+    elif missing_tabs:
+        source_status = "partial"
+        source_message = f"HR conversion workbook is missing optional tab(s): {', '.join(missing_tabs)}."
+
+    current_summary = _conversion_metrics(filtered_rows)
+    return {
+        "workbook_name": path.name,
+        "source_status": source_status,
+        "source_message": source_message,
+        "source_system": CONVERSION_SOURCE_SYSTEM,
+        "source_authority": CONVERSION_SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "pii_suppressed": True,
+        "conversion_rule": _conversion_rule(workbook),
+        "date_range": selected_range.as_dict() if selected_range else None,
+        "tabs": _conversion_tab_counts(workbook, present_tabs),
+        "missing_tabs": missing_tabs,
+        "summary": {
+            **current_summary,
+            "unfiltered_eligible_leads": len(detail_rows),
+        },
+        "trend_summary": _conversion_trend_summary(detail_rows, selected_range),
+        "by_source": _conversion_group_rows(filtered_rows, CONVERSION_SOURCE_ALIASES, "source_bucket"),
+        "by_sla": _conversion_group_rows(filtered_rows, CONVERSION_SLA_ALIASES, "sla_result"),
+        "trend": _conversion_trend_rows(filtered_rows),
+    }
+
+
+def _empty_conversion_funnel(
+    *,
+    workbook_name: str | None = None,
+    source_status: str,
+    source_message: str,
+    present_tabs: list[str] | None = None,
+    missing_tabs: list[str] | None = None,
+    selected_range: DashboardDateRange | None = None,
+) -> dict[str, Any]:
+    return {
+        "workbook_name": workbook_name,
+        "source_status": source_status,
+        "source_message": source_message,
+        "source_system": CONVERSION_SOURCE_SYSTEM,
+        "source_authority": CONVERSION_SOURCE_AUTHORITY,
+        "projection_mode": "read_only",
+        "pii_suppressed": True,
+        "conversion_rule": "Exact normalized lead name match against the Xcelerator driver list.",
+        "date_range": selected_range.as_dict() if selected_range else None,
+        "tabs": [
+            {"sheet": sheet, "row_count": 0, "status": "present"}
+            for sheet in (present_tabs or [])
+        ],
+        "missing_tabs": list(missing_tabs or CONVERSION_EXPECTED_TABS),
+        "summary": {
+            **_conversion_metrics([]),
+            "unfiltered_eligible_leads": 0,
+        },
+        "trend_summary": None,
+        "by_source": [],
+        "by_sla": [],
+        "trend": [],
+    }
+
+
+def _conversion_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    eligible = len(records)
+    converted = sum(1 for record in records if _conversion_yes(record, CONVERSION_CONVERTED_ALIASES))
+    still_driving = sum(1 for record in records if _conversion_yes(record, CONVERSION_STILL_DRIVING_ALIASES))
+    phone_match = sum(1 for record in records if _conversion_yes(record, CONVERSION_PHONE_MATCH_ALIASES))
+    return {
+        "eligible_leads": eligible,
+        "converted_leads": converted,
+        "not_converted_leads": max(eligible - converted, 0),
+        "conversion_rate": round(converted / eligible, 4) if eligible else None,
+        "still_driving_count": still_driving,
+        "still_driving_rate": round(still_driving / eligible, 4) if eligible else None,
+        "phone_match_count": phone_match,
+    }
+
+
+def _conversion_trend_summary(
+    records: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not selected_range:
+        return None
+    previous_range = selected_range.previous()
+    current = _conversion_metrics(
+        _filter_records_by_date_range(records, selected_range, CONVERSION_INTAKE_DATE_FIELDS)
+    )
+    previous = _conversion_metrics(
+        _filter_records_by_date_range(records, previous_range, CONVERSION_INTAKE_DATE_FIELDS)
+    )
+    current_rate = current["conversion_rate"]
+    previous_rate = previous["conversion_rate"]
+    return {
+        "current": current,
+        "previous": previous,
+        "eligible_change_pct": pct_change(current["eligible_leads"], previous["eligible_leads"]),
+        "converted_change_pct": pct_change(current["converted_leads"], previous["converted_leads"]),
+        "conversion_rate_change_points": (
+            round((current_rate - previous_rate) * 100, 1)
+            if current_rate is not None and previous_rate is not None
+            else None
+        ),
+    }
+
+
+def _conversion_group_rows(
+    records: list[dict[str, Any]],
+    aliases: tuple[str, ...],
+    label_key: str,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        label = _text(_value_for(record, aliases), "Unknown")
+        grouped[label].append(record)
+
+    rows: list[dict[str, Any]] = []
+    for label, group in grouped.items():
+        rows.append({label_key: label, **_conversion_metrics(group)})
+    return sorted(
+        rows,
+        key=lambda row: (-int(row["eligible_leads"]), str(row[label_key])),
+    )
+
+
+def _conversion_trend_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        parsed = _parse_datetime(_value_for(record, CONVERSION_INTAKE_DATE_FIELDS))
+        if parsed is None:
+            continue
+        grouped[parsed.date().isoformat()].append(record)
+    return [
+        {"date": day, **_conversion_metrics(group)}
+        for day, group in sorted(grouped.items(), key=lambda item: item[0])
+    ]
+
+
+def _conversion_tab_counts(workbook: Workbook, present_tabs: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    required_by_sheet = {
+        "Summary": ("Metric", "Value"),
+        "Lead Conversion Detail": ("Lead Created At", "Source Systems", "Converted By Rule"),
+        "Converted Leads": ("Lead Created At", "Converted By Rule"),
+        "Not Converted Leads": ("Lead Created At", "Converted By Rule"),
+        "Conversion by Source": ("Source Systems", "Eligible Leads", "Converted by Name"),
+        "Rules and Issues": ("Item", "Detail"),
+    }
+    for sheet in present_tabs:
+        records = _records_for_sheet(
+            workbook,
+            sheet,
+            required_headers=required_by_sheet.get(sheet, ("Lead Created At", "Converted By Rule")),
+        )
+        rows.append({"sheet": sheet, "row_count": len(records), "status": "present"})
+    return rows
+
+
+def _conversion_rule(workbook: Workbook) -> str:
+    rows = _records_for_sheet(workbook, "Rules and Issues", required_headers=("Item", "Detail"))
+    for row in rows:
+        item = _normalize_header(_text(row.get("Item")))
+        if item == "conversionruleapplied":
+            return _text(row.get("Detail"), "Exact normalized lead name match against the Xcelerator driver list.")
+    return "Exact normalized lead name match against the Xcelerator driver list."
+
+
+def _conversion_yes(record: dict[str, Any], aliases: tuple[str, ...]) -> bool:
+    return _boolish(_value_for(record, aliases))
+
+
+def _conversion_count(conversion_funnel: dict[str, Any] | None, key: str) -> int:
+    if not conversion_funnel:
+        return 0
+    summary = conversion_funnel.get("summary")
+    if not isinstance(summary, dict):
+        return 0
+    return int(summary.get(key) or 0)
+
+
+def _exception_queue_rows(
+    lead_rows: list[dict[str, Any]],
+    exception_records_by_tab: dict[str, list[dict[str, Any]]],
+    *,
+    as_of: datetime,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for sheet in EXCEPTION_TABS:
+        spec = EXCEPTION_TAB_SPECS[sheet]
+        for record in exception_records_by_tab.get(sheet, []):
+            row = _exception_queue_row(
+                record,
+                source_sheet=sheet,
+                category=str(spec["category"]),
+                reason=str(spec["reason"]),
+                severity=str(spec["severity"]),
+                as_of=as_of,
+            )
+            _append_unique_exception(rows, seen, row)
+
+    for record in lead_rows:
+        for spec in _lead_level_exception_specs(record):
+            row = _exception_queue_row(
+                record,
+                source_sheet="Lead Level KPI",
+                category=str(spec["category"]),
+                reason=str(spec["reason"]),
+                severity=str(spec["severity"]),
+                as_of=as_of,
+            )
+            _append_unique_exception(rows, seen, row)
+
+    severity_order = {"critical": 0, "warning": 1}
+    return sorted(
+        rows,
+        key=lambda row: (
+            severity_order.get(str(row["severity"]), 9),
+            -float(row["age_hours"] or 0),
+            str(row["lead_created_date"] or ""),
+            str(row["category"]),
+        ),
+    )
+
+
+def _append_unique_exception(
+    rows: list[dict[str, Any]],
+    seen: set[tuple[str, str]],
+    row: dict[str, Any],
+) -> None:
+    key = (str(row["category"]), str(row["lead_ref"]))
+    if key in seen:
+        return
+    seen.add(key)
+    rows.append(row)
+
+
+def _lead_level_exception_specs(record: dict[str, Any]) -> list[dict[str, str]]:
+    specs: list[dict[str, str]] = []
+    first_bucket = _text(_value_for(record, FIRST_OUTREACH_BUCKET_ALIASES))
+    discussion_bucket = _text(_value_for(record, REAL_DISCUSSION_BUCKET_ALIASES))
+    first_key = _normalize_header(first_bucket)
+    discussion_key = _normalize_header(discussion_bucket)
+    if first_key == "nooutboundfound":
+        specs.append(EXCEPTION_TAB_SPECS["Failed No Outbound"])
+    if first_key == "over72hfailed":
+        specs.append(EXCEPTION_TAB_SPECS["Failed Over 72h"])
+    if discussion_key == "no1mindiscussionfound":
+        specs.append(EXCEPTION_TAB_SPECS["No Real Discussion"])
+    return specs
+
+
+def _exception_queue_row(
+    record: dict[str, Any],
+    *,
+    source_sheet: str,
+    category: str,
+    reason: str,
+    severity: str,
+    as_of: datetime,
+) -> dict[str, Any]:
+    lead_key = _lead_identity_key(record)
+    lead_created_at = _parse_datetime(_value_for(record, LEAD_CREATED_ALIASES))
+    first_bucket = _text(_value_for(record, FIRST_OUTREACH_BUCKET_ALIASES), "Unknown")
+    discussion_bucket = _text(_value_for(record, REAL_DISCUSSION_BUCKET_ALIASES), "Unknown")
+    return {
+        "exception_id": _hash_key((category, lead_key)),
+        "lead_ref": f"lead-ref-{lead_key[:4]}-{lead_key[4:8]}",
+        "masked_contact": "PII suppressed",
+        "category": category,
+        "reason": reason,
+        "severity": severity,
+        "source_sheet": source_sheet,
+        "source_system": SOURCE_SYSTEM,
+        "source_authority": SOURCE_AUTHORITY,
+        "lead_created_date": lead_created_at.date().isoformat() if lead_created_at else None,
+        "status": _text(_value_for(record, STATUS_ALIASES), "Unknown"),
+        "first_outreach_bucket": first_bucket,
+        "real_discussion_bucket": discussion_bucket,
+        "age_hours": _exception_age_hours(record, category=category, lead_created_at=lead_created_at, as_of=as_of),
+        "pii_suppressed": True,
+        "projection_mode": "read_only",
+    }
+
+
+def _exception_age_hours(
+    record: dict[str, Any],
+    *,
+    category: str,
+    lead_created_at: datetime | None,
+    as_of: datetime,
+) -> float | None:
+    aliases = DISCUSSION_HOUR_ALIASES if category == "No Real Discussion" else OUTREACH_HOUR_ALIASES
+    explicit_hours = _number(_value_for(record, aliases))
+    if explicit_hours is not None:
+        return round(explicit_hours, 2)
+    if lead_created_at is None:
+        return None
+    return round(max((as_of - lead_created_at).total_seconds() / 3600, 0), 2)
+
+
+def _lead_identity_key(record: dict[str, Any]) -> str:
+    parts = [_text(_value_for(record, (alias,))) for alias in IDENTITY_ALIASES]
+    parts.extend(_text(_value_for(record, (alias,))) for alias in (*LEAD_CREATED_ALIASES, *STATUS_ALIASES))
+    stable_parts = [part for part in parts if part]
+    if not stable_parts:
+        stable_parts = [_text(value) for value in record.values() if _text(value)][:8]
+    return _hash_key(tuple(stable_parts or ["unknown-lead"]))
+
+
+def _value_for(record: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    normalized = {_normalize_header(alias) for alias in aliases}
+    for key, value in record.items():
+        if _normalize_header(str(key)) in normalized:
+            return value
+    return None
+
+
+def _hash_key(parts: tuple[str, ...]) -> str:
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def _exception_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts = Counter(str(row["category"]) for row in rows)
+    return [{"category": category, "count": counts[category]} for category in sorted(counts)]
+
+
 def _bucket_counts(counter: Counter[str], order: tuple[str, ...]) -> list[dict[str, Any]]:
     ordered_keys = [key for key in order if key in counter]
     ordered_keys.extend(sorted(key for key in counter if key not in ordered_keys))
@@ -654,6 +1199,88 @@ def _parse_datetime(value: Any) -> datetime | None:
 def _same_day(value: Any, as_of: datetime) -> bool:
     parsed = _parse_datetime(value)
     return bool(parsed and parsed.date() == as_of.date())
+
+
+def _record_matches_date_range(
+    record: dict[str, Any],
+    selected_range: DashboardDateRange | None,
+    fields: tuple[str, ...],
+) -> bool:
+    if not selected_range:
+        return True
+    return any(
+        selected_range.contains_datetime(_parse_datetime(record.get(field)))
+        for field in fields
+    )
+
+
+def _filter_records_by_date_range(
+    records: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+    fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    if not selected_range:
+        return records
+    return [
+        record
+        for record in records
+        if _record_matches_date_range(record, selected_range, fields)
+    ]
+
+
+def _period_metrics(
+    leads: list[dict[str, Any]],
+    call_attempts: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, int]:
+    return {
+        "new_leads": _record_count_for_range(leads, selected_range, LEAD_INTAKE_DATE_FIELDS),
+        "new_applicants": len(leads),
+        "interviews_scheduled": _record_count_for_range(
+            leads,
+            selected_range,
+            LEAD_OUTCOME_DATE_FIELDS[:2],
+        ),
+        "new_hires": _record_count_for_range(leads, selected_range, LEAD_OUTCOME_DATE_FIELDS[2:]),
+        "follow_ups": len(call_attempts),
+    }
+
+
+def _record_count_for_range(
+    records: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+    fields: tuple[str, ...],
+) -> int:
+    if not selected_range:
+        return len(records)
+    return sum(1 for record in records if _record_matches_date_range(record, selected_range, fields))
+
+
+def _trend_comparison(
+    leads: list[dict[str, Any]],
+    call_attempts: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not selected_range:
+        return None
+    previous_range = selected_range.previous()
+    current = _period_metrics(
+        _filter_records_by_date_range(leads, selected_range, LEAD_INTAKE_DATE_FIELDS),
+        _filter_records_by_date_range(call_attempts, selected_range, CALL_ATTEMPT_DATE_FIELDS),
+        selected_range,
+    )
+    previous = _period_metrics(
+        _filter_records_by_date_range(leads, previous_range, LEAD_INTAKE_DATE_FIELDS),
+        _filter_records_by_date_range(call_attempts, previous_range, CALL_ATTEMPT_DATE_FIELDS),
+        previous_range,
+    )
+    return {
+        "current": current,
+        "previous": previous,
+        "lead_volume_change_pct": pct_change(current["new_leads"], previous["new_leads"]),
+        "hire_volume_change_pct": pct_change(current["new_hires"], previous["new_hires"]),
+        "follow_up_change_pct": pct_change(current["follow_ups"], previous["follow_ups"]),
+    }
 
 
 def _text(value: Any, default: str = "") -> str:

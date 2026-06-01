@@ -17,6 +17,7 @@ from typing import Any
 
 from configs.hr_call_analysis import DEFAULT_STATE_PATH, HrCallAnalysisConfig
 from integrations.sharepoint.graph_drive_client import SharePointDriveClient, SharePointDriveFile
+from utils.dashboard_date_range import DashboardDateRange, dashboard_date_range, pct_change
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,11 @@ DEPARTMENT_ALIASES = {
     "dispatch": "Operations",
     "fleetops": "Operations",
     "fleetoperations": "Operations",
+    "safety": "Fleet Safety",
+    "fleetsafety": "Fleet Safety",
+    "accounting": "Accounting",
+    "qualitycontrol": "Quality Control",
+    "sales": "Sales",
     "hr": "HR",
     "humanresources": "HR",
     "recruiting": "HR",
@@ -51,6 +57,7 @@ class SourceLoadResult:
     call_rows: list[dict[str, Any]]
     analysis_reports: list[dict[str, Any]]
     lead_rows: list[dict[str, Any]]
+    activity_rows: list[dict[str, Any]]
     status: str
     message: str | None = None
     last_imported_at: str | None = None
@@ -221,6 +228,54 @@ def _department_matches(row: dict[str, Any], department: str) -> bool:
     return normalized == "All" or _row_department(row) == normalized
 
 
+def _first_datetime(row: dict[str, Any], fields: tuple[str, ...]) -> datetime | None:
+    for field in fields:
+        parsed = _parse_datetime(_find_value(row, (field,)))
+        if parsed:
+            return parsed
+    return None
+
+
+def _filter_rows_for_date_range(
+    rows: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+    fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    if not selected_range:
+        return rows
+    return [
+        row
+        for row in rows
+        if selected_range.contains_datetime(_first_datetime(row, fields))
+    ]
+
+
+def _filter_call_rows_for_active_extensions(
+    rows: list[dict[str, Any]],
+    active_extensions: set[str],
+) -> list[dict[str, Any]]:
+    if not active_extensions:
+        return rows
+    return [
+        row
+        for row in rows
+        if _text(row.get("extension_id")) in active_extensions
+    ]
+
+
+def _filter_activity_rows_for_active_extensions(
+    rows: list[dict[str, Any]],
+    active_extensions: set[str],
+) -> list[dict[str, Any]]:
+    if not active_extensions:
+        return rows
+    return [
+        row
+        for row in rows
+        if _text(row.get("extension_id")) in active_extensions
+    ]
+
+
 def _active_extensions_for_department(config: HrCallAnalysisConfig, department: str) -> set[str]:
     env_key = f"CALL_ANALYSIS_{_department_key(department).upper()}_ACTIVE_EXTENSIONS"
     configured = os.getenv(env_key, "").strip()
@@ -315,26 +370,140 @@ def _records_from_csv(content: str) -> list[dict[str, Any]]:
     ]
 
 
-def _extract_payload(content: str, *, filename: str | None = None) -> dict[str, Any]:
+def _parse_ratio_count(value: Any, position: int) -> int:
+    parts = _text(value).split("/")
+    if len(parts) <= position:
+        return 0
+    try:
+        return int(re.sub(r"\D+", "", parts[position]) or 0)
+    except ValueError:
+        return 0
+
+
+def _activity_report_date(content: str, filename: str | None) -> str | None:
+    candidates = [filename or ""]
+    for line in content.splitlines()[:5]:
+        candidates.append(line)
+    for candidate in candidates:
+        match = re.search(r"Activity[_\s-]+(\d{1,2})[._-](\d{1,2})(?:[._-](\d{2,4}))?", candidate)
+        if not match:
+            continue
+        month = int(match.group(1))
+        day = int(match.group(2))
+        year = int(match.group(3) or _now_utc().year)
+        if year < 100:
+            year += 2000
+        return date(year, month, day).isoformat()
+    return None
+
+
+def _department_from_extension_label(label: str, config: HrCallAnalysisConfig) -> str:
+    extension_id, employee_name = _split_extension(label)
+    normalized = _normalize_key(f"{extension_id} {employee_name}")
+    if extension_id in set(config.active_extensions) or "hrmanager" in normalized:
+        return "HR"
+    if extension_id == "1" or "customeroperations" in normalized:
+        return "Operations"
+    if extension_id == "2" or "safety" in normalized:
+        return "Fleet Safety"
+    if extension_id == "3" or "accounting" in normalized:
+        return "Accounting"
+    if extension_id == "5" or "qualitycontrol" in normalized:
+        return "Quality Control"
+    if extension_id == "6" or "sales" in normalized:
+        return "Sales"
+    if extension_id == "0" or "otherquestions" in normalized:
+        return "Other Questions"
+    if extension_id.casefold().startswith("main") or normalized.startswith("main"):
+        return "Main / Unrouted"
+    if extension_id == "8" or "directory" in normalized:
+        return "Name Directory"
+    if extension_id.isdigit() and 700 <= int(extension_id) <= 799:
+        return "Other 700-Series Extensions"
+    return "Other / Unmapped"
+
+
+def _activity_rows_from_csv(content: str, *, filename: str | None, config: HrCallAnalysisConfig) -> list[dict[str, Any]]:
+    report_date = _activity_report_date(content, filename)
+    rows = list(csv.reader(io.StringIO(content)))
+    period = ""
+    in_extensions = False
+    activity_rows: list[dict[str, Any]] = []
+    for row_number, row in enumerate(rows, start=1):
+        if not row:
+            continue
+        label = _text(row[0])
+        if re.fullmatch(r"[A-Za-z]+\s+\d{4}", label):
+            period = label
+            continue
+        if label == "Extensions":
+            in_extensions = True
+            continue
+        if not in_extensions or label in {"", "Totals"}:
+            continue
+        extension_id, employee_name = _split_extension(label)
+        if not extension_id:
+            continue
+        department = _department_from_extension_label(label, config)
+        calls = _parse_ratio_count(row[1] if len(row) > 1 else "", 1)
+        activity_rows.append(
+            {
+                "activity_id": _hash_key((report_date or "", period, extension_id, label, str(row_number))),
+                "department": department,
+                "department_key": _department_key(department),
+                "report_date": report_date,
+                "activity_period": period,
+                "extension_id": extension_id,
+                "employee_name": employee_name,
+                "activity_calls": calls,
+                "activity_voicemails": _parse_ratio_count(row[1] if len(row) > 1 else "", 0),
+                "activity_hangups": _parse_ratio_count(row[2] if len(row) > 2 else "", 0),
+                "activity_faxes": _parse_ratio_count(row[3] if len(row) > 3 else "", 0),
+                "activity_voice_calls": _parse_ratio_count(row[4] if len(row) > 4 else "", 0),
+                "source_file": Path(filename or "").name,
+            }
+        )
+    return activity_rows
+
+
+def _extract_payload(
+    content: str,
+    *,
+    filename: str | None = None,
+    config: HrCallAnalysisConfig | None = None,
+) -> dict[str, Any]:
     stripped = content.lstrip("\ufeff").strip()
     if not stripped:
-        return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "department": ""}
+        return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "activity_rows": [], "department": ""}
     suffix = Path(filename or "").suffix.casefold()
+    if (
+        suffix == ".csv"
+        and ("Report: Activity" in stripped or "Voice Mails / Calls / Ratio" in stripped)
+    ):
+        config = config or HrCallAnalysisConfig.from_env()
+        return {
+            "call_rows": [],
+            "analysis_reports": [],
+            "lead_rows": [],
+            "activity_rows": _activity_rows_from_csv(stripped, filename=filename, config=config),
+            "department": "",
+        }
     if suffix == ".txt" and "CALL INTELLIGENCE REPORT" in stripped:
-        return {"call_rows": [], "analysis_reports": [{"analysis_text": stripped, "filename": filename or ""}], "lead_rows": [], "department": ""}
+        return {"call_rows": [], "analysis_reports": [{"analysis_text": stripped, "filename": filename or ""}], "lead_rows": [], "activity_rows": [], "department": ""}
     if suffix == ".json" or stripped[:1] in {"[", "{"}:
         payload = json.loads(stripped)
         if isinstance(payload, list):
-            return {"call_rows": payload, "analysis_reports": [], "lead_rows": [], "department": ""}
+            return {"call_rows": payload, "analysis_reports": [], "lead_rows": [], "activity_rows": [], "department": ""}
         if not isinstance(payload, dict):
-            return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "department": ""}
+            return {"call_rows": [], "analysis_reports": [], "lead_rows": [], "activity_rows": [], "department": ""}
         return {
             "call_rows": list(payload.get("call_rows") or payload.get("calls") or payload.get("rows") or []),
             "analysis_reports": list(payload.get("analysis_reports") or payload.get("call_analysis_reports") or []),
             "lead_rows": list(payload.get("lead_rows") or payload.get("leads") or []),
+            "activity_rows": list(payload.get("activity_rows") or payload.get("activity") or []),
             "department": _text(payload.get("department") or payload.get("source_department")),
         }
-    return {"call_rows": _records_from_csv(stripped), "analysis_reports": [], "lead_rows": [], "department": ""}
+    return {"call_rows": _records_from_csv(stripped), "analysis_reports": [], "lead_rows": [], "activity_rows": [], "department": ""}
 
 
 def _normalize_call_row(
@@ -372,9 +541,11 @@ def _normalize_call_row(
     )
     type_key = re.sub(r"[^a-z0-9]+", "_", call_type.casefold()).strip("_")
     source_row_number = int(_find_value(row, ("source_row_number",)) or row_number or 0)
-    department = _normalize_department(
-        _find_value(row, ("department", "Department", "source_department", "team", "Team")),
-        default=default_department,
+    department_value = _find_value(row, ("department", "Department", "source_department", "team", "Team"))
+    department = (
+        _normalize_department(department_value, default=default_department)
+        if _text(department_value)
+        else _department_from_extension_label(f"{extension_id} - {employee_name}", config)
     )
     call_id = _text(_find_value(row, ("call_id", "id"))) or _hash_key(
         (
@@ -530,6 +701,55 @@ def _normalize_lead_row(
     }
 
 
+def _normalize_activity_row(
+    row: dict[str, Any],
+    config: HrCallAnalysisConfig,
+    *,
+    row_number: int = 0,
+    default_department: str = "HR",
+) -> dict[str, Any] | None:
+    extension_label = _text(_find_value(row, ("extension", "Extension", "Numbers and Extensions")))
+    extension_id = _text(_find_value(row, ("extension_id", "Extension ID")))
+    employee_name = _text(_find_value(row, ("employee_name", "employee", "Agent Name")))
+    if not extension_id or not employee_name:
+        extension_id, employee_name = _split_extension(extension_label or extension_id)
+    if not extension_id:
+        return None
+    report_dt = _parse_datetime(_find_value(row, ("report_date", "activity_date", "date")))
+    report_date = _date_str(report_dt) or _text(row.get("report_date"))
+    department = _normalize_department(
+        row.get("department") or row.get("source_department") or _department_from_extension_label(
+            f"{extension_id} - {employee_name}",
+            config,
+        ),
+        default=default_department,
+    )
+    activity_id = _text(row.get("activity_id")) or _hash_key(
+        (
+            report_date,
+            _text(row.get("activity_period")),
+            extension_id,
+            employee_name,
+            str(row_number),
+        )
+    )
+    return {
+        "activity_id": activity_id,
+        "department": department,
+        "department_key": _department_key(department),
+        "report_date": report_date,
+        "activity_period": _text(row.get("activity_period")),
+        "extension_id": extension_id,
+        "employee_name": employee_name,
+        "activity_calls": int(row.get("activity_calls") or row.get("calls") or 0),
+        "activity_voicemails": int(row.get("activity_voicemails") or row.get("voicemails") or 0),
+        "activity_hangups": int(row.get("activity_hangups") or row.get("hangups") or 0),
+        "activity_faxes": int(row.get("activity_faxes") or row.get("faxes") or 0),
+        "activity_voice_calls": int(row.get("activity_voice_calls") or row.get("voice_calls") or 0),
+        "source_file": Path(str(row.get("source_file") or "")).name,
+    }
+
+
 def _dedupe(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -545,6 +765,7 @@ def _read_state(path: Path) -> SourceLoadResult:
             call_rows=[],
             analysis_reports=[],
             lead_rows=[],
+            activity_rows=[],
             status="snapshot_not_configured",
             message="Import HR call analysis evidence or configure SharePoint sync.",
         )
@@ -555,15 +776,18 @@ def _read_state(path: Path) -> SourceLoadResult:
             call_rows=[],
             analysis_reports=[],
             lead_rows=[],
+            activity_rows=[],
             status="source_error",
             message=f"HR call analysis state load failed: {type(exc).__name__}.",
         )
+    has_evidence = bool(payload.get("call_rows") or payload.get("analysis_reports") or payload.get("activity_rows"))
     return SourceLoadResult(
         call_rows=list(payload.get("call_rows") or []),
         analysis_reports=list(payload.get("analysis_reports") or []),
         lead_rows=list(payload.get("lead_rows") or []),
-        status="ok" if (payload.get("call_rows") or payload.get("analysis_reports")) else "empty",
-        message=None if (payload.get("call_rows") or payload.get("analysis_reports")) else "State file is present but contains no call evidence.",
+        activity_rows=list(payload.get("activity_rows") or []),
+        status="ok" if has_evidence else "empty",
+        message=None if has_evidence else "State file is present but contains no call evidence.",
         last_imported_at=payload.get("last_imported_at"),
     )
 
@@ -574,6 +798,7 @@ def _write_state(
     call_rows: list[dict[str, Any]],
     analysis_reports: list[dict[str, Any]],
     lead_rows: list[dict[str, Any]],
+    activity_rows: list[dict[str, Any]],
 ) -> None:
     payload = {
         "version": 1,
@@ -583,6 +808,7 @@ def _write_state(
         "call_rows": call_rows,
         "analysis_reports": analysis_reports,
         "lead_rows": lead_rows,
+        "activity_rows": activity_rows,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
@@ -604,7 +830,7 @@ def import_hr_call_analysis_snapshot(
     config = config or HrCallAnalysisConfig.from_env()
     target_path = Path(path or config.state_path or DEFAULT_STATE_PATH)
     try:
-        payload = _extract_payload(content, filename=filename)
+        payload = _extract_payload(content, filename=filename, config=config)
     except Exception as exc:  # noqa: BLE001
         return {
             "status": "invalid",
@@ -621,7 +847,8 @@ def import_hr_call_analysis_snapshot(
     call_rows: list[dict[str, Any]] = []
     invalid_count = 0
     for index, row in enumerate(payload["call_rows"], start=1):
-        normalized = _normalize_call_row(row, config, row_number=index, default_department=default_department)
+        source_row = {**row, "source_file": row.get("source_file") or filename or ""}
+        normalized = _normalize_call_row(source_row, config, row_number=index, default_department=default_department)
         if normalized:
             call_rows.append(normalized)
         else:
@@ -641,12 +868,21 @@ def import_hr_call_analysis_snapshot(
         if normalized:
             lead_rows.append(normalized)
 
+    activity_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(payload["activity_rows"], start=1):
+        normalized = _normalize_activity_row(row, config, row_number=index, default_department=default_department)
+        if normalized:
+            activity_rows.append(normalized)
+        else:
+            invalid_count += 1
+
     existing = _read_state(target_path)
     merged_call_rows = _dedupe([*existing.call_rows, *call_rows], "call_id")
     merged_analysis_reports = _dedupe([*existing.analysis_reports, *analysis_reports], "analysis_file_key")
     merged_lead_rows = _dedupe([*existing.lead_rows, *lead_rows], "lead_key")
+    merged_activity_rows = _dedupe([*existing.activity_rows, *activity_rows], "activity_id")
 
-    imported_count = len(call_rows) + len(analysis_reports) + len(lead_rows)
+    imported_count = len(call_rows) + len(analysis_reports) + len(lead_rows) + len(activity_rows)
     if imported_count == 0:
         return {
             "status": "invalid",
@@ -665,6 +901,7 @@ def import_hr_call_analysis_snapshot(
             call_rows=merged_call_rows,
             analysis_reports=merged_analysis_reports,
             lead_rows=merged_lead_rows,
+            activity_rows=merged_activity_rows,
         )
 
     return {
@@ -677,6 +914,7 @@ def import_hr_call_analysis_snapshot(
         "call_rows": len(call_rows),
         "analysis_reports": len(analysis_reports),
         "lead_rows": len(lead_rows),
+        "activity_rows": len(activity_rows),
         "invalid_count": invalid_count,
         "errors": [],
         "state_path": str(target_path),
@@ -788,6 +1026,41 @@ def _daily_volume(call_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _activity_rows_for_selected_range(
+    rows: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    dated_rows = [
+        (parsed.date(), row)
+        for row in rows
+        if (parsed := _parse_datetime(row.get("report_date")))
+    ]
+    if not dated_rows:
+        return rows if not selected_range else []
+    if selected_range:
+        dated_rows = [(day, row) for day, row in dated_rows if selected_range.contains_date(day)]
+        if not dated_rows:
+            return []
+    latest_day = max(day for day, _row in dated_rows)
+    return [row for day, row in dated_rows if day == latest_day]
+
+
+def _activity_summary(activity_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    report_dates = sorted({_text(row.get("report_date")) for row in activity_rows if row.get("report_date")})
+    periods = sorted({_text(row.get("activity_period")) for row in activity_rows if row.get("activity_period")})
+    return {
+        "activity_calls": sum(int(row.get("activity_calls") or 0) for row in activity_rows),
+        "activity_voicemails": sum(int(row.get("activity_voicemails") or 0) for row in activity_rows),
+        "activity_hangups": sum(int(row.get("activity_hangups") or 0) for row in activity_rows),
+        "activity_faxes": sum(int(row.get("activity_faxes") or 0) for row in activity_rows),
+        "activity_voice_calls": sum(int(row.get("activity_voice_calls") or 0) for row in activity_rows),
+        "activity_report_date": report_dates[-1] if report_dates else None,
+        "activity_period": periods[-1] if periods else None,
+    }
+
+
 def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     outbound_by_party: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in call_rows:
@@ -828,6 +1101,62 @@ def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, A
     return rows
 
 
+def _call_period_metrics(
+    call_rows: list[dict[str, Any]],
+    follow_up_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    return {
+        "call_volume": len(call_rows),
+        "answered_calls": sum(int(row.get("is_connected") or 0) for row in call_rows),
+        "missed_calls": sum(
+            int(row.get("is_not_connected") or 0)
+            + int(row.get("is_voicemail") or 0)
+            + int(row.get("is_hangup") or 0)
+            for row in call_rows
+        ),
+        "follow_ups": len(follow_up_rows),
+    }
+
+
+def _call_trend_comparison(
+    *,
+    all_call_rows: list[dict[str, Any]],
+    all_lead_rows: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not selected_range:
+        return None
+    previous_range = selected_range.previous()
+    current_calls = _filter_rows_for_date_range(
+        all_call_rows,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    current_leads = _filter_rows_for_date_range(
+        all_lead_rows,
+        selected_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
+    previous_calls = _filter_rows_for_date_range(
+        all_call_rows,
+        previous_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    previous_leads = _filter_rows_for_date_range(
+        all_lead_rows,
+        previous_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
+    current = _call_period_metrics(current_calls, _follow_up_rows(current_calls, current_leads))
+    previous = _call_period_metrics(previous_calls, _follow_up_rows(previous_calls, previous_leads))
+    return {
+        "current": current,
+        "previous": previous,
+        "call_volume_change_pct": pct_change(current["call_volume"], previous["call_volume"]),
+        "follow_up_change_pct": pct_change(current["follow_ups"], previous["follow_ups"]),
+    }
+
+
 def _coaching_flags(analysis_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
     for row in analysis_reports:
@@ -865,6 +1194,7 @@ def build_hr_call_analysis_dataset(
     call_rows: list[dict[str, Any]],
     analysis_reports: list[dict[str, Any]],
     lead_rows: list[dict[str, Any]],
+    activity_rows: list[dict[str, Any]] | None = None,
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
@@ -873,6 +1203,8 @@ def build_hr_call_analysis_dataset(
     source_status: str = "ok",
     source_message: str | None = None,
     last_imported_at: str | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     """Build dashboard-safe call analytics for one department."""
 
@@ -882,16 +1214,43 @@ def build_hr_call_analysis_dataset(
     call_rows = _dedupe(call_rows, "call_id")
     analysis_reports = _dedupe(analysis_reports, "analysis_file_key")
     lead_rows = _dedupe(lead_rows, "lead_key")
+    activity_rows = _dedupe(list(activity_rows or []), "activity_id")
     if department != "All":
         call_rows = [row for row in call_rows if _department_matches(row, department)]
         analysis_reports = [row for row in analysis_reports if _department_matches(row, department)]
         lead_rows = [row for row in lead_rows if _department_matches(row, department)]
+        activity_rows = [row for row in activity_rows if _department_matches(row, department)]
+    active_extensions = _active_extensions_for_department(config, department)
+    call_rows = _filter_call_rows_for_active_extensions(call_rows, active_extensions)
+    activity_rows = _filter_activity_rows_for_active_extensions(activity_rows, active_extensions)
+    selected_range = dashboard_date_range(start_date, end_date)
+    unfiltered_call_rows = call_rows
+    unfiltered_lead_rows = lead_rows
+    unfiltered_activity_rows = activity_rows
+    call_rows = _filter_rows_for_date_range(
+        call_rows,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    analysis_reports = _filter_rows_for_date_range(
+        analysis_reports,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    lead_rows = _filter_rows_for_date_range(
+        lead_rows,
+        selected_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
+    activity_rows = _activity_rows_for_selected_range(activity_rows, selected_range)
+    activity_summary = _activity_summary(activity_rows)
 
     total_duration = sum(int(row.get("duration_seconds") or 0) for row in call_rows)
     outbound_attempts = sum(int(row.get("is_outbound_attempt") or 0) for row in call_rows)
     connected_calls = sum(int(row.get("is_connected") or 0) for row in call_rows)
     voicemails = sum(int(row.get("is_voicemail") or 0) for row in call_rows)
     hangups = sum(int(row.get("is_hangup") or 0) for row in call_rows)
+    missed_calls = sum(int(row.get("is_not_connected") or 0) for row in call_rows) + voicemails + hangups
     follow_up = _follow_up_rows(call_rows, lead_rows)
     first_call_eligible = len(follow_up)
     first_call_within_24h = sum(1 for row in follow_up if row["first_call_within_24h"])
@@ -917,6 +1276,7 @@ def build_hr_call_analysis_dataset(
         "source_status": source_status,
         "source_message": source_message,
         "last_imported_at": last_imported_at,
+        "date_range": selected_range.as_dict() if selected_range else None,
         "pii_suppressed": True,
         "phone_numbers_stored": False,
         "active_extensions": list(config.active_extensions),
@@ -927,9 +1287,12 @@ def build_hr_call_analysis_dataset(
         },
         "summary": {
             "total_call_legs": len(call_rows),
+            **activity_summary,
             "total_minutes": round(total_duration / 60, 2),
             "avg_call_seconds": round(total_duration / len(call_rows), 2) if call_rows else 0,
             "outbound_attempts": outbound_attempts,
+            "answered_calls": connected_calls,
+            "missed_calls": missed_calls,
             "connected_calls": connected_calls,
             "connect_rate_pct": round(connected_calls / outbound_attempts * 100, 2) if outbound_attempts else None,
             "voicemails": voicemails,
@@ -944,7 +1307,13 @@ def build_hr_call_analysis_dataset(
             "first_call_within_24h": first_call_within_24h,
             "first_call_24h_pct": round(first_call_within_24h / first_call_eligible, 4) if first_call_eligible else None,
             "stale_no_call_48h": stale_no_call_48h,
+            "follow_up_count": len(follow_up),
         },
+        "trend_comparison": _call_trend_comparison(
+            all_call_rows=unfiltered_call_rows,
+            all_lead_rows=unfiltered_lead_rows,
+            selected_range=selected_range,
+        ),
         "employee_productivity": employee_productivity,
         "monthly_employee_productivity": _monthly_employee_summary(call_rows, config, department=department),
         "daily_volume": _daily_volume(call_rows),
@@ -952,14 +1321,18 @@ def build_hr_call_analysis_dataset(
         "coaching_flags": coaching_flags,
         "row_counts": {
             "call_rows": len(call_rows),
+            "unfiltered_call_rows": len(unfiltered_call_rows),
             "analysis_reports": len(analysis_reports),
             "lead_rows": len(lead_rows),
+            "activity_rows": len(activity_rows),
+            "unfiltered_activity_rows": len(unfiltered_activity_rows),
             "follow_up_rows": len(follow_up),
             "employee_rows": len(employee_productivity),
             "coaching_flag_rows": len(coaching_flags),
         },
         "validation_notes": [
             "First-call SLA requires phone-hash overlap between recruiting leads and call logs.",
+            "Total calls use date-scoped Detail rows for inbound plus outbound call legs; Activity rows are monthly Grasshopper reference totals.",
             "Raw phone numbers are not exposed in FleetPulse payloads.",
         ],
     }
@@ -969,6 +1342,8 @@ async def get_hr_call_analysis_dataset(
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrCallAnalysisConfig.from_env()
     source = _read_state(Path(config.state_path))
@@ -976,11 +1351,14 @@ async def get_hr_call_analysis_dataset(
         source.call_rows,
         source.analysis_reports,
         source.lead_rows,
+        source.activity_rows,
         now=now,
         config=config,
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -989,9 +1367,10 @@ def _configured_department_names(
     call_rows: list[dict[str, Any]],
     analysis_reports: list[dict[str, Any]],
     lead_rows: list[dict[str, Any]],
+    activity_rows: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     departments = {_normalize_department(department) for department in config.departments}
-    for row in [*call_rows, *analysis_reports, *lead_rows]:
+    for row in [*call_rows, *analysis_reports, *lead_rows, *list(activity_rows or [])]:
         departments.add(_row_department(row))
     return sorted(departments, key=lambda value: (value != "Operations", value != "HR", value))
 
@@ -1000,19 +1379,23 @@ def _department_rollups(
     call_rows: list[dict[str, Any]],
     analysis_reports: list[dict[str, Any]],
     lead_rows: list[dict[str, Any]],
+    activity_rows: list[dict[str, Any]] | None = None,
     *,
     now: datetime,
     config: HrCallAnalysisConfig,
     source_status: str,
     source_message: str | None,
     last_imported_at: str | None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> list[dict[str, Any]]:
     rollups: list[dict[str, Any]] = []
-    for department in _configured_department_names(config, call_rows, analysis_reports, lead_rows):
+    for department in _configured_department_names(config, call_rows, analysis_reports, lead_rows, activity_rows):
         dataset = build_hr_call_analysis_dataset(
             call_rows,
             analysis_reports,
             lead_rows,
+            activity_rows,
             now=now,
             config=config,
             department=department,
@@ -1020,6 +1403,8 @@ def _department_rollups(
             source_status=source_status,
             source_message=source_message,
             last_imported_at=last_imported_at,
+            start_date=start_date,
+            end_date=end_date,
         )
         rollups.append(
             {
@@ -1041,6 +1426,8 @@ async def get_department_call_analysis_dataset(
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrCallAnalysisConfig.from_env()
     now = now or _now_utc()
@@ -1050,6 +1437,7 @@ async def get_department_call_analysis_dataset(
         source.call_rows,
         source.analysis_reports,
         source.lead_rows,
+        source.activity_rows,
         now=now,
         config=config,
         department=selected_department,
@@ -1057,16 +1445,21 @@ async def get_department_call_analysis_dataset(
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
     rollups = _department_rollups(
         source.call_rows,
         source.analysis_reports,
         source.lead_rows,
+        source.activity_rows,
         now=now,
         config=config,
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
     dataset["configured_departments"] = [rollup["department"] for rollup in rollups]
     dataset["department_rollups"] = rollups
@@ -1096,6 +1489,7 @@ def hr_call_analysis_status(config: HrCallAnalysisConfig | None = None) -> dict[
             "call_rows": len(state.call_rows),
             "analysis_reports": len(state.analysis_reports),
             "lead_rows": len(state.lead_rows),
+            "activity_rows": len(state.activity_rows),
         },
     }
 
@@ -1103,7 +1497,13 @@ def hr_call_analysis_status(config: HrCallAnalysisConfig | None = None) -> dict[
 def department_call_analysis_status(config: HrCallAnalysisConfig | None = None) -> dict[str, Any]:
     config = config or HrCallAnalysisConfig.from_env()
     state = _read_state(Path(config.state_path))
-    departments = _configured_department_names(config, state.call_rows, state.analysis_reports, state.lead_rows)
+    departments = _configured_department_names(
+        config,
+        state.call_rows,
+        state.analysis_reports,
+        state.lead_rows,
+        state.activity_rows,
+    )
     return {
         **config.safe_status(),
         "source_authority": DEPARTMENT_SOURCE_AUTHORITY,
@@ -1115,6 +1515,7 @@ def department_call_analysis_status(config: HrCallAnalysisConfig | None = None) 
             "call_rows": len(state.call_rows),
             "analysis_reports": len(state.analysis_reports),
             "lead_rows": len(state.lead_rows),
+            "activity_rows": len(state.activity_rows),
         },
     }
 

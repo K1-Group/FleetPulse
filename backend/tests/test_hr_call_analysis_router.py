@@ -27,7 +27,7 @@ def _dataset() -> dict:
         "last_imported_at": "2026-05-21T12:00:00+00:00",
         "pii_suppressed": True,
         "phone_numbers_stored": False,
-        "active_extensions": ["4", "702", "722", "725"],
+        "active_extensions": ["702", "722", "725", "728", "700"],
         "coverage": {"start": "2026-03-01T00:00:00Z", "end": "2026-05-08T00:00:00Z", "months": ["2026-03"]},
         "summary": {
             "total_call_legs": 2,
@@ -92,10 +92,10 @@ def _dataset() -> dict:
 
 
 def _client(monkeypatch) -> TestClient:
-    async def fake_dataset():
+    async def fake_dataset(**kwargs):
         return _dataset()
 
-    async def fake_department_dataset(department=None):
+    async def fake_department_dataset(department=None, **kwargs):
         payload = _dataset()
         payload["department"] = department or "All"
         payload["source_authority"] = "Grasshopper call logs + SharePoint department call-analysis reports"

@@ -1,8 +1,8 @@
 """Read-only HR recruiting worklist analytics.
 
 FleetPulse is the analytics layer only. Source records must come from the
-approved TenStreet Outlook/Zapier workflow, not from TenStreet scraping or login
-automation.
+approved Microsoft 365 Teams/SharePoint HR Driver Leads lane, not from Tenstreet
+scraping, login automation, or API writeback.
 """
 
 from __future__ import annotations
@@ -27,13 +27,17 @@ from services.hr_recruiting_workbook import (
     SOURCE_SYSTEM as WORKBOOK_SOURCE_SYSTEM,
     build_hr_recruiting_workbook_dataset,
 )
+from utils.dashboard_date_range import DashboardDateRange, dashboard_date_range, pct_change
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TABLE_ID = "01KR00WV4YHCB6BMYDE1EG7HEM"
 DEFAULT_SLA_HOURS = (24, 48, 72)
-SOURCE_AUTHORITY = "Zapier Table + approved TenStreet Outlook emails"
-SOURCE_SYSTEM = "TenStreet Outlook/Zapier"
+DEFAULT_HR_TEAM_MEMBERS = ("Jordan",)
+WORKBOOK_SOURCE = "hr_kpi_workbook"
+LEGACY_SNAPSHOT_SOURCE = "zapier_table"
+SOURCE_AUTHORITY = "Microsoft 365 Teams + SharePoint HR Driver Leads"
+SOURCE_SYSTEM = "Microsoft 365 HR Driver Leads"
 HARD_TARGETS: dict[str, dict[str, Any]] = {
     "new_hires_7d": {
         "label": "New Hires",
@@ -239,29 +243,36 @@ class HrRecruitingConfig:
     """Runtime configuration for the read-only HR recruiting projection."""
 
     table_id: str = DEFAULT_TABLE_ID
-    source: str = "zapier_table"
+    source: str = WORKBOOK_SOURCE
     sla_hours: tuple[int, ...] = DEFAULT_SLA_HOURS
     snapshot_url: str = ""
     snapshot_path: str = ""
     workbook_path: str = ""
+    conversion_workbook_path: str = ""
     sharepoint_reporting_log_url: str = ""
     timeout_seconds: float = 20.0
+    team_members: tuple[str, ...] = DEFAULT_HR_TEAM_MEMBERS
 
     @classmethod
     def from_env(cls) -> "HrRecruitingConfig":
+        snapshot_path = (
+            os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
+            or os.getenv("HR_RECRUITING_SNAPSHOT_PATH", "").strip()
+        )
+        workbook_path = os.getenv("HR_RECRUITING_WORKBOOK_PATH", "").strip()
+        conversion_workbook_path = os.getenv("HR_RECRUITING_CONVERSION_WORKBOOK_PATH", "").strip()
         return cls(
             table_id=os.getenv("ZAPIER_JOB_APPLICANTS_TABLE_ID", DEFAULT_TABLE_ID).strip()
             or DEFAULT_TABLE_ID,
-            source=os.getenv("HR_RECRUITING_SOURCE", "zapier_table").strip() or "zapier_table",
+            source=os.getenv("HR_RECRUITING_SOURCE", WORKBOOK_SOURCE).strip() or WORKBOOK_SOURCE,
             sla_hours=_sla_hours_from_env(),
             snapshot_url=os.getenv("HR_RECRUITING_SNAPSHOT_URL", "").strip(),
-            snapshot_path=(
-                os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
-                or os.getenv("HR_RECRUITING_SNAPSHOT_PATH", "").strip()
-            ),
-            workbook_path=os.getenv("HR_RECRUITING_WORKBOOK_PATH", "").strip(),
+            snapshot_path=snapshot_path,
+            workbook_path=workbook_path,
+            conversion_workbook_path=conversion_workbook_path,
             sharepoint_reporting_log_url=os.getenv("SHAREPOINT_HR_REPORTING_LOG_URL", "").strip(),
             timeout_seconds=_float_env("HR_RECRUITING_TIMEOUT_SECONDS", 20.0),
+            team_members=_csv_env("HR_RECRUITING_TEAM_MEMBERS", DEFAULT_HR_TEAM_MEMBERS),
         )
 
     @property
@@ -277,27 +288,63 @@ class HrRecruitingConfig:
             return self.snapshot_path
         return ""
 
+    @property
+    def workbook_selected(self) -> bool:
+        return bool(self.workbook_source_path) or self.source == WORKBOOK_SOURCE
+
+    @property
+    def source_selection_reason(self) -> str:
+        if self.workbook_path:
+            return (
+                "HR_RECRUITING_WORKBOOK_PATH is configured; workbook mode is "
+                "selected over legacy snapshot settings."
+            )
+        if self.workbook_source_path:
+            return (
+                "A workbook-compatible HR recruiting path is configured; "
+                "workbook mode is selected over legacy snapshot settings."
+            )
+        if self.source == WORKBOOK_SOURCE:
+            return (
+                "HR_RECRUITING_SOURCE selects workbook mode; configure "
+                "HR_RECRUITING_WORKBOOK_PATH with HR_Lead_KPI_Recheck_By_Phone.xlsx."
+            )
+        if self.source == LEGACY_SNAPSHOT_SOURCE:
+            return (
+                "Legacy snapshot fallback is selected because "
+                "HR_RECRUITING_WORKBOOK_PATH is not configured."
+            )
+        return "Custom HR_RECRUITING_SOURCE is selected because workbook mode is not configured."
+
     def safe_status(self) -> dict[str, Any]:
         workbook_configured = bool(self.workbook_source_path)
-        source = (
-            self.source
-            if not workbook_configured or self.source != "zapier_table"
-            else "hr_kpi_workbook"
-        )
+        workbook_selected = self.workbook_selected
+        source = WORKBOOK_SOURCE if workbook_selected else self.source
         return {
             "source": source,
+            "selected_source": source,
+            "configured_source": self.source,
+            "preferred_source": WORKBOOK_SOURCE,
+            "legacy_source": LEGACY_SNAPSHOT_SOURCE,
+            "workbook_preferred": True,
+            "source_selection_reason": self.source_selection_reason,
             "table_id": self.table_id,
             "snapshot_configured": bool(self.snapshot_url),
             "state_path_configured": bool(self.snapshot_path),
             "workbook_configured": workbook_configured,
+            "workbook_path_env": "HR_RECRUITING_WORKBOOK_PATH",
+            "conversion_workbook_configured": bool(self.conversion_workbook_path),
+            "conversion_workbook_path_env": "HR_RECRUITING_CONVERSION_WORKBOOK_PATH",
+            "legacy_snapshot_configured": bool(self.snapshot_url or self.snapshot_path),
             "sharepoint_reporting_log_configured": bool(self.sharepoint_reporting_log_url),
             "sla_hours": list(self.sla_hours),
             "hard_targets": _public_hard_targets(),
-            "source_authority": WORKBOOK_SOURCE_AUTHORITY if workbook_configured else SOURCE_AUTHORITY,
-            "source_system": WORKBOOK_SOURCE_SYSTEM if workbook_configured else SOURCE_SYSTEM,
-            "source_profile": WORKBOOK_SOURCE_PROFILE if workbook_configured else "worklist_snapshot",
+            "source_authority": WORKBOOK_SOURCE_AUTHORITY if workbook_selected else SOURCE_AUTHORITY,
+            "source_system": WORKBOOK_SOURCE_SYSTEM if workbook_selected else SOURCE_SYSTEM,
+            "source_profile": WORKBOOK_SOURCE_PROFILE if workbook_selected else "worklist_snapshot",
             "projection_mode": "read_only",
             "pii_suppressed": True,
+            "team_members": list(self.team_members),
         }
 
 
@@ -330,6 +377,14 @@ def _float_env(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _csv_env(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    values = tuple(item.strip() for item in raw.split(",") if item.strip())
+    return values or default
 
 
 def _sla_hours_from_env() -> tuple[int, ...]:
@@ -402,6 +457,107 @@ def _is_completed(lead: RecruitingLead) -> bool:
 
 def _is_hired(lead: RecruitingLead) -> bool:
     return bool(lead.hired_at) or _status_key(lead.status) in HIRED_STATUSES
+
+
+def _matches_selected_or_day(
+    value: datetime | None,
+    selected_range: DashboardDateRange | None,
+    fallback_day: date,
+) -> bool:
+    if not value:
+        return False
+    if selected_range:
+        return selected_range.contains_datetime(value)
+    return value.date() == fallback_day
+
+
+def _lead_timestamps(lead: RecruitingLead) -> tuple[datetime | None, ...]:
+    return (
+        lead.first_assigned_at,
+        lead.current_worklist_entered_at,
+        lead.first_contacted_at,
+        lead.completed_at,
+        lead.hired_at,
+    )
+
+
+def _filter_leads_for_date_range(
+    leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> list[RecruitingLead]:
+    if not selected_range:
+        return leads
+    return [
+        lead
+        for lead in leads
+        if any(selected_range.contains_datetime(value) for value in _lead_timestamps(lead))
+    ]
+
+
+def _period_metrics(
+    leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, int]:
+    return {
+        "new_leads": _new_leads_for_range(leads, selected_range),
+        "new_applicants": len(leads),
+        "interviews_scheduled": sum(1 for lead in leads if lead.orientation_scheduled),
+        "new_hires": _new_hires_for_range(leads, selected_range),
+        "follow_ups": _follow_ups_for_range(leads, selected_range),
+    }
+
+
+def _new_leads_for_range(
+    leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> int:
+    if not selected_range:
+        return len(leads)
+    return sum(1 for lead in leads if selected_range.contains_datetime(lead.first_assigned_at))
+
+
+def _new_hires_for_range(
+    leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> int:
+    count = 0
+    for lead in leads:
+        hire_at = lead.hired_at or lead.completed_at
+        if not _is_hired(lead) or not hire_at:
+            continue
+        if not selected_range or selected_range.contains_datetime(hire_at):
+            count += 1
+    return count
+
+
+def _follow_ups_for_range(
+    leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> int:
+    return sum(
+        1
+        for lead in leads
+        if lead.first_contacted_at
+        and (not selected_range or selected_range.contains_datetime(lead.first_contacted_at))
+    )
+
+
+def _trend_comparison(
+    all_leads: list[RecruitingLead],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not selected_range:
+        return None
+    previous_range = selected_range.previous()
+    current = _period_metrics(_filter_leads_for_date_range(all_leads, selected_range), selected_range)
+    previous = _period_metrics(_filter_leads_for_date_range(all_leads, previous_range), previous_range)
+    return {
+        "current": current,
+        "previous": previous,
+        "lead_volume_change_pct": pct_change(current["new_leads"], previous["new_leads"]),
+        "hire_volume_change_pct": pct_change(current["new_hires"], previous["new_hires"]),
+        "follow_up_change_pct": pct_change(current["follow_ups"], previous["follow_ups"]),
+    }
 
 
 def _parse_boolish(value: Any, *, true_values: set[str] | None = None, false_values: set[str] | None = None) -> bool | None:
@@ -683,7 +839,7 @@ async def _load_source_records(config: HrRecruitingConfig) -> SourceLoadResult:
         return SourceLoadResult(
             records=[],
             status="snapshot_not_configured",
-            message="Configure HR_RECRUITING_WORKBOOK_PATH, HR_RECRUITING_SNAPSHOT_URL, or HR_RECRUITING_STATE_PATH with approved HR recruiting evidence.",
+            message="Configure HR_RECRUITING_WORKBOOK_PATH with HR_Lead_KPI_Recheck_By_Phone.xlsx. Legacy snapshot inputs require HR_RECRUITING_WORKBOOK_PATH unset and explicit HR_RECRUITING_SOURCE=zapier_table fallback.",
         )
 
     if config.snapshot_url:
@@ -774,7 +930,7 @@ def import_hr_recruiting_snapshot(
     dry_run: bool = False,
     path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Replace the scheduled HR recruiting snapshot as read-only evidence."""
+    """Replace the legacy HR recruiting snapshot fallback as read-only evidence."""
 
     target_path = Path(path) if path else Path(
         os.getenv("HR_RECRUITING_STATE_PATH", "").strip()
@@ -893,6 +1049,89 @@ def _build_hard_target_results(
     return results
 
 
+def _empty_team_member(name: str, *, configured: bool = False) -> dict[str, Any]:
+    return {
+        "name": name,
+        "configured": configured,
+        "status": "configured",
+        "evidence_sources": [],
+        "lead_count": 0,
+        "first_outreach_leads": 0,
+        "real_discussion_leads": 0,
+        "within_24h": 0,
+        "recovered_24_48h": 0,
+        "late_48_72h": 0,
+        "failed_over_72h": 0,
+        "total_outbound_attempts": 0,
+        "within_24h_rate": None,
+    }
+
+
+def _build_team_members(
+    configured_members: tuple[str, ...],
+    *,
+    first_outreach_rows: list[dict[str, Any]] | None = None,
+    real_discussion_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    members: dict[str, dict[str, Any]] = {}
+    display_order: list[str] = []
+
+    def ensure_member(name: str, *, configured: bool = False) -> dict[str, Any]:
+        display_name = _text(name)
+        key = _normalize_key(display_name)
+        if not key:
+            key = f"member{len(members)}"
+            display_name = "Unassigned"
+        if key not in members:
+            members[key] = _empty_team_member(display_name, configured=configured)
+            display_order.append(key)
+        elif configured:
+            members[key]["configured"] = True
+        return members[key]
+
+    for member_name in configured_members:
+        ensure_member(member_name, configured=True)
+
+    def merge_evidence(rows: list[dict[str, Any]] | None, source: str) -> None:
+        for row in rows or []:
+            member = ensure_member(str(row.get("hr_member") or "Unassigned"))
+            if source not in member["evidence_sources"]:
+                member["evidence_sources"].append(source)
+            leads = int(row.get("lead_count") or 0)
+            if source == "first_outreach":
+                member["first_outreach_leads"] += leads
+            else:
+                member["real_discussion_leads"] += leads
+            member["within_24h"] += int(row.get("within_24h") or 0)
+            member["recovered_24_48h"] += int(row.get("recovered_24_48h") or 0)
+            member["late_48_72h"] += int(row.get("late_48_72h") or 0)
+            member["failed_over_72h"] += int(row.get("failed_over_72h") or 0)
+            member["total_outbound_attempts"] += int(row.get("total_outbound_attempts") or 0)
+
+    merge_evidence(first_outreach_rows, "first_outreach")
+    merge_evidence(real_discussion_rows, "real_discussion")
+
+    rows: list[dict[str, Any]] = []
+    for key in display_order:
+        member = members[key]
+        evidence_leads = member["first_outreach_leads"] + member["real_discussion_leads"]
+        member["lead_count"] = max(member["first_outreach_leads"], member["real_discussion_leads"])
+        member["status"] = "source_backed" if member["evidence_sources"] else "configured"
+        member["within_24h_rate"] = round(member["within_24h"] / evidence_leads, 4) if evidence_leads else None
+        rows.append(member)
+    return rows
+
+
+def _with_team_members(dataset: dict[str, Any], configured_members: tuple[str, ...]) -> dict[str, Any]:
+    evidence = dataset.get("workbook_evidence") if isinstance(dataset.get("workbook_evidence"), dict) else {}
+    dataset["team_members"] = _build_team_members(
+        configured_members,
+        first_outreach_rows=evidence.get("first_outreach_by_member") if isinstance(evidence, dict) else None,
+        real_discussion_rows=evidence.get("real_discussion_by_member") if isinstance(evidence, dict) else None,
+    )
+    return dataset
+
+
 def build_hr_recruiting_dataset(
     records: list[dict[str, Any]],
     *,
@@ -900,6 +1139,8 @@ def build_hr_recruiting_dataset(
     config: HrRecruitingConfig | None = None,
     source_status: str = "ok",
     source_message: str | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     """Build the dashboard/Power BI dataset without exposing applicant PII."""
 
@@ -924,7 +1165,9 @@ def build_hr_recruiting_dataset(
         if existing is None or _prefer_new_lead(existing, lead):
             deduped[lead.dedupe_key] = lead
 
-    leads = list(deduped.values())
+    all_leads = list(deduped.values())
+    selected_range = dashboard_date_range(start_date, end_date)
+    leads = _filter_leads_for_date_range(all_leads, selected_range)
     active_leads = [lead for lead in leads if not _is_completed(lead)]
     completed_leads = [lead for lead in leads if lead.completed_at is not None]
     new_hire_start = today - timedelta(days=6)
@@ -933,7 +1176,11 @@ def build_hr_recruiting_dataset(
         for lead in completed_leads
         if _is_hired(lead)
         and lead.completed_at
-        and new_hire_start <= lead.completed_at.date() <= today
+        and (
+            selected_range.contains_datetime(lead.completed_at)
+            if selected_range
+            else new_hire_start <= lead.completed_at.date() <= today
+        )
     )
     active_qualified_pipeline = sum(
         1 for lead in active_leads if lead.qualification_evidence_present and lead.qualified
@@ -971,14 +1218,23 @@ def build_hr_recruiting_dataset(
 
     summary = {
         "active_leads": len(active_leads),
-        "new_leads_today": sum(1 for lead in leads if lead.first_assigned_at.date() == today),
+        "new_leads_today": sum(
+            1
+            for lead in leads
+            if _matches_selected_or_day(lead.first_assigned_at, selected_range, today)
+        ),
         "avg_process_age_hours": _mean([_hours_between(lead.first_assigned_at, as_of) for lead in active_leads]),
         "stale_leads": sum(
             1
             for lead in active_leads
             if _hours_between(lead.current_worklist_entered_at, as_of) >= primary_stale_hours
         ),
-        "completed_today": sum(1 for lead in completed_leads if lead.completed_at and lead.completed_at.date() == today),
+        "completed_today": sum(
+            1
+            for lead in completed_leads
+            if lead.completed_at
+            and _matches_selected_or_day(lead.completed_at, selected_range, today)
+        ),
         "new_hires_7d": new_hires_7d,
         "active_qualified_pipeline": active_qualified_pipeline,
         "first_touch_24h_pct": first_touch_24h_pct,
@@ -1028,6 +1284,8 @@ def build_hr_recruiting_dataset(
         if hard_target_pending and not hard_target_misses
         else "healthy" if not hard_target_misses and not hard_target_pending else "warning"
     )
+    period_metrics = _period_metrics(leads, selected_range)
+    trend_comparison = _trend_comparison(all_leads, selected_range)
 
     dataset = {
         "generated_at": as_of.isoformat(),
@@ -1046,7 +1304,11 @@ def build_hr_recruiting_dataset(
         "hard_target_status": hard_target_status,
         "hard_target_misses": hard_target_misses,
         "hard_target_pending": hard_target_pending,
+        "date_range": selected_range.as_dict() if selected_range else None,
+        "period_metrics": period_metrics,
+        "trend_comparison": trend_comparison,
         "summary": summary,
+        "team_members": _build_team_members(config.team_members),
         "by_worklist": by_worklist,
         "daily": daily,
         "status_counts": status_counts,
@@ -1054,6 +1316,7 @@ def build_hr_recruiting_dataset(
         "row_counts": {
             "source_rows": len(records),
             "deduped_leads": len(leads),
+            "unfiltered_deduped_leads": len(all_leads),
             "active_leads": len(active_leads),
             "completed_leads": len(completed_leads),
             "invalid_rows": invalid_rows,
@@ -1186,21 +1449,25 @@ async def get_hr_recruiting_dataset(
     *,
     now: datetime | None = None,
     config: HrRecruitingConfig | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrRecruitingConfig.from_env()
     workbook_path = config.workbook_source_path
-    if workbook_path:
-        return build_hr_recruiting_workbook_dataset(
-            workbook_path,
-            now=now or _now_utc(),
-            source=(
-                config.source
-                if config.source and config.source != "zapier_table"
-                else "hr_kpi_workbook"
+    if config.workbook_selected:
+        return _with_team_members(
+            build_hr_recruiting_workbook_dataset(
+                workbook_path,
+                now=now or _now_utc(),
+                source=WORKBOOK_SOURCE,
+                table_id=config.table_id,
+                sla_hours=config.sla_hours,
+                hard_targets=HARD_TARGETS,
+                start_date=start_date,
+                end_date=end_date,
+                conversion_workbook_path=config.conversion_workbook_path,
             ),
-            table_id=config.table_id,
-            sla_hours=config.sla_hours,
-            hard_targets=HARD_TARGETS,
+            config.team_members,
         )
     source = await _load_source_records(config)
     return build_hr_recruiting_dataset(
@@ -1209,4 +1476,6 @@ async def get_hr_recruiting_dataset(
         config=config,
         source_status=source.status,
         source_message=source.message,
+        start_date=start_date,
+        end_date=end_date,
     )
