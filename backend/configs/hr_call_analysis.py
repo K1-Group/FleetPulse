@@ -91,7 +91,7 @@ def _split_extensions(value: str) -> tuple[str, ...]:
         cleaned = part.strip().lower()
         if cleaned:
             extensions.append(cleaned if cleaned.startswith(".") else f".{cleaned}")
-    return tuple(extensions or [".txt"])
+    return tuple(extensions or [".txt", ".csv"])
 
 
 def _site_from_url(site_url: str) -> tuple[str, str]:
@@ -169,7 +169,7 @@ class HrCallAnalysisConfig:
             or "fleetpulse-hr-call",
             active_extensions=tuple(
                 part.strip()
-                for part in os.getenv("HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS", "4,702,722,725").split(",")
+                for part in os.getenv("HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS", "4,702,722,725,728").split(",")
                 if part.strip()
             ),
             sharepoint_enabled=_bool_env("HR_CALL_ANALYSIS_SHAREPOINT_ENABLED"),
@@ -194,7 +194,7 @@ class HrCallAnalysisConfig:
                 os.getenv("HR_CALL_ANALYSIS_SHAREPOINT_SOURCE_FILE_URLS", "")
             ),
             file_extensions=_split_extensions(
-                os.getenv("HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS", ".txt")
+                os.getenv("HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS", ".txt,.csv")
             ),
             file_limit=_int_env("HR_CALL_ANALYSIS_SHAREPOINT_FILE_LIMIT", 200, minimum=1),
             sync_api_key=(

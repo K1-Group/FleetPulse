@@ -37,20 +37,13 @@ def _dataset() -> dict:
         "generated_at": "2026-05-15T12:00:00+00:00",
         "projection_mode": "read_only",
         "source_profile": "worklist_snapshot",
-        "source_system": "TenStreet Outlook/Zapier",
-        "source_authority": "Zapier Table + approved TenStreet Outlook emails",
+        "source_system": "Microsoft 365 HR Driver Leads",
+        "source_authority": "Microsoft 365 Teams + SharePoint HR Driver Leads",
         "source": "zapier_table",
         "source_artifact": None,
         "table_id": "01KR00WV4YHCB6BMYDE1EG7HEM",
         "source_status": "ok",
         "source_message": None,
-        "period_filter": {
-            "grain": "all",
-            "week_start": None,
-            "week_end": None,
-            "timezone": "America/Chicago",
-            "date_field": None,
-        },
         "pii_suppressed": True,
         "sla_hours": [24, 48, 72],
         "summary": {
@@ -178,10 +171,8 @@ def _dataset() -> dict:
     }
 
 
-def _client(monkeypatch, captured_calls: list[dict] | None = None) -> TestClient:
+def _client(monkeypatch) -> TestClient:
     async def fake_dataset(**kwargs):
-        if captured_calls is not None:
-            captured_calls.append(kwargs)
         return _dataset()
 
     monkeypatch.setattr(hr_recruiting, "get_hr_recruiting_dataset", fake_dataset)
@@ -206,39 +197,84 @@ def test_hr_recruiting_worklist_endpoint_returns_read_only_dataset(monkeypatch) 
     assert "ssn" not in str(payload).lower()
 
 
-def test_hr_recruiting_worklist_endpoint_accepts_week_filter(monkeypatch) -> None:
-    captured_calls: list[dict] = []
-    response = _client(monkeypatch, captured_calls).get("/api/hr-recruiting/worklist?week_start=2026-05-18")
+def test_hr_recruiting_worklist_endpoint_forwards_date_range(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_dataset(**kwargs):
+        captured.update(kwargs)
+        return _dataset()
+
+    monkeypatch.setattr(hr_recruiting, "get_hr_recruiting_dataset", fake_dataset)
+    app = FastAPI()
+    app.include_router(hr_recruiting.router, prefix="/api/hr-recruiting")
+
+    response = TestClient(app).get(
+        "/api/hr-recruiting/worklist?start_date=2026-05-14&end_date=2026-05-15"
+    )
 
     assert response.status_code == 200
-    assert str(captured_calls[0]["week_start"]) == "2026-05-18"
+    assert captured["start_date"].isoformat() == "2026-05-14"
+    assert captured["end_date"].isoformat() == "2026-05-15"
 
 
 def test_hr_recruiting_status_exposes_state_path_readiness(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("HR_RECRUITING_WORKBOOK_PATH", raising=False)
+    monkeypatch.setenv("HR_RECRUITING_SOURCE", "zapier_table")
     monkeypatch.setenv("HR_RECRUITING_STATE_PATH", str(tmp_path / "hr-recruiting.json"))
     response = _client(monkeypatch).get("/api/hr-recruiting/status")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
+    assert payload["source"] == "zapier_table"
+    assert payload["selected_source"] == "zapier_table"
+    assert payload["configured_source"] == "zapier_table"
+    assert payload["legacy_source"] == "zapier_table"
     assert payload["state_path_configured"] is True
     assert payload["workbook_configured"] is False
     assert "HR_RECRUITING_IMPORT_API_KEY" not in response.text
 
 
 def test_hr_recruiting_status_exposes_workbook_readiness(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("HR_RECRUITING_SOURCE", raising=False)
     monkeypatch.delenv("HR_RECRUITING_STATE_PATH", raising=False)
     monkeypatch.setenv("HR_RECRUITING_WORKBOOK_PATH", str(tmp_path / "hr-kpi.xlsx"))
+    monkeypatch.setenv("HR_RECRUITING_CONVERSION_WORKBOOK_PATH", str(tmp_path / "hr-conversion.xlsx"))
     response = _client(monkeypatch).get("/api/hr-recruiting/status")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
+    assert payload["source"] == "hr_kpi_workbook"
+    assert payload["selected_source"] == "hr_kpi_workbook"
+    assert payload["configured_source"] == "hr_kpi_workbook"
+    assert payload["preferred_source"] == "hr_kpi_workbook"
+    assert payload["workbook_preferred"] is True
     assert payload["workbook_configured"] is True
+    assert payload["workbook_path_env"] == "HR_RECRUITING_WORKBOOK_PATH"
+    assert payload["conversion_workbook_configured"] is True
+    assert payload["conversion_workbook_path_env"] == "HR_RECRUITING_CONVERSION_WORKBOOK_PATH"
     assert payload["source_profile"] == "kpi_workbook"
     assert payload["source_system"] == "HR Lead KPI Recheck workbook"
     assert payload["source_authority"] == "Grasshopper/SharePoint/Tenstreet HR KPI recheck workbook"
+    assert "HR_RECRUITING_WORKBOOK_PATH is configured" in payload["source_selection_reason"]
+
+
+def test_hr_recruiting_status_workbook_path_wins_over_legacy_source(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("HR_RECRUITING_SOURCE", "zapier_table")
+    monkeypatch.setenv("HR_RECRUITING_STATE_PATH", str(tmp_path / "hr-recruiting.json"))
+    monkeypatch.setenv("HR_RECRUITING_WORKBOOK_PATH", str(tmp_path / "hr-kpi.xlsx"))
+    response = _client(monkeypatch).get("/api/hr-recruiting/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "hr_kpi_workbook"
+    assert payload["selected_source"] == "hr_kpi_workbook"
+    assert payload["configured_source"] == "zapier_table"
+    assert payload["workbook_configured"] is True
+    assert payload["legacy_snapshot_configured"] is True
+    assert payload["source_profile"] == "kpi_workbook"
+    assert "selected over legacy snapshot settings" in payload["source_selection_reason"]
 
 
 def test_hr_recruiting_import_endpoint_is_key_protected(monkeypatch, tmp_path) -> None:
@@ -276,7 +312,7 @@ def test_hr_recruiting_powerbi_tables_include_export_metadata(monkeypatch) -> No
     rows = response.json()
     assert rows[0]["connection_name"] == "hr_recruiting_by_worklist"
     assert rows[0]["projection_mode"] == "read_only"
-    assert rows[0]["source_authority"] == "Zapier Table + approved TenStreet Outlook emails"
+    assert rows[0]["source_authority"] == "Microsoft 365 Teams + SharePoint HR Driver Leads"
     assert rows[0]["worklist"] == "Recruiter Review"
 
 

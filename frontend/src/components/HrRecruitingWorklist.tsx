@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
+import type { ChangeEvent, ReactNode } from 'react'
 import {
   AlertTriangle,
   BarChart3,
@@ -10,7 +11,6 @@ import {
   ShieldCheck,
   TrendingUp,
   Users,
-  X,
 } from 'lucide-react'
 import {
   Bar,
@@ -24,95 +24,44 @@ import {
   YAxis,
 } from 'recharts'
 import { useHrRecruitingWorklist } from '../hooks/useGeotab'
+import type { DashboardDateRangeParams } from '../hooks/useGeotab'
 import DepartmentCallAnalysisPanel from './DepartmentCallAnalysisPanel'
 import type {
+  HrRecruitingConversionFunnel,
   HrRecruitingDailyRow,
   HrRecruitingHardTarget,
-  HrRecruitingPeriodFilter,
   HrRecruitingStatusCount,
-  HrRecruitingSummary,
+  HrRecruitingTeamMember,
   HrRecruitingTrendRow,
   HrRecruitingWorkbookEvidence,
   HrRecruitingWorkbookMemberKpi,
   HrRecruitingWorklistRow,
 } from '../types/fleet'
 
-const ZERO_SUMMARY: HrRecruitingSummary = {
-  active_leads: 0,
-  new_leads_today: 0,
-  avg_process_age_hours: 0,
-  stale_leads: 0,
-  completed_today: 0,
-  new_hires_7d: 0,
-  active_qualified_pipeline: 0,
-  first_touch_24h_pct: null,
-  first_touch_eligible_count: 0,
-  first_touch_within_24h_count: 0,
-  stale_untouched_48h: 0,
-  orientation_scheduled_count: 0,
-  orientation_show_count: 0,
-  orientation_show_rate: null,
-}
+type DatePreset =
+  | 'today'
+  | 'yesterday'
+  | 'last7'
+  | 'last30'
+  | 'thisMonth'
+  | 'lastMonth'
+  | 'thisQuarter'
+  | 'custom'
+
+const DATE_PRESETS: Array<{ key: DatePreset; label: string }> = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'last7', label: 'Last 7 Days' },
+  { key: 'last30', label: 'Last 30 Days' },
+  { key: 'thisMonth', label: 'This Month' },
+  { key: 'lastMonth', label: 'Last Month' },
+  { key: 'thisQuarter', label: 'This Quarter' },
+  { key: 'custom', label: 'Custom Range' },
+]
+
+const DEPARTMENT_FILTERS = ['HR', 'Recruiting', 'Safety', 'Operations', 'Fleet Compliance', 'Sales']
 
 const numberFormatter = new Intl.NumberFormat('en-US')
-
-const FALLBACK_HARD_TARGETS: Record<string, HrRecruitingHardTarget> = {
-  new_hires_7d: {
-    key: 'new_hires_7d',
-    label: 'New Hires',
-    actual: 0,
-    target: 5,
-    operator: '>=',
-    unit: 'hires',
-    cadence: '7d',
-    display_target: '>= 5/week',
-    status: 'awaiting_feed',
-  },
-  active_qualified_pipeline: {
-    key: 'active_qualified_pipeline',
-    label: 'Active Qualified Pipeline',
-    actual: 0,
-    target: 10,
-    operator: '>=',
-    unit: 'applicants',
-    cadence: 'current',
-    display_target: '>= 10 applicants',
-    status: 'awaiting_feed',
-  },
-  first_touch_24h_pct: {
-    key: 'first_touch_24h_pct',
-    label: 'First Touch Speed',
-    actual: null,
-    target: 0.95,
-    operator: '>=',
-    unit: 'pct',
-    cadence: 'current',
-    display_target: '>= 95% within 24h',
-    status: 'awaiting_feed',
-  },
-  stale_untouched_48h: {
-    key: 'stale_untouched_48h',
-    label: 'Stale Applicants',
-    actual: 0,
-    target: 0,
-    operator: '<=',
-    unit: 'applicants',
-    cadence: 'current',
-    display_target: '0 untouched >48h',
-    status: 'awaiting_feed',
-  },
-  orientation_show_rate: {
-    key: 'orientation_show_rate',
-    label: 'Orientation Show Rate',
-    actual: null,
-    target: 0.5,
-    operator: '>=',
-    unit: 'pct',
-    cadence: 'current',
-    display_target: '>= 50%',
-    status: 'awaiting_feed',
-  },
-}
 
 function formatCount(value: number | null | undefined) {
   return numberFormatter.format(Number(value || 0))
@@ -132,19 +81,126 @@ function formatPercentFromPct(value: number | null | undefined) {
   return `${Number(value).toFixed(1)}%`
 }
 
-function formatMinutes(value: number | null | undefined) {
-  return `${Number(value || 0).toFixed(0)}m`
+function recruitingSourceLabel(
+  data: { source_artifact?: string | null; source?: string; table_id?: string } | null | undefined,
+  workbookSource: boolean,
+) {
+  if (workbookSource) return data?.source_artifact || 'HR KPI workbook pending'
+  if (data?.source === 'microsoft_365_sharepoint') return 'Microsoft 365 SharePoint state'
+  return `Read-only snapshot ${data?.table_id || '01KR00WV4YHCB6BMYDE1EG7HEM'}`
 }
 
-function targetOrFallback(targets: Record<string, HrRecruitingHardTarget> | undefined, key: string, actual: number | null) {
-  const target = targets?.[key] || FALLBACK_HARD_TARGETS[key]
-  return { ...target, actual: target?.actual ?? actual }
+function dateInputValue(value: Date) {
+  const year = value.getFullYear()
+  const month = `${value.getMonth() + 1}`.padStart(2, '0')
+  const day = `${value.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function localDateFromInput(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function startOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1)
+}
+
+function endOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth() + 1, 0)
+}
+
+function startOfQuarter(value: Date) {
+  return new Date(value.getFullYear(), Math.floor(value.getMonth() / 3) * 3, 1)
+}
+
+function presetRange(preset: DatePreset, customStart: string, customEnd: string): DashboardDateRangeParams {
+  const today = new Date()
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const start = new Date(end)
+  if (preset === 'today') {
+    return { startDate: dateInputValue(end), endDate: dateInputValue(end) }
+  }
+  if (preset === 'yesterday') {
+    start.setDate(end.getDate() - 1)
+    return { startDate: dateInputValue(start), endDate: dateInputValue(start) }
+  }
+  if (preset === 'last7') {
+    start.setDate(end.getDate() - 6)
+    return { startDate: dateInputValue(start), endDate: dateInputValue(end) }
+  }
+  if (preset === 'last30') {
+    start.setDate(end.getDate() - 29)
+    return { startDate: dateInputValue(start), endDate: dateInputValue(end) }
+  }
+  if (preset === 'thisMonth') {
+    return { startDate: dateInputValue(startOfMonth(end)), endDate: dateInputValue(end) }
+  }
+  if (preset === 'lastMonth') {
+    const previous = new Date(end.getFullYear(), end.getMonth() - 1, 1)
+    return { startDate: dateInputValue(startOfMonth(previous)), endDate: dateInputValue(endOfMonth(previous)) }
+  }
+  if (preset === 'thisQuarter') {
+    return { startDate: dateInputValue(startOfQuarter(end)), endDate: dateInputValue(end) }
+  }
+  return { startDate: customStart, endDate: customEnd }
+}
+
+function formatRangeDate(value: string | undefined) {
+  if (!value) return '--'
+  const parsed = localDateFromInput(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric' })
+}
+
+function formatRangeLabel(start: string | undefined, end: string | undefined) {
+  if (!start || !end) return ''
+  const startLabel = formatRangeDate(start)
+  const endLabel = formatRangeDate(end)
+  return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`
+}
+
+function formatChange(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(1)}%`
+}
+
+function formatPointChange(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(1)} pts`
 }
 
 function targetValue(target: HrRecruitingHardTarget) {
   if (target.unit === 'pct') return formatPercentValue(target.actual)
   if (target.actual === null || target.actual === undefined) return '--'
   return formatCount(target.actual)
+}
+
+function sourceBackedTargets(targets: Record<string, HrRecruitingHardTarget> | undefined) {
+  return Object.values(targets || {}).filter(
+    target => target.status !== 'awaiting_feed' && target.actual !== null && target.actual !== undefined,
+  )
+}
+
+function targetPresentation(target: HrRecruitingHardTarget) {
+  if (target.key === 'new_hires_7d') {
+    return { icon: <Users className="h-5 w-5 text-cyan-200" />, tone: 'bg-cyan-500/15' }
+  }
+  if (target.key === 'active_qualified_pipeline') {
+    return { icon: <TrendingUp className="h-5 w-5 text-emerald-200" />, tone: 'bg-emerald-500/15' }
+  }
+  if (target.key === 'first_touch_24h_pct') {
+    return { icon: <Clock className="h-5 w-5 text-blue-200" />, tone: 'bg-blue-500/15' }
+  }
+  if (target.key === 'stale_untouched_48h') {
+    return { icon: <AlertTriangle className="h-5 w-5 text-amber-200" />, tone: 'bg-amber-500/15' }
+  }
+  if (target.key === 'orientation_show_rate') {
+    return { icon: <ShieldCheck className="h-5 w-5 text-violet-200" />, tone: 'bg-violet-500/15' }
+  }
+  return { icon: <BarChart3 className="h-5 w-5 text-sky-200" />, tone: 'bg-sky-500/15' }
 }
 
 function statusLabel(status: HrRecruitingHardTarget['status']) {
@@ -165,32 +221,22 @@ function compactDate(value: string) {
   return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function dateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function normalizeWeekStart(value: string) {
-  if (!value) return ''
-  const parsed = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(parsed.getTime())) return ''
-  const daysSinceMonday = (parsed.getDay() + 6) % 7
-  parsed.setDate(parsed.getDate() - daysSinceMonday)
-  return dateInputValue(parsed)
-}
-
-function periodLabel(period: HrRecruitingPeriodFilter | undefined) {
-  if (period?.grain === 'week' && period.week_start && period.week_end) {
-    return `${compactDate(period.week_start)} - ${compactDate(period.week_end)}`
-  }
-  return 'All weeks'
+function compactOptionalDate(value: string | null | undefined) {
+  if (!value) return '--'
+  const parsed = new Date(value.includes('T') ? value : `${value}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function workbookMetric(evidence: HrRecruitingWorkbookEvidence | undefined, key: string) {
   const value = evidence?.kpi_summary?.[key]
   return typeof value === 'number' ? value : null
+}
+
+function exceptionSeverityClasses(severity: string) {
+  if (severity === 'critical') return 'border-red-500/30 bg-red-500/10 text-red-200 light:text-red-700'
+  if (severity === 'warning') return 'border-amber-500/30 bg-amber-500/10 text-amber-200 light:text-amber-700'
+  return 'border-gray-700 bg-gray-900/40 text-gray-300 light:border-gray-200 light:bg-gray-50 light:text-gray-700'
 }
 
 function ChartTooltip({ active, payload, label }: any) {
@@ -248,6 +294,162 @@ function KpiCard({
   )
 }
 
+function DateRangeFilter({
+  preset,
+  onPresetChange,
+  startDate,
+  endDate,
+  onStartDateChange,
+  onEndDateChange,
+  department,
+  onDepartmentChange,
+}: {
+  preset: DatePreset
+  onPresetChange: (value: DatePreset) => void
+  startDate: string
+  endDate: string
+  onStartDateChange: (value: string) => void
+  onEndDateChange: (value: string) => void
+  department: string
+  onDepartmentChange: (value: string) => void
+}) {
+  const handleStartDateInput = (event: ChangeEvent<HTMLInputElement>) => {
+    onStartDateChange(event.currentTarget.value)
+  }
+  const handleEndDateInput = (event: ChangeEvent<HTMLInputElement>) => {
+    onEndDateChange(event.currentTarget.value)
+  }
+
+  return (
+    <section className="rounded-xl border border-gray-800/70 bg-gray-900/55 p-4 light:border-gray-200 light:bg-white">
+      <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="rounded-lg bg-sky-500/15 p-2">
+            <CalendarDays className="h-5 w-5 text-sky-300" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white light:text-gray-900">Showing data from {formatRangeDate(startDate)} to {formatRangeDate(endDate)}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">Date filters apply server-side to the HR KPI workbook intake window and call-analysis panel before this read-only surface renders.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_repeat(2,minmax(145px,170px))_minmax(170px,220px)]">
+          <label className="text-xs font-medium text-gray-400 light:text-gray-600">
+            Preset
+            <select
+              value={preset}
+              onChange={event => onPresetChange(event.target.value as DatePreset)}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            >
+              {DATE_PRESETS.map(item => (
+                <option key={item.key} value={item.key}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-gray-400 light:text-gray-600">
+            Start Date
+            <input
+              type="date"
+              value={startDate}
+              onChange={handleStartDateInput}
+              onInput={handleStartDateInput}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            />
+          </label>
+          <label className="text-xs font-medium text-gray-400 light:text-gray-600">
+            End Date
+            <input
+              type="date"
+              value={endDate}
+              onChange={handleEndDateInput}
+              onInput={handleEndDateInput}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            />
+          </label>
+          <label className="text-xs font-medium text-gray-400 light:text-gray-600">
+            Department
+            <select
+              value={department}
+              onChange={event => onDepartmentChange(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            >
+              {DEPARTMENT_FILTERS.map(item => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TrendComparisonStrip({ data }: { data: ReturnType<typeof useHrRecruitingWorklist>['data'] }) {
+  const comparison = data?.trend_comparison
+  if (!comparison) return null
+
+  const currentWindow = formatRangeLabel(data?.date_range?.start, data?.date_range?.end)
+  const previousWindow = formatRangeLabel(data?.date_range?.previous_start, data?.date_range?.previous_end)
+  const cards = [
+    {
+      label: 'Lead Volume',
+      value: comparison.lead_volume_change_pct,
+      current: comparison.current.new_leads,
+      previous: comparison.previous.new_leads,
+    },
+    {
+      label: 'Hire Volume',
+      value: comparison.hire_volume_change_pct,
+      current: comparison.current.new_hires,
+      previous: comparison.previous.new_hires,
+    },
+    {
+      label: 'Follow-Ups',
+      value: comparison.follow_up_change_pct,
+      current: comparison.current.follow_ups,
+      previous: comparison.previous.follow_ups,
+    },
+  ]
+  return (
+    <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      {cards.map(card => {
+        const positive = card.value === null || card.value === undefined || card.value >= 0
+        return (
+          <div key={card.label} className={`rounded-xl border bg-gray-900/45 p-4 light:bg-white ${positive ? 'border-emerald-500/25' : 'border-amber-500/30'}`}>
+            <p className="text-xs font-medium uppercase text-gray-500 light:text-gray-600">{card.label}</p>
+            <p className={`mt-2 text-2xl font-semibold ${positive ? 'text-emerald-200 light:text-emerald-700' : 'text-amber-200 light:text-amber-700'}`}>{formatChange(card.value)}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
+              Current{currentWindow ? ` (${currentWindow})` : ''} {formatCount(card.current)} | Prior{previousWindow ? ` (${previousWindow})` : ''} {formatCount(card.previous)}
+            </p>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
+function PeriodMetricCards({ data }: { data: ReturnType<typeof useHrRecruitingWorklist>['data'] }) {
+  const metrics = data?.period_metrics
+  if (!metrics) return null
+  const cards = [
+    { label: 'New Leads', value: metrics.new_leads },
+    { label: 'New Applicants', value: metrics.new_applicants },
+    { label: 'Interviews Scheduled', value: metrics.interviews_scheduled },
+    { label: 'New Hires', value: metrics.new_hires },
+    { label: 'Recruiting Follow-Ups', value: metrics.follow_ups },
+  ]
+  return (
+    <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      {cards.map(card => (
+        <div key={card.label} className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-4 light:border-gray-200 light:bg-white">
+          <p className="text-xs font-medium text-gray-500 light:text-gray-600">{card.label}</p>
+          <p className="mt-2 text-2xl font-semibold text-white light:text-gray-900">{formatCount(card.value)}</p>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 function EmptyPanel({ message }: { message: string }) {
   return (
     <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/35 p-8 text-center light:border-gray-300 light:bg-gray-50">
@@ -277,7 +479,7 @@ function Skeleton() {
 
 function WorklistTable({ rows, workbookSource }: { rows: HrRecruitingWorklistRow[]; workbookSource: boolean }) {
   if (!rows.length) {
-    return <EmptyPanel message={workbookSource ? 'The configured HR KPI workbook has no lead-level KPI rows after validation.' : 'The configured Zapier/Outlook snapshot has no active worklist leads after validation and dedupe.'} />
+    return <EmptyPanel message={workbookSource ? 'The configured HR KPI workbook has no lead-level KPI rows after validation.' : 'The configured Microsoft 365/SharePoint snapshot has no active worklist leads after validation and dedupe.'} />
   }
   const firstColumn = workbookSource ? 'KPI Bucket' : 'Worklist'
   const countColumn = workbookSource ? 'Leads' : 'Active'
@@ -472,6 +674,61 @@ function MemberKpiTable({ rows, label }: { rows: HrRecruitingWorkbookMemberKpi[]
   )
 }
 
+function teamMemberStatusLabel(status: string) {
+  if (status === 'source_backed') return 'Source-backed'
+  return 'Roster'
+}
+
+function TeamMembersPanel({ members }: { members: HrRecruitingTeamMember[] }) {
+  if (!members.length) return null
+
+  return (
+    <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Users className="h-5 w-5 text-cyan-300" />
+          <h3 className="font-semibold text-white light:text-gray-900">HR Team Members</h3>
+        </div>
+        <span className="text-xs text-gray-500 light:text-gray-600">Roster plus source-backed workbook activity</span>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+        <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+          <thead className="bg-gray-900/80 light:bg-gray-100">
+            <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+              <th className="px-4 py-3 font-medium">Team Member</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">First Outreach</th>
+              <th className="px-4 py-3 font-medium">Real Discussion</th>
+              <th className="px-4 py-3 font-medium">Within 24h</th>
+              <th className="px-4 py-3 font-medium">Late/Failed</th>
+              <th className="px-4 py-3 font-medium">Attempts</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+            {members.map(member => (
+              <tr key={member.name} className="bg-gray-900/35 light:bg-white">
+                <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{member.name}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-md border px-2 py-1 text-xs font-medium ${member.status === 'source_backed' ? 'border-emerald-500/35 text-emerald-200 light:text-emerald-700' : 'border-gray-700 text-gray-400 light:border-gray-300 light:text-gray-600'}`}>
+                    {teamMemberStatusLabel(member.status)}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(member.first_outreach_leads)}</td>
+                <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(member.real_discussion_leads)}</td>
+                <td className="px-4 py-3 text-gray-300 light:text-gray-700">
+                  {formatCount(member.within_24h)} {member.within_24h_rate === null ? '' : `(${formatPercentValue(member.within_24h_rate)})`}
+                </td>
+                <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(member.late_48_72h + member.failed_over_72h)}</td>
+                <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(member.total_outbound_attempts)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function WorkbookEvidencePanel({ evidence }: { evidence: HrRecruitingWorkbookEvidence | undefined }) {
   if (!evidence) return null
   const cards = [
@@ -535,25 +792,250 @@ function WorkbookEvidencePanel({ evidence }: { evidence: HrRecruitingWorkbookEvi
   )
 }
 
+function ConversionGroupTable({
+  rows,
+  labelKey,
+  label,
+}: {
+  rows: NonNullable<HrRecruitingConversionFunnel['by_source']>
+  labelKey: 'source_bucket' | 'sla_result'
+  label: string
+}) {
+  if (!rows.length) return null
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+      <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+        <thead className="bg-gray-900/80 light:bg-gray-100">
+          <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+            <th className="px-4 py-3 font-medium">{label}</th>
+            <th className="px-4 py-3 font-medium">Eligible</th>
+            <th className="px-4 py-3 font-medium">Converted</th>
+            <th className="px-4 py-3 font-medium">Rate</th>
+            <th className="px-4 py-3 font-medium">Still Driving</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+          {rows.slice(0, 8).map(row => (
+            <tr key={`${label}-${row[labelKey]}`} className="bg-gray-900/35 light:bg-white">
+              <td className="max-w-[320px] px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row[labelKey] || 'Unknown'}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.eligible_leads)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.converted_leads)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentValue(row.conversion_rate)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.still_driving_count)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ConversionFunnelPanel({ funnel }: { funnel: HrRecruitingConversionFunnel | null | undefined }) {
+  if (!funnel) return null
+  const summary = funnel.summary
+  const trendSummary = funnel.trend_summary
+  const recentTrend = (funnel.trend || []).slice(-6).reverse()
+  const cards = [
+    { label: 'Eligible Leads', value: formatCount(summary.eligible_leads), detail: `${formatCount(summary.unfiltered_eligible_leads)} workbook rows reviewed` },
+    { label: 'Converted Exact Match', value: formatCount(summary.converted_leads), detail: formatPercentValue(summary.conversion_rate) },
+    { label: 'Not Converted', value: formatCount(summary.not_converted_leads), detail: 'No exact Xcelerator driver match' },
+    { label: 'Still Driving Evidence', value: formatCount(summary.still_driving_count), detail: formatPercentValue(summary.still_driving_rate) },
+  ]
+
+  return (
+    <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
+          <div className="min-w-0">
+            <h3 className="font-semibold text-white light:text-gray-900">Lead-to-Driver Conversion Funnel</h3>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
+              {funnel.workbook_name || 'pending conversion workbook'} · exact Xcelerator match rule · PII suppressed
+            </p>
+          </div>
+        </div>
+        <span className="rounded-md border border-gray-700 bg-gray-950/40 px-2 py-1 text-xs text-gray-300 light:border-gray-200 light:bg-gray-50 light:text-gray-700">
+          {funnel.source_status}
+        </span>
+      </div>
+
+      {funnel.source_message && (
+        <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 light:text-amber-700">
+          {funnel.source_message}
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map(card => (
+          <div key={card.label} className="rounded-lg border border-gray-800/70 bg-gray-950/40 p-3 light:border-gray-200 light:bg-gray-50">
+            <p className="text-xs text-gray-500 light:text-gray-600">{card.label}</p>
+            <p className="mt-1 text-xl font-semibold text-white light:text-gray-900">{card.value}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{card.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      {trendSummary && (
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-gray-800/70 bg-gray-950/35 p-3 light:border-gray-200 light:bg-gray-50">
+            <p className="text-xs text-gray-500 light:text-gray-600">Eligible Trend</p>
+            <p className="mt-1 text-lg font-semibold text-white light:text-gray-900">{formatChange(trendSummary.eligible_change_pct)}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">Current {formatCount(trendSummary.current.eligible_leads)} | Prior {formatCount(trendSummary.previous.eligible_leads)}</p>
+          </div>
+          <div className="rounded-lg border border-gray-800/70 bg-gray-950/35 p-3 light:border-gray-200 light:bg-gray-50">
+            <p className="text-xs text-gray-500 light:text-gray-600">Converted Trend</p>
+            <p className="mt-1 text-lg font-semibold text-white light:text-gray-900">{formatChange(trendSummary.converted_change_pct)}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">Current {formatCount(trendSummary.current.converted_leads)} | Prior {formatCount(trendSummary.previous.converted_leads)}</p>
+          </div>
+          <div className="rounded-lg border border-gray-800/70 bg-gray-950/35 p-3 light:border-gray-200 light:bg-gray-50">
+            <p className="text-xs text-gray-500 light:text-gray-600">Conversion Rate Trend</p>
+            <p className="mt-1 text-lg font-semibold text-white light:text-gray-900">{formatPointChange(trendSummary.conversion_rate_change_points)}</p>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">Current {formatPercentValue(trendSummary.current.conversion_rate)} | Prior {formatPercentValue(trendSummary.previous.conversion_rate)}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <ConversionGroupTable rows={funnel.by_source || []} labelKey="source_bucket" label="Source Bucket" />
+        <ConversionGroupTable rows={funnel.by_sla || []} labelKey="sla_result" label="SLA Result" />
+      </div>
+
+      {!!recentTrend.length && (
+        <div className="mt-5 overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+          <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+            <thead className="bg-gray-900/80 light:bg-gray-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+                <th className="px-4 py-3 font-medium">Date</th>
+                <th className="px-4 py-3 font-medium">Eligible</th>
+                <th className="px-4 py-3 font-medium">Converted</th>
+                <th className="px-4 py-3 font-medium">Not Converted</th>
+                <th className="px-4 py-3 font-medium">Rate</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+              {recentTrend.map(row => (
+                <tr key={row.date} className="bg-gray-900/35 light:bg-white">
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{compactDate(row.date)}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.eligible_leads)}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.converted_leads)}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.not_converted_leads)}</td>
+                  <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentValue(row.conversion_rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-gray-500 light:text-gray-600">
+        {funnel.source_authority} · {funnel.conversion_rule}
+      </p>
+    </section>
+  )
+}
+
+function WorkbookExceptionQueue({ evidence }: { evidence: HrRecruitingWorkbookEvidence | undefined }) {
+  if (!evidence) return null
+  const rows = evidence.exception_queue || []
+  const summary = evidence.exception_summary || []
+
+  return (
+    <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+          <div className="min-w-0">
+            <h3 className="font-semibold text-white light:text-gray-900">Workbook Exception Queue</h3>
+            <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
+              {evidence.workbook_name || 'pending workbook'} · masked lead refs · contact data suppressed
+            </p>
+          </div>
+        </div>
+        {!!summary.length && (
+          <div className="flex flex-wrap gap-2">
+            {summary.map(item => (
+              <span key={item.category} className="rounded-md border border-gray-700 bg-gray-950/40 px-2 py-1 text-xs text-gray-300 light:border-gray-200 light:bg-gray-50 light:text-gray-700">
+                {item.category}: {formatCount(item.count)}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!rows.length ? (
+        <EmptyPanel message="The approved HR KPI workbook has no exception-tab rows in the selected date range." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+          <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+            <thead className="bg-gray-900/80 light:bg-gray-100">
+              <tr className="text-left text-xs text-gray-500 light:text-gray-600">
+                <th className="px-4 py-3 font-medium">Lead Ref</th>
+                <th className="px-4 py-3 font-medium">Exception</th>
+                <th className="px-4 py-3 font-medium">Age</th>
+                <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">KPI Buckets</th>
+                <th className="px-4 py-3 font-medium">Source</th>
+                <th className="px-4 py-3 font-medium">Contact</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+              {rows.map(row => (
+                <tr key={row.exception_id} className="bg-gray-900/35 light:bg-white">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-200 light:text-gray-800">{row.lead_ref}</td>
+                  <td className="min-w-[180px] px-4 py-3">
+                    <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-medium ${exceptionSeverityClasses(row.severity)}`}>
+                      {row.category}
+                    </span>
+                    <p className="mt-1 text-xs text-gray-500 light:text-gray-600">{row.reason}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-300 light:text-gray-700">{row.age_hours === null || row.age_hours === undefined ? '--' : formatHours(row.age_hours)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-300 light:text-gray-700">{compactOptionalDate(row.lead_created_date)}</td>
+                  <td className="min-w-[130px] px-4 py-3 text-gray-300 light:text-gray-700">{row.status}</td>
+                  <td className="min-w-[240px] px-4 py-3 text-xs text-gray-400 light:text-gray-600">
+                    <p>Outreach: {row.first_outreach_bucket}</p>
+                    <p className="mt-1">Discussion: {row.real_discussion_bucket}</p>
+                  </td>
+                  <td className="min-w-[190px] px-4 py-3 text-xs text-gray-400 light:text-gray-600">
+                    <p>{row.source_system}</p>
+                    <p className="mt-1">Tab: {row.source_sheet}</p>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500 light:text-gray-600">{row.masked_contact}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function HrRecruitingWorklist() {
-  const [weekStart, setWeekStart] = useState('')
-  const { data, loading, error, refresh } = useHrRecruitingWorklist(true, weekStart || undefined)
-  const summary = data?.summary || ZERO_SUMMARY
+  const initialRange = useMemo(() => presetRange('last30', '', ''), [])
+  const [datePreset, setDatePreset] = useState<DatePreset>('last30')
+  const [customStartDate, setCustomStartDate] = useState(initialRange.startDate || '')
+  const [customEndDate, setCustomEndDate] = useState(initialRange.endDate || '')
+  const [selectedDepartment, setSelectedDepartment] = useState('HR')
+  const dateRange = useMemo(
+    () => presetRange(datePreset, customStartDate, customEndDate),
+    [customEndDate, customStartDate, datePreset],
+  )
+  const { data, loading, error, refresh } = useHrRecruitingWorklist(dateRange)
   const byWorklist = data?.by_worklist || []
   const trend = data?.trend || []
   const statusCounts = data?.status_counts || []
   const daily = data?.daily || []
   const workbookSource = data?.source_profile === 'kpi_workbook'
-  const hardTargets = [
-    targetOrFallback(data?.hard_targets, 'new_hires_7d', summary.new_hires_7d),
-    targetOrFallback(data?.hard_targets, 'active_qualified_pipeline', summary.active_qualified_pipeline),
-    targetOrFallback(data?.hard_targets, 'first_touch_24h_pct', summary.first_touch_24h_pct),
-    targetOrFallback(data?.hard_targets, 'stale_untouched_48h', summary.stale_untouched_48h),
-    targetOrFallback(data?.hard_targets, 'orientation_show_rate', summary.orientation_show_rate),
-  ]
-  const sourceMessage = data?.source_message || (workbookSource ? 'Configure HR_RECRUITING_WORKBOOK_PATH with the approved HR KPI workbook to populate this monitor.' : 'Configure the approved Zapier/Outlook HR snapshot to populate this monitor.')
+  const hardTargets = useMemo(() => sourceBackedTargets(data?.hard_targets), [data?.hard_targets])
+  const teamMembers = data?.team_members || []
+  const sourceMessage = data?.source_message || (
+    workbookSource
+      ? 'Configure HR_RECRUITING_WORKBOOK_PATH with HR_Lead_KPI_Recheck_By_Phone.xlsx to populate this monitor.'
+      : 'Import a sanitized Microsoft 365/SharePoint HR lead snapshot when HR_RECRUITING_WORKBOOK_PATH is unavailable.'
+  )
   const empty = !loading && !error && data && data.row_counts.deduped_leads === 0
-  const activePeriodLabel = periodLabel(data?.period_filter)
 
   if (loading && !data) {
     return <Skeleton />
@@ -569,41 +1051,14 @@ export default function HrRecruitingWorklist() {
           <div className="min-w-0">
             <h2 className="text-xl font-bold text-white light:text-gray-900">HR Recruiting Worklist</h2>
             <p className="max-w-[calc(100vw-6rem)] text-sm text-gray-400 light:text-gray-600 xl:max-w-none">
-              <span className="sm:hidden">{workbookSource ? 'Read-only workbook evidence' : 'Read-only Zapier/Outlook analytics'}</span>
-              <span className="hidden sm:inline">{workbookSource ? 'Read-only Grasshopper/SharePoint/Tenstreet workbook evidence · no applicant contact data exposed' : 'Read-only Zapier/Outlook analytics · no applicant contact data exposed'}</span>
+              <span className="sm:hidden">{workbookSource ? 'Read-only workbook evidence' : 'Read-only M365 HR leads'}</span>
+              <span className="hidden sm:inline">{workbookSource ? 'Read-only Grasshopper/SharePoint/Tenstreet workbook evidence · no applicant contact data exposed' : 'Read-only Microsoft 365 HR lead analytics · no applicant contact data exposed'}</span>
             </p>
           </div>
         </div>
         <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center xl:w-auto">
-          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 light:border-gray-200 light:bg-white sm:w-auto">
-            <label className="flex shrink-0 items-center gap-1 text-xs font-medium text-gray-400 light:text-gray-600" htmlFor="hr-week-filter">
-              <CalendarDays className="h-4 w-4" />
-              Week
-            </label>
-            <input
-              id="hr-week-filter"
-              aria-label="HR recruiting week filter"
-              type="date"
-              value={weekStart}
-              onChange={event => setWeekStart(normalizeWeekStart(event.target.value))}
-              className="min-w-0 bg-transparent text-sm text-gray-100 outline-none light:text-gray-900"
-            />
-            {weekStart && (
-              <button
-                type="button"
-                aria-label="Clear HR recruiting week filter"
-                onClick={() => setWeekStart('')}
-                className="rounded-md p-1 text-gray-400 transition hover:bg-gray-800 hover:text-white light:text-gray-600 light:hover:bg-gray-100 light:hover:text-gray-900"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
           <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
-            {activePeriodLabel}
-          </span>
-          <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
-            {workbookSource ? data?.source_artifact || 'Workbook pending' : `Table ${data?.table_id || '01KR00WV4YHCB6BMYDE1EG7HEM'}`}
+            {recruitingSourceLabel(data, workbookSource)}
           </span>
           <span className="w-full min-w-0 truncate rounded-lg border border-gray-800 bg-gray-900/70 px-3 py-2 text-xs text-gray-400 light:border-gray-200 light:bg-white light:text-gray-600 sm:w-auto">
             {data?.source_status || 'loading'}
@@ -619,6 +1074,25 @@ export default function HrRecruitingWorklist() {
         </div>
       </div>
 
+      <DateRangeFilter
+        preset={datePreset}
+        onPresetChange={setDatePreset}
+        startDate={dateRange.startDate || ''}
+        endDate={dateRange.endDate || ''}
+        onStartDateChange={value => {
+          setDatePreset('custom')
+          setCustomStartDate(value)
+        }}
+        onEndDateChange={value => {
+          setDatePreset('custom')
+          setCustomEndDate(value)
+        }}
+        department={selectedDepartment}
+        onDepartmentChange={setSelectedDepartment}
+      />
+
+      <TrendComparisonStrip data={data} />
+
       {(error || data?.source_status === 'source_error') && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
           <div className="flex items-start gap-3">
@@ -631,17 +1105,39 @@ export default function HrRecruitingWorklist() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard icon={<Users className="h-5 w-5 text-cyan-200" />} label={hardTargets[0].label} value={targetValue(hardTargets[0])} detail={`Target ${hardTargets[0].display_target}`} tone="bg-cyan-500/15" status={hardTargets[0].status} />
-        <KpiCard icon={<TrendingUp className="h-5 w-5 text-emerald-200" />} label={hardTargets[1].label} value={targetValue(hardTargets[1])} detail={`Target ${hardTargets[1].display_target}`} tone="bg-emerald-500/15" status={hardTargets[1].status} />
-        <KpiCard icon={<Clock className="h-5 w-5 text-blue-200" />} label={hardTargets[2].label} value={targetValue(hardTargets[2])} detail={`Target ${hardTargets[2].display_target}`} tone="bg-blue-500/15" status={hardTargets[2].status} />
-        <KpiCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label={hardTargets[3].label} value={targetValue(hardTargets[3])} detail={`Target ${hardTargets[3].display_target}`} tone="bg-amber-500/15" status={hardTargets[3].status} />
-        <KpiCard icon={<ShieldCheck className="h-5 w-5 text-violet-200" />} label={hardTargets[4].label} value={targetValue(hardTargets[4])} detail={`Target ${hardTargets[4].display_target}`} tone="bg-violet-500/15" status={hardTargets[4].status} />
-      </div>
+      {!!hardTargets.length && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {hardTargets.map(target => {
+            const presentation = targetPresentation(target)
+            return (
+              <KpiCard
+                key={target.key}
+                icon={presentation.icon}
+                label={target.label}
+                value={targetValue(target)}
+                detail={`Target ${target.display_target}`}
+                tone={presentation.tone}
+                status={target.status}
+              />
+            )
+          })}
+        </div>
+      )}
+
+      <PeriodMetricCards data={data} />
+
+      <TeamMembersPanel members={teamMembers} />
 
       {workbookSource && <WorkbookEvidencePanel evidence={data?.workbook_evidence} />}
+      {workbookSource && <ConversionFunnelPanel funnel={data?.workbook_evidence?.conversion_funnel} />}
+      {workbookSource && <WorkbookExceptionQueue evidence={data?.workbook_evidence} />}
 
-      <DepartmentCallAnalysisPanel department="HR" title="HR Call Analysis" />
+      <DepartmentCallAnalysisPanel
+        department={selectedDepartment}
+        title={`${selectedDepartment} Call Analysis`}
+        showDepartmentRollups
+        dateRange={dateRange}
+      />
 
       {empty && <EmptyPanel message={sourceMessage} />}
 
@@ -688,7 +1184,7 @@ export default function HrRecruitingWorklist() {
         </div>
         <DailyVolumeTable rows={daily} workbookSource={workbookSource} />
         <p className="mt-4 text-xs text-gray-500 light:text-gray-600">
-          Generated {data?.generated_at ? new Date(data.generated_at).toLocaleString() : 'pending'} · {activePeriodLabel} · {data?.source_authority || 'Zapier Table + approved TenStreet Outlook emails'} · PII suppressed
+          Generated {data?.generated_at ? new Date(data.generated_at).toLocaleString() : 'pending'} · {data?.source_authority || 'Microsoft 365 Teams + SharePoint HR Driver Leads'} · PII suppressed
         </p>
       </section>
     </div>

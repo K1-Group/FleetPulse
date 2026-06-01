@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -35,10 +36,16 @@ class DepartmentCallAnalysisSyncRequest(BaseModel):
 @router.get("/dashboard")
 async def department_call_analysis_dashboard(
     department: str | None = Query(default=None, max_length=80),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
 ) -> dict[str, Any]:
     """Return dashboard-safe department call analytics."""
 
-    return await get_department_call_analysis_dataset(department=department)
+    return await get_department_call_analysis_dataset(
+        department=department,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @router.get("/status")

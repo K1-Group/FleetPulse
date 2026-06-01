@@ -2,7 +2,7 @@
 
 FleetPulse is the read-only KPI surface. Zapier and Power Automate coordinate
 scheduled pulls, but source authority stays with QBO, Xcelerator, SharePoint,
-and the approved TenStreet Outlook/Zapier HR source.
+and the approved HR_Lead_KPI_Recheck_By_Phone workbook-backed HR source.
 
 ## Azure App Settings
 
@@ -12,6 +12,12 @@ Run this once from an Azure-authenticated shell:
 bash scripts/configure_fleetpulse_feed_appsettings.sh
 ```
 
+The approved live deployment path runs the same script from the GitHub Actions
+Azure deployment workflow after the App Service container deploy and before
+smoke tests. Store only the Graph Key Vault secret names in GitHub Secrets; the
+workflow writes App Service settings as Key Vault references and does not expose
+or persist raw Microsoft Graph credential values.
+
 Defaults:
 
 ```env
@@ -20,13 +26,22 @@ AZURE_APP_NAME=k1-fleetpulse
 AZURE_KEY_VAULT_NAME=kv-k1-fleetpulse
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
 FLEETPULSE_XCELERATOR_EVENT_STATE_PATH=/home/data/fleetpulse_xcelerator_events.json
+HR_RECRUITING_SOURCE=hr_kpi_workbook
+HR_RECRUITING_WORKBOOK_PATH=/home/data/HR_Lead_KPI_Recheck_By_Phone.xlsx
+HR_RECRUITING_CONVERSION_WORKBOOK_PATH=/home/data/HR_Lead_Name_To_Xcelerator_Driver_Conversion.xlsx
 HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
 HR_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
+DEPARTMENT_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
 FLEETPULSE_BILLING_EXCEPTIONS_STATE_PATH=/home/data/fleetpulse_billing_exceptions.json
 FLEETPULSE_WEEKLY_CLOSE_VARIANCE_STATE_PATH=/home/data/fleetpulse_weekly_close_variance.json
 FLEETPULSE_DISPATCH_TIMESTAMPS_STATE_PATH=/home/data/fleetpulse_dispatch_timestamps.json
 FLEETPULSE_SHAREPOINT_SEAT_ASSIGNMENTS_STATE_PATH=/home/data/fleetpulse_sharepoint_seat_assignments.json
 FLEETPULSE_SHAREPOINT_TRAINING_HISTORY_STATE_PATH=/home/data/fleetpulse_sharepoint_training_history.json
+HR_CALL_ANALYSIS_SHAREPOINT_ENABLED=true
+HR_CALL_ANALYSIS_SHAREPOINT_SITE_URL=https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures
+HR_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATH=Grasshopper/Call Analysis Reports/HR
+HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS=.txt,.csv
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
 ```
 
 The script creates these Key Vault secrets if values are not supplied by env:
@@ -42,6 +57,20 @@ FLEETPULSE-DISPATCH-TIMESTAMPS-IMPORT-API-KEY
 FLEETPULSE-SHAREPOINT-SEAT-ASSIGNMENTS-IMPORT-API-KEY
 FLEETPULSE-SHAREPOINT-TRAINING-HISTORY-IMPORT-API-KEY
 ```
+
+Live SharePoint folder sync uses the shared Microsoft Graph app credentials.
+When those secrets already exist in Key Vault, set these secret-name variables
+before running the script so the App Service receives Key Vault references:
+
+```env
+FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME=
+FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME=
+FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME=
+```
+
+The Graph app must be read-only for the configured SharePoint site/folder. It
+must not grant FleetPulse write authority to HR, Tenstreet, Grasshopper,
+SharePoint, or Xcelerator data.
 
 ## Zapier Jobs
 
@@ -96,38 +125,35 @@ Minimum useful event fields:
 }
 ```
 
-### HR Recruiting Snapshot
+### HR Recruiting Workbook
 
-- Trigger: Schedule by Zapier, daily at 06:10 CT.
-- Action: Read the approved TenStreet Outlook/Zapier applicant worklist table.
-- Action: Webhooks by Zapier `POST`.
-- URL: `https://k1-fleetpulse.azurewebsites.net/api/hr-recruiting/import`
-- Header: `X-FleetPulse-HR-Key: <Key Vault secret value>`
-- Body:
+FleetPulse's deployed-safe HR Recruiting source is the approved workbook:
 
-```json
-{
-  "filename": "hr-recruiting-daily.json",
-  "content": "{{json_string_with_rows}}"
-}
+```env
+HR_RECRUITING_SOURCE=hr_kpi_workbook
+HR_RECRUITING_WORKBOOK_PATH=/home/data/HR_Lead_KPI_Recheck_By_Phone.xlsx
+HR_RECRUITING_CONVERSION_WORKBOOK_PATH=/home/data/HR_Lead_Name_To_Xcelerator_Driver_Conversion.xlsx
+HR_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
+DEPARTMENT_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
 ```
 
-Required HR row fields:
+Required workbook tabs:
 
-```json
-{
-  "source_email_id": "outlook-message-id",
-  "applicant": "candidate name or source id",
-  "worklist": "Recruiter Review",
-  "status": "Assigned",
-  "first_assigned_at": "2026-05-20T11:10:00Z",
-  "current_worklist_entered_at": "2026-05-20T11:10:00Z",
-  "completed_at": null
-}
-```
+- `Lead Level KPI`
+- `Call Attempts Detail`
+- `Failed No Outbound`
+- `Recovered 24-48h`
+- `Failed Over 72h`
+- `No Real Discussion`
+- `Source Log QA`
 
-FleetPulse stores the source rows, but every HR dashboard and Power BI payload
-suppresses applicant PII.
+When `start_date` and `end_date` are supplied, FleetPulse filters the
+workbook-backed aggregate KPI payload before rendering the HR Recruiting
+surface. Lead KPI rows are filtered by `Lead Created At` or compatible
+submitted/created intake columns, not later application, modified, or status
+dates; follow-up counts are filtered by call date. The response includes a
+same-length prior-period comparison and suppresses applicant PII.
 
 ### HR Call Analysis Snapshot
 

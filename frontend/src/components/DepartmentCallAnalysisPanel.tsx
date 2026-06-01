@@ -1,7 +1,9 @@
-import { AlertTriangle, BarChart3, Clock, PhoneCall, ShieldCheck, TrendingUp, Users } from 'lucide-react'
+import { AlertTriangle, BarChart3, CalendarDays, Clock, PhoneCall, ShieldCheck, TrendingUp, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useDepartmentCallAnalysis } from '../hooks/useGeotab'
-import type { DepartmentCallAnalysisRollup, HrCallCoachingFlag, HrCallEmployeeProductivity, HrCallAnalysisSummary } from '../types/fleet'
+import type { DashboardDateRangeParams } from '../hooks/useGeotab'
+import type { DepartmentCallAnalysisRollup, HrCallCoachingFlag, HrCallDailyVolume, HrCallEmployeeProductivity, HrCallAnalysisSummary } from '../types/fleet'
 
 const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   total_call_legs: 0,
@@ -12,6 +14,9 @@ const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   connect_rate_pct: null,
   voicemails: 0,
   hangups: 0,
+  answered_calls: 0,
+  missed_calls: 0,
+  follow_up_count: 0,
   active_employee_count: 0,
   analysis_reports: 0,
   coaching_flags: 0,
@@ -48,11 +53,25 @@ function formatPercentValue(value: number | null | undefined) {
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
+function formatChange(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(1)}%`
+}
+
 function formatDateRange(start?: string | null, end?: string | null) {
   if (!start) return 'awaiting call-log state'
   const startText = new Date(start).toLocaleDateString()
   const endText = end ? new Date(end).toLocaleDateString() : 'now'
   return `${startText} - ${endText}`
+}
+
+function activitySourceDetail(summary: HrCallAnalysisSummary) {
+  if (summary.activity_calls === undefined || summary.activity_calls === null) {
+    return `${formatMinutes(summary.total_minutes)} total talk time`
+  }
+  const reportDate = summary.activity_report_date ? `through ${summary.activity_report_date}` : 'Activity report'
+  return `${reportDate} | ${formatCount(summary.total_call_legs)} detail legs`
 }
 
 function StatCard({
@@ -102,7 +121,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
             <th className="px-4 py-3 font-medium">Employee</th>
             <th className="px-4 py-3 font-medium">Score</th>
-            <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Call Legs</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Minutes</th>
@@ -119,6 +138,42 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.connected_rate_pct)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.voicemail_rate_pct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
+  const recent = rows.slice(-14).reverse()
+  if (!recent.length) {
+    return <EmptyPanel message="No call activity was found for the selected day or range." />
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+      <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+        <thead className="bg-gray-900/80 light:bg-gray-100">
+          <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+            <th className="px-4 py-3 font-medium">Date</th>
+            <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Outbound</th>
+            <th className="px-4 py-3 font-medium">Connected</th>
+            <th className="px-4 py-3 font-medium">Voicemail</th>
+            <th className="px-4 py-3 font-medium">Minutes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+          {recent.map(row => (
+            <tr key={row.date} className="bg-gray-900/35 light:bg-white">
+              <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.date}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_attempts)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.connected_calls)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.voicemails)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
             </tr>
           ))}
         </tbody>
@@ -169,7 +224,7 @@ function DepartmentRollups({ rows }: { rows: DepartmentCallAnalysisRollup[] }) {
             </span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400 light:text-gray-600">
-            <span>{formatCount(row.summary.total_call_legs)} calls</span>
+            <span>{formatCount(row.summary.activity_calls ?? row.summary.total_call_legs)} calls</span>
             <span>{formatPercentFromPct(row.summary.connect_rate_pct)} connect</span>
             <span>{formatCount(row.summary.coaching_flags)} flags</span>
           </div>
@@ -179,20 +234,44 @@ function DepartmentRollups({ rows }: { rows: DepartmentCallAnalysisRollup[] }) {
   )
 }
 
+function ComparisonBadge({ label, value }: { label: string; value: number | null | undefined }) {
+  const numeric = Number(value || 0)
+  const tone = value === null || value === undefined
+    ? 'border-gray-700 text-gray-400 light:border-gray-300 light:text-gray-600'
+    : numeric >= 0
+    ? 'border-emerald-500/35 text-emerald-200 light:text-emerald-700'
+    : 'border-amber-500/35 text-amber-200 light:text-amber-700'
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${tone}`}>
+      {label}
+      <span className="font-mono tabular-nums">{formatChange(value)}</span>
+    </span>
+  )
+}
+
 export default function DepartmentCallAnalysisPanel({
   department,
   title,
   showDepartmentRollups = false,
+  dateRange,
 }: {
   department: string
   title?: string
   showDepartmentRollups?: boolean
+  dateRange?: DashboardDateRangeParams
 }) {
-  const callAnalysis = useDepartmentCallAnalysis(department)
+  const [activityDay, setActivityDay] = useState('')
+  const activityDateRange = useMemo(
+    () => (activityDay ? { startDate: activityDay, endDate: activityDay } : dateRange),
+    [activityDay, dateRange],
+  )
+  const callAnalysis = useDepartmentCallAnalysis(department, true, activityDateRange)
   const summary = callAnalysis.data?.summary || ZERO_CALL_SUMMARY
   const employees = callAnalysis.data?.employee_productivity || []
   const coachingFlags = callAnalysis.data?.coaching_flags || []
+  const dailyVolume = callAnalysis.data?.daily_volume || []
   const panelTitle = title || `${callAnalysis.data?.department || department} Call Analysis`
+  const comparison = callAnalysis.data?.trend_comparison
 
   return (
     <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
@@ -201,9 +280,32 @@ export default function DepartmentCallAnalysisPanel({
           <PhoneCall className="h-5 w-5 text-emerald-300" />
           <h3 className="font-semibold text-white light:text-gray-900">{panelTitle}</h3>
         </div>
-        <span className="text-xs text-gray-500 light:text-gray-600">
-          {callAnalysis.data?.source_status || 'loading'} | {formatDateRange(callAnalysis.data?.coverage?.start, callAnalysis.data?.coverage?.end)}
-        </span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <span className="text-xs text-gray-500 light:text-gray-600">
+            {callAnalysis.data?.source_status || 'loading'} | {formatDateRange(callAnalysis.data?.coverage?.start, callAnalysis.data?.coverage?.end)}
+          </span>
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-400 light:text-gray-600">
+            <CalendarDays className="h-4 w-4 text-sky-300" />
+            Activity Day
+            <input
+              type="date"
+              value={activityDay}
+              onChange={event => setActivityDay(event.currentTarget.value)}
+              className="h-9 rounded-lg border border-gray-700 bg-gray-950 px-2 text-xs text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            />
+          </label>
+          {activityDay && (
+            <button
+              type="button"
+              onClick={() => setActivityDay('')}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-gray-700 px-2 text-xs text-gray-300 transition hover:border-gray-500 hover:text-white light:border-gray-300 light:text-gray-700 light:hover:border-gray-500"
+              aria-label="Clear activity day"
+              title="Clear activity day"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {callAnalysis.error && (
@@ -213,11 +315,32 @@ export default function DepartmentCallAnalysisPanel({
       )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard icon={<PhoneCall className="h-5 w-5 text-emerald-200" />} label="Call Legs" value={formatCount(summary.total_call_legs)} detail={`${formatMinutes(summary.total_minutes)} total talk time`} tone="bg-emerald-500/15" />
-        <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Connect Rate" value={formatPercentFromPct(summary.connect_rate_pct)} detail={`${formatCount(summary.connected_calls)} connected of ${formatCount(summary.outbound_attempts)} outbound`} tone="bg-blue-500/15" />
-        <StatCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="First Call 24h" value={formatPercentValue(summary.first_call_24h_pct)} detail={`${formatCount(summary.first_call_within_24h)} of ${formatCount(summary.first_call_eligible_leads)} matched leads`} tone="bg-cyan-500/15" />
+        <StatCard
+          icon={<PhoneCall className="h-5 w-5 text-emerald-200" />}
+          label={summary.activity_calls === undefined || summary.activity_calls === null ? 'Call Legs' : 'Activity Calls'}
+          value={formatCount(summary.activity_calls ?? summary.total_call_legs)}
+          detail={activitySourceDetail(summary)}
+          tone="bg-emerald-500/15"
+        />
+        <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Answered Calls" value={formatCount(summary.answered_calls ?? summary.connected_calls)} detail={`${formatPercentFromPct(summary.connect_rate_pct)} connect rate`} tone="bg-blue-500/15" />
+        <StatCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Missed Calls" value={formatCount(summary.missed_calls)} detail={`${formatCount(summary.voicemails)} voicemail | ${formatCount(summary.hangups)} hangups`} tone="bg-amber-500/15" />
+        <StatCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="Follow-Ups" value={formatCount(summary.follow_up_count ?? summary.first_call_eligible_leads)} detail={`${formatPercentValue(summary.first_call_24h_pct)} within 24h`} tone="bg-cyan-500/15" />
         <StatCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Coaching Flags" value={formatCount(summary.coaching_flags)} detail={`${formatCount(summary.urgent_flags)} urgent | ${formatCount(summary.unresolved_calls)} unresolved`} tone="bg-amber-500/15" />
-        <StatCard icon={<Users className="h-5 w-5 text-violet-200" />} label="Employees" value={formatCount(summary.active_employee_count)} detail={`${department} extensions scored`} tone="bg-violet-500/15" />
+      </div>
+
+      {comparison && (
+        <div className="mb-6 flex flex-wrap gap-2">
+          <ComparisonBadge label="Call volume vs previous period" value={comparison.call_volume_change_pct} />
+          <ComparisonBadge label="Follow-up vs previous period" value={comparison.follow_up_change_pct} />
+        </div>
+      )}
+
+      <div className="mb-6">
+        <div className="mb-3 flex items-center gap-2">
+          <CalendarDays className="h-5 w-5 text-sky-300" />
+          <h4 className="font-semibold text-white light:text-gray-900">Daily Activity</h4>
+        </div>
+        <DailyActivityTable rows={dailyVolume} />
       </div>
 
       {showDepartmentRollups && (
