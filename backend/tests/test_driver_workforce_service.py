@@ -193,6 +193,27 @@ def test_driver_workforce_source_can_target_ceo_powerbi_without_global_switch(mo
     assert meta["ceo_powerbi_rows"] == 1
 
 
+def test_driver_workforce_defaults_to_ceo_powerbi_with_fabric_fallback(monkeypatch):
+    monkeypatch.delenv("FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE", raising=False)
+    monkeypatch.delenv("FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK", raising=False)
+    monkeypatch.delenv("FLEETPULSE_XCELERATOR_SOURCE", raising=False)
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_ceo_powerbi_route_ticket_rows",
+        lambda: [{"ticket_id": "RT-DEFAULT"}],
+    )
+
+    rows, last_updated, meta = _load_route_ticket_rows(DriverWorkforceConfig.from_env())
+
+    assert rows == [{"ticket_id": "RT-DEFAULT"}]
+    assert last_updated is not None
+    assert meta["xcelerator_source"] == "ceo_powerbi"
+    assert meta["configured_xcelerator_source"] == "ceo_powerbi"
+    assert meta["ceo_powerbi_fallback_source"] == "fabric_warehouse_sql"
+    assert "FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql" in meta["required_config"]
+    assert "FLEETPULSE_XCELERATOR_WAREHOUSE_SQL_*" in meta["required_config"]
+
+
 def test_driver_workforce_ceo_powerbi_can_fallback_to_fabric_warehouse(monkeypatch):
     config = DriverWorkforceConfig(
         xcelerator_source="ceo_powerbi",
@@ -265,6 +286,36 @@ def test_driver_workforce_verifies_xcelerator_route_windows_without_geotab_join(
     assert dataset["validation"]["activity_join_status"] == "pending_no_geotab_activity"
     assert "planned route windows from Xcelerator" in dataset["validation"]["message"]
     assert dataset["workdays"][0]["status"] == "late_start"
+
+
+def test_driver_workforce_source_unavailable_is_not_reported_as_no_data(monkeypatch):
+    now = _dt("2026-05-20T18:00:00Z")
+    config = DriverWorkforceConfig(
+        xcelerator_source="ceo_powerbi",
+        ceo_powerbi_fallback_source="",
+        timezone="America/Chicago",
+    )
+    monkeypatch.setattr(
+        driver_workforce_service,
+        "_load_ceo_powerbi_route_ticket_rows",
+        lambda: (_ for _ in ()).throw(RuntimeError("powerbi_not_configured")),
+    )
+
+    dataset = driver_workforce_service.get_driver_workforce_dataset(
+        now=now,
+        config=config,
+        force_refresh=True,
+    )
+
+    assert dataset["validation"]["status"] == "pending"
+    assert dataset["validation"]["state"] == "route_ticket_source_unavailable"
+    assert dataset["validation"]["source_status"] == "unavailable"
+    assert dataset["validation"]["required_config"] == [
+        "FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=ceo_powerbi",
+        "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN or client credentials",
+    ]
+    assert "source 'ceo_powerbi' is unavailable" in dataset["validation"]["message"]
+    assert dataset["workdays"] == []
 
 
 def test_fabric_warehouse_route_ticket_sql_uses_service_and_delivery_filters():

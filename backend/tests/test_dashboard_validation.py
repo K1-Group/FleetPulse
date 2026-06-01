@@ -67,6 +67,34 @@ def _patch_non_kpi_sources(monkeypatch, overview: FleetOverview) -> None:
     )
     monkeypatch.setattr(
         validation_service,
+        "get_employee_workforce_dataset",
+        lambda: {
+            "validation": {
+                "status": "verified",
+                "state": "time_doctor_activity_loaded",
+                "message": "Verified read-only Time Doctor employee activity rows.",
+                "row_count": 4,
+            },
+            "summary": {"activity_rows": 4},
+            "source_status": {"status": "healthy", "required_config": []},
+        },
+    )
+    monkeypatch.setattr(
+        validation_service,
+        "get_driver_compliance_dataset",
+        lambda: {
+            "validation": {
+                "status": "verified",
+                "state": "driver_compliance_register_loaded",
+                "message": "Verified read-only driver compliance expiration register.",
+                "row_count": 12,
+            },
+            "summary": {"drivers": 12},
+            "source_status": {"status": "healthy", "required_config": []},
+        },
+    )
+    monkeypatch.setattr(
+        validation_service,
         "_probe_fleet_analytics_fuel_trends",
         lambda: [
             {
@@ -140,7 +168,7 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     assert response.status_code == 200
     payload = response.json()
     assert payload["projection_mode"] == "read_only"
-    assert payload["summary"]["verified"] == 11
+    assert payload["summary"]["verified"] == 13
     assert payload["metric_summary"]["verified"] == 20
     assert payload["sections"]["k1l_final_cpm"]["status"] == "verified"
     assert payload["metrics"]["k1l_final_cpm"]["verified"] is True
@@ -153,6 +181,8 @@ def test_dashboard_validation_marks_only_source_backed_metrics_verified(monkeypa
     assert payload["sections"]["alerts"]["status"] == "pending_no_data"
     assert payload["sections"]["driver_workforce"]["status"] == "verified"
     assert payload["sections"]["driver_workforce"]["contract"]["source_status"] == "pending"
+    assert payload["sections"]["employee_workforce"]["status"] == "verified"
+    assert payload["sections"]["driver_compliance"]["status"] == "verified"
     assert payload["sections"]["fleet_analytics"]["status"] == "verified"
     assert payload["sections"]["agentic_monitor"]["status"] == "verified"
     assert payload["summary"]["pending_no_data"] == 1

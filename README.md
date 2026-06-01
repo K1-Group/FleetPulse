@@ -233,6 +233,16 @@ FLEETPULSE_XCELERATOR_EVENT_IMPORT_API_KEY=
 FLEETPULSE_XCELERATOR_EVENT_RETAINED_RECORDS=50000
 FLEETPULSE_DRIVER_WORKFORCE_XCELERATOR_SOURCE=ceo_powerbi
 FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql
+FLEETPULSE_EMPLOYEE_WORKFORCE_SOURCE=time_doctor
+FLEETPULSE_EMPLOYEE_WORKFORCE_LOOKBACK_DAYS=7
+FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_PATH=
+FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_URL=
+FLEETPULSE_TIMEDOCTOR_API_TOKEN=
+FLEETPULSE_TIMEDOCTOR_COMPANY_ID=
+FLEETPULSE_DRIVER_COMPLIANCE_SOURCE=pending_register
+FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_PATH=
+FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_URL=
+FLEETPULSE_DRIVER_COMPLIANCE_WARNING_DAYS=45
 FLEETPULSE_QBO_FINANCIAL_FEED_URL=
 FLEETPULSE_QBO_FINANCIAL_FEED_PATH=
 FLEETPULSE_QBO_FINANCIAL_STATE_PATH=/home/data/fleetpulse_qbo_financial.json
@@ -267,6 +277,20 @@ analytics. If Power BI rejects the app service principal, set
 `FLEETPULSE_DRIVER_WORKFORCE_CEO_POWERBI_FALLBACK=fabric_warehouse_sql` so the
 dashboard still reads the same Xcelerator ReviewOrders projection through the
 warehouse path and reports the effective source in `source_meta`.
+
+Employee Workforce is a separate read-only Time Doctor projection. Use
+`FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_PATH` for a governed JSON/CSV export or
+`FLEETPULSE_TIMEDOCTOR_ACTIVITY_FEED_URL` with
+`FLEETPULSE_TIMEDOCTOR_API_TOKEN` for an approved Time Doctor API/export URL.
+Until one of those sources is configured, the Employee Workforce surface reports
+`time_doctor_source_pending` instead of fabricating hours or productivity rows.
+
+Driver Compliance is scaffolded as a read-only document-expiration register for
+medical card, drug test, and MVR due dates. Configure
+`FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_PATH` or
+`FLEETPULSE_DRIVER_COMPLIANCE_SOURCE_URL` when the authoritative register is
+approved. Until then, the Driver Docs surface stays pending and only exposes the
+pipeline fields and warning window.
 
 The remaining fixed-seat KPI blockers use the generic scheduled feed route
 `POST /api/control-tower/seat-kpis/feeds/{feed_key}/import` and status route
@@ -395,29 +419,37 @@ remaining the seat authority.
 `GET /api/control-tower/seat-kpis` backs the missing-KPI surface. It maps each
 manager-seat KPI to its source authority, current FleetPulse route if one
 exists, readiness status, missing app setting names, and the next owner action.
+`GET /api/operating-system/department-scorecards` groups those contracts into
+one read-only scorecard for each fixed manager department: Revenue, Operations,
+Finance, Fleet & Compliance, and People & Systems. The endpoint uses the seat
+tree and KPI coverage registry only; it does not fabricate department actuals
+from missing source feeds.
 
 #### HR Recruiting Feed Wiring
 ```env
 HR_WORKLIST_SLA_HOURS=24,48,72
-HR_RECRUITING_SOURCE=zapier_table
+HR_RECRUITING_SOURCE=hr_kpi_workbook
+HR_RECRUITING_WORKBOOK_PATH=/home/data/HR_Lead_KPI_Recheck_By_Phone.xlsx
 HR_RECRUITING_SNAPSHOT_URL=
 HR_RECRUITING_STATE_PATH=/home/data/fleetpulse_hr_recruiting.json
 HR_RECRUITING_IMPORT_API_KEY=
 SHAREPOINT_HR_REPORTING_LOG_URL=
 ```
 
-`POST /api/hr-recruiting/import` replaces the scheduled HR recruiting snapshot
-with approved Zapier/Outlook evidence. FleetPulse stores the source rows as a
-read-only state file, then `GET /api/hr-recruiting/worklist` and the Power BI
-HR exports suppress applicant PII from every dashboard payload. Zapier or Power
-Automate should run this daily from the approved TenStreet Outlook/Zapier source
-and pass `X-FleetPulse-HR-Key` when `HR_RECRUITING_IMPORT_API_KEY` is configured.
+`HR_RECRUITING_WORKBOOK_PATH` is the deployed-safe HR source path. Point it at
+the approved `HR_Lead_KPI_Recheck_By_Phone.xlsx` workbook after the upstream
+Grasshopper/SharePoint/Tenstreet evidence refresh. FleetPulse reads the workbook
+as a read-only projection, then `GET /api/hr-recruiting/worklist` and the Power
+BI HR exports suppress applicant PII from every dashboard payload.
+`POST /api/hr-recruiting/import` remains available only as a legacy read-only
+snapshot fallback when workbook mode is not configured; it requires
+`HR_RECRUITING_WORKBOOK_PATH` unset and `HR_RECRUITING_SOURCE=zapier_table`.
 The first hard recruiting targets are fixed in the read-only projection: new
 hires >= 5 per rolling 7 days, active qualified pipeline >= 10 applicants,
 first-touch speed >= 95% within 24 hours, stale applicants = 0 untouched over
 48 hours, and orientation show rate >= 50%.
 See [`docs/fleetpulse-scheduled-feed-wiring.md`](docs/fleetpulse-scheduled-feed-wiring.md)
-for the QBO, Xcelerator, seat KPI, and HR Zapier/Power Automate job contracts.
+for the QBO, Xcelerator, seat KPI, and HR workbook/legacy fallback contracts.
 
 ### Backend
 ```bash
@@ -587,12 +619,13 @@ FleetPulse includes a **Model Context Protocol (MCP) server** that allows Claude
 | `POST /api/fuel/qbo/financial/import` | Replace scheduled QBO AP/AR/K1L expense snapshot as read-only evidence |
 | `GET /api/fuel/operating-cost` | Weekly cost-per-mile/hour stack from Geotab, Xcelerator, and QBO K1L costs |
 | `GET /api/fuel/entity-margin` | K1L CPM plus K1L/K1G gross-margin target rollups by delivery center |
+| `GET /api/address-benchmarks` | Read-only pickup/delivery historical benchmark scan from Xcelerator route rows |
 | `GET /api/monitor/alerts` | Agentic monitor alerts |
 | `GET /api/monitor/status` | Monitor status & patterns |
 | `POST /api/monitor/check` | Trigger manual check |
 | `GET /api/hr-recruiting/status` | HR recruiting feed readiness without applicant PII |
 | `GET /api/hr-recruiting/worklist` | Read-only HR recruiting worklist analytics with PII suppressed |
-| `POST /api/hr-recruiting/import` | Replace scheduled HR recruiting snapshot from approved Zapier/Outlook evidence |
+| `POST /api/hr-recruiting/import` | Legacy fallback: import a read-only HR recruiting snapshot only when workbook mode is unavailable |
 | **🚚 Control Tower Endpoints** |
 | `GET /api/control-tower/trailers` | Trailer GPS and XTRA geofence projection |
 | `POST /api/control-tower/trailers/xtra/ingest` | Protected XTRA Outlook geofence ingestion trigger |
