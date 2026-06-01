@@ -299,6 +299,14 @@ def test_department_call_analysis_filters_activity_by_single_day_through_may_31(
                         "call_type": "Mobile Outbound Connected",
                         "duration_seconds": 180,
                     },
+                    {
+                        "call_started_at": "2026-05-31T12:00:00Z",
+                        "extension_id": "1",
+                        "employee_name": "Customer Operations Manager",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 240,
+                    },
                 ]
             }
         ),
@@ -331,6 +339,70 @@ def test_department_call_analysis_filters_activity_by_single_day_through_may_31(
             "total_minutes": 3.0,
         }
     ]
+
+    operations = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="Operations",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+        )
+    )
+    assert operations["summary"]["total_call_legs"] == 1
+    assert operations["summary"]["total_minutes"] == 4.0
+
+
+def test_department_call_analysis_uses_activity_summary_for_department_call_counts(tmp_path) -> None:
+    state_path = tmp_path / "department-call-analysis.json"
+    config = _config(str(state_path))
+    activity_csv = """Report: Activity_05.31.2026
+Numbers and Extensions,Voice Mails / Calls / Ratio,Hangups / Calls / Ratio,Faxes / Calls / Ratio,Voice calls / Calls / Ratio
+May 2026
+Totals,357/6930/5%,508/6930/7%,2/6930/0%,6063/6930/87%
+Phone numbers
+(855) 558-1118,356/6896/5%,499/6896/7%,2/6896/0%,6039/6896/88%
+Extensions
+1 - Customer Operations Manager,130/1312/10%,23/1312/2%,0/1312/0%,1159/1312/88%
+4 - HR Manager ,21/84/25%,3/84/4%,0/84/0%,60/84/71%
+702 - David Attar,72/564/13%,1/564/0%,0/564/0%,491/564/87%
+722 - Hamzeh Alghanem,8/675/1%,0/675/0%,0/675/0%,667/675/99%
+725 - Yara Azzouqah,11/394/3%,0/394/0%,0/394/0%,383/394/97%
+"""
+
+    result = import_hr_call_analysis_snapshot(
+        activity_csv,
+        filename="Activity_05.31.2026.csv",
+        config=config,
+    )
+
+    assert result["status"] == "ok"
+    assert result["activity_rows"] == 5
+
+    hr = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="HR",
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        )
+    )
+    operations = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="Operations",
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    assert hr["summary"]["activity_calls"] == 1717
+    assert hr["summary"]["activity_report_date"] == "2026-05-31"
+    assert hr["summary"]["activity_period"] == "May 2026"
+    assert hr["summary"]["total_call_legs"] == 0
+    assert operations["summary"]["activity_calls"] == 1312
 
 
 def test_sharepoint_analysis_report_parses_coaching_flag(tmp_path) -> None:

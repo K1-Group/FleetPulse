@@ -66,6 +66,14 @@ function formatDateRange(start?: string | null, end?: string | null) {
   return `${startText} - ${endText}`
 }
 
+function activitySourceDetail(summary: HrCallAnalysisSummary) {
+  if (summary.activity_calls === undefined || summary.activity_calls === null) {
+    return `${formatMinutes(summary.total_minutes)} total talk time`
+  }
+  const reportDate = summary.activity_report_date ? `through ${summary.activity_report_date}` : 'Activity report'
+  return `${reportDate} | ${formatCount(summary.total_call_legs)} detail legs`
+}
+
 function StatCard({
   icon,
   label,
@@ -113,7 +121,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
             <th className="px-4 py-3 font-medium">Employee</th>
             <th className="px-4 py-3 font-medium">Score</th>
-            <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Call Legs</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Minutes</th>
@@ -216,7 +224,7 @@ function DepartmentRollups({ rows }: { rows: DepartmentCallAnalysisRollup[] }) {
             </span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400 light:text-gray-600">
-            <span>{formatCount(row.summary.total_call_legs)} calls</span>
+            <span>{formatCount(row.summary.activity_calls ?? row.summary.total_call_legs)} calls</span>
             <span>{formatPercentFromPct(row.summary.connect_rate_pct)} connect</span>
             <span>{formatCount(row.summary.coaching_flags)} flags</span>
           </div>
@@ -307,7 +315,13 @@ export default function DepartmentCallAnalysisPanel({
       )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard icon={<PhoneCall className="h-5 w-5 text-emerald-200" />} label="Total Calls" value={formatCount(summary.total_call_legs)} detail={`${formatMinutes(summary.total_minutes)} total talk time`} tone="bg-emerald-500/15" />
+        <StatCard
+          icon={<PhoneCall className="h-5 w-5 text-emerald-200" />}
+          label={summary.activity_calls === undefined || summary.activity_calls === null ? 'Call Legs' : 'Activity Calls'}
+          value={formatCount(summary.activity_calls ?? summary.total_call_legs)}
+          detail={activitySourceDetail(summary)}
+          tone="bg-emerald-500/15"
+        />
         <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Answered Calls" value={formatCount(summary.answered_calls ?? summary.connected_calls)} detail={`${formatPercentFromPct(summary.connect_rate_pct)} connect rate`} tone="bg-blue-500/15" />
         <StatCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Missed Calls" value={formatCount(summary.missed_calls)} detail={`${formatCount(summary.voicemails)} voicemail | ${formatCount(summary.hangups)} hangups`} tone="bg-amber-500/15" />
         <StatCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="Follow-Ups" value={formatCount(summary.follow_up_count ?? summary.first_call_eligible_leads)} detail={`${formatPercentValue(summary.first_call_24h_pct)} within 24h`} tone="bg-cyan-500/15" />

@@ -1474,6 +1474,13 @@ export interface HrRecruitingDataset {
 // HR call-analysis and productivity monitor
 export interface HrCallAnalysisSummary {
   total_call_legs: number
+  activity_calls?: number
+  activity_voicemails?: number
+  activity_hangups?: number
+  activity_faxes?: number
+  activity_voice_calls?: number
+  activity_report_date?: string | null
+  activity_period?: string | null
   total_minutes: number
   avg_call_seconds: number
   outbound_attempts: number
