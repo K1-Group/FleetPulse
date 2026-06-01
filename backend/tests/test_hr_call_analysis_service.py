@@ -262,6 +262,75 @@ def test_department_call_analysis_filters_selected_date_range_and_compares_previ
     assert dataset["summary"]["answered_calls"] == 1
     assert dataset["summary"]["follow_up_count"] == 1
     assert dataset["trend_comparison"]["previous"]["call_volume"] == 0
+    assert dataset["daily_volume"] == [
+        {
+            "date": "2026-05-10",
+            "call_legs": 1,
+            "outbound_attempts": 1,
+            "connected_calls": 1,
+            "voicemails": 0,
+            "total_minutes": 2.0,
+        }
+    ]
+
+
+def test_department_call_analysis_filters_activity_by_single_day_through_may_31(tmp_path) -> None:
+    state_path = tmp_path / "department-call-analysis.json"
+    config = _config(str(state_path))
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-30T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "HR Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 60,
+                    },
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-31T11:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "HR Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 180,
+                    },
+                ]
+            }
+        ),
+        filename="Detail_05.31.2026.csv",
+        config=config,
+    )
+    assert result["status"] == "ok"
+
+    dataset = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="HR",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+        )
+    )
+
+    assert dataset["date_range"]["start"] == "2026-05-31"
+    assert dataset["date_range"]["end"] == "2026-05-31"
+    assert dataset["summary"]["total_call_legs"] == 1
+    assert dataset["summary"]["total_minutes"] == 3.0
+    assert dataset["daily_volume"] == [
+        {
+            "date": "2026-05-31",
+            "call_legs": 1,
+            "outbound_attempts": 1,
+            "connected_calls": 1,
+            "voicemails": 0,
+            "total_minutes": 3.0,
+        }
+    ]
 
 
 def test_sharepoint_analysis_report_parses_coaching_flag(tmp_path) -> None:

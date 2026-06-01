@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from configs.hr_call_analysis import HrCallAnalysisConfig
@@ -32,9 +33,12 @@ class HrCallAnalysisSyncRequest(BaseModel):
 
 
 @router.get("/dashboard")
-async def hr_call_analysis_dashboard() -> dict[str, Any]:
+async def hr_call_analysis_dashboard(
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> dict[str, Any]:
     """Return dashboard-safe HR call analytics."""
-    return await get_hr_call_analysis_dataset()
+    return await get_hr_call_analysis_dataset(start_date=start_date, end_date=end_date)
 
 
 @router.get("/status")
