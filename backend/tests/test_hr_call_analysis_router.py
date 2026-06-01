@@ -91,11 +91,15 @@ def _dataset() -> dict:
     }
 
 
-def _client(monkeypatch) -> TestClient:
+def _client(monkeypatch, captured: dict | None = None) -> TestClient:
     async def fake_dataset(**kwargs):
+        if captured is not None:
+            captured["hr"] = kwargs
         return _dataset()
 
     async def fake_department_dataset(department=None, **kwargs):
+        if captured is not None:
+            captured["department"] = {"department": department, **kwargs}
         payload = _dataset()
         payload["department"] = department or "All"
         payload["source_authority"] = "Grasshopper call logs + SharePoint department call-analysis reports"
@@ -122,6 +126,17 @@ def test_hr_call_analysis_dashboard_returns_read_only_dataset(monkeypatch) -> No
     assert payload["summary"]["total_call_legs"] == 2
 
 
+def test_hr_call_analysis_dashboard_passes_selected_date_range(monkeypatch) -> None:
+    captured: dict = {}
+    response = _client(monkeypatch, captured).get(
+        "/api/hr-call-analysis/dashboard?start_date=2026-05-31&end_date=2026-05-31"
+    )
+
+    assert response.status_code == 200
+    assert str(captured["hr"]["start_date"]) == "2026-05-31"
+    assert str(captured["hr"]["end_date"]) == "2026-05-31"
+
+
 def test_department_call_analysis_dashboard_filters_by_department(monkeypatch) -> None:
     response = _client(monkeypatch).get("/api/department-call-analysis/dashboard?department=Maintenance")
 
@@ -130,6 +145,18 @@ def test_department_call_analysis_dashboard_filters_by_department(monkeypatch) -
     assert payload["projection_mode"] == "read_only"
     assert payload["department"] == "Maintenance"
     assert payload["source_authority"] == "Grasshopper call logs + SharePoint department call-analysis reports"
+
+
+def test_department_call_analysis_dashboard_passes_selected_date_range(monkeypatch) -> None:
+    captured: dict = {}
+    response = _client(monkeypatch, captured).get(
+        "/api/department-call-analysis/dashboard?department=HR&start_date=2026-05-31&end_date=2026-05-31"
+    )
+
+    assert response.status_code == 200
+    assert captured["department"]["department"] == "HR"
+    assert str(captured["department"]["start_date"]) == "2026-05-31"
+    assert str(captured["department"]["end_date"]) == "2026-05-31"
 
 
 def test_hr_call_analysis_import_endpoint_is_key_protected(monkeypatch, tmp_path) -> None:

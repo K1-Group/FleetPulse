@@ -41,7 +41,6 @@ def test_org_chart_exposes_fixed_seat_contract_and_boundaries():
     assert payload["functional_seats"] == 18
     systems = {boundary["system"] for boundary in payload["source_boundaries"]}
     assert {"Xcelerator", "Geotab", "QuickBooks", "Time Doctor", "Power BI"} <= systems
-    assert "GET /api/operating-system/department-scorecards" in payload["endpoint_contract"]
     assert "GET /api/operating-system/seats/{seat_id}" in payload["endpoint_contract"]
 
 
@@ -71,25 +70,6 @@ def test_task_kpi_matrix_returns_scorecard_weights_and_no_live_actuals():
     assert dispatch["manager_seat_id"] == "operations_manager"
     assert dispatch["targets"]["loads_dispatched_day"] == ">= 8"
     assert "actual" not in response.text.lower()
-
-
-def test_department_scorecards_group_manager_departments_by_seat_structure():
-    response = _client().get("/api/operating-system/department-scorecards")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["projection_mode"] == "read_only"
-    assert payload["scorecard_weights"] == {"kpi": 70, "queue_sla": 20, "work_evidence": 10}
-
-    labels = [item["department_label"] for item in payload["departments"]]
-    assert labels == ["Revenue", "Operations", "Finance", "Fleet & Compliance", "People & Systems"]
-
-    people = next(item for item in payload["departments"] if item["department_id"] == "people_systems_manager")
-    assert people["manager_label"] == "People & Systems Manager Seat"
-    assert [seat["seat_id"] for seat in people["managed_seats"]] == ["seat_admin_hr", "systems_operator"]
-    assert any(kpi["key"] == "hr_recruiting_worklist_sla" for kpi in people["kpis"])
-    assert people["kpi_summary"]["total"] >= 1
-    assert "read-only department contract" in people["source_message"]
 
 
 def test_seat_detail_preserves_source_authority_split():

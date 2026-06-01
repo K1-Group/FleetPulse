@@ -633,11 +633,11 @@ def column_projection(table_name: str, column_name: str, *, active: bool = False
     return projection
 
 
-def sum_projection(table_name: str, column_name: str, *, display_name: str | None = None) -> dict[str, Any]:
+def sum_projection(table_name: str, column_name: str) -> dict[str, Any]:
     return {
         "field": sum_field(table_name, column_name),
         "queryRef": f"Sum({table_name}.{column_name})",
-        "nativeQueryRef": display_name or f"Sum of {column_name}",
+        "nativeQueryRef": f"Sum of {column_name}",
     }
 
 
@@ -736,7 +736,7 @@ def build_native_report_definition(dataset_id: str, *, include_lane_stability: b
                 sum_projection("FleetPulseOverview", "parked"),
                 sum_projection("FleetPulseOverview", "offline"),
                 sum_projection("FleetPulseOverview", "total_trips_today"),
-                sum_projection("FleetPulseOverview", "total_stops_today", display_name="Stops >60m"),
+                sum_projection("FleetPulseOverview", "total_stops_today"),
                 sum_projection("FleetPulseOverview", "total_distance_miles"),
                 sum_projection("FleetPulseOverview", "trips_meeting_target"),
             ],

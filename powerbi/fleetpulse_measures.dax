@@ -19,7 +19,7 @@ DIVIDE ( [Active Vehicles], [Total Vehicles], 0 )
 Trips Today =
 SUM ( FleetPulseOverview[total_trips_today] )
 
-Stops >60m =
+Stops Today =
 SUM ( FleetPulseOverview[total_stops_today] )
 
 Miles Today =

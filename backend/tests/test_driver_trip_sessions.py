@@ -121,43 +121,6 @@ class DriverTripSessionTests(unittest.TestCase):
         self.assertEqual(metrics["trips_meeting_target"], 1)
         self.assertEqual(metrics["trips_under_target"], 0)
 
-    def test_long_stop_details_include_driver_and_geofence_when_available(self):
-        trips = [
-            {
-                "driver": {"id": "driver-yard", "name": "Driver Yard"},
-                "device": {"id": "truck-yard", "name": "Truck Yard"},
-                "start": _dt(6),
-                "stop": _dt(7),
-                "stopPoint": {"x": -97.2197, "y": 32.8012},
-                "distance": 40,
-            },
-            {
-                "driver": {"id": "driver-yard", "name": "Driver Yard"},
-                "device": {"id": "truck-yard", "name": "Truck Yard"},
-                "start": _dt(8, 15),
-                "stop": _dt(9),
-                "distance": 30,
-            },
-        ]
-
-        metrics = summarize_driver_trip_sessions(
-            trips,
-            now=_dt(10),
-            stop_threshold_minutes=60,
-            driver_logout_gap_minutes=600,
-            target_trip_hours=12,
-        )
-
-        self.assertEqual(metrics["total_stops"], 1)
-        self.assertEqual(len(metrics["long_stops"]), 1)
-        stop = metrics["long_stops"][0]
-        self.assertEqual(stop["driver_name"], "Driver Yard")
-        self.assertEqual(stop["device_name"], "Truck Yard")
-        self.assertEqual(stop["duration_minutes"], 75)
-        self.assertEqual(stop["geofence"], "Fort Worth Yard")
-        self.assertEqual(stop["address"], "4200 Gravel Dr, Fort Worth, TX 76118")
-        self.assertEqual(stop["location_source"], "configured_fleet_hub_geofence")
-
     def test_long_logout_gap_starts_a_new_driver_trip(self):
         trips = [
             {

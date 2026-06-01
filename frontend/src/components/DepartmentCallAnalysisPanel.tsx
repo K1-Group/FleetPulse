@@ -1,8 +1,9 @@
-import { AlertTriangle, BarChart3, Clock, PhoneCall, ShieldCheck, TrendingUp } from 'lucide-react'
+import { AlertTriangle, BarChart3, CalendarDays, Clock, PhoneCall, ShieldCheck, TrendingUp, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useDepartmentCallAnalysis } from '../hooks/useGeotab'
 import type { DashboardDateRangeParams } from '../hooks/useGeotab'
-import type { DepartmentCallAnalysisRollup, HrCallCoachingFlag, HrCallEmployeeProductivity, HrCallAnalysisSummary } from '../types/fleet'
+import type { DepartmentCallAnalysisRollup, HrCallCoachingFlag, HrCallDailyVolume, HrCallEmployeeProductivity, HrCallAnalysisSummary } from '../types/fleet'
 
 const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   total_call_legs: 0,
@@ -141,6 +142,42 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
   )
 }
 
+function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
+  const recent = rows.slice(-14).reverse()
+  if (!recent.length) {
+    return <EmptyPanel message="No call activity was found for the selected day or range." />
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-800/70 light:border-gray-200">
+      <table className="min-w-full divide-y divide-gray-800 text-sm light:divide-gray-200">
+        <thead className="bg-gray-900/80 light:bg-gray-100">
+          <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
+            <th className="px-4 py-3 font-medium">Date</th>
+            <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Outbound</th>
+            <th className="px-4 py-3 font-medium">Connected</th>
+            <th className="px-4 py-3 font-medium">Voicemail</th>
+            <th className="px-4 py-3 font-medium">Minutes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/70 light:divide-gray-200">
+          {recent.map(row => (
+            <tr key={row.date} className="bg-gray-900/35 light:bg-white">
+              <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.date}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_attempts)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.connected_calls)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.voicemails)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function CoachingFlags({ rows }: { rows: HrCallCoachingFlag[] }) {
   const recent = rows.slice(0, 6)
   if (!recent.length) {
@@ -219,10 +256,16 @@ export default function DepartmentCallAnalysisPanel({
   showDepartmentRollups?: boolean
   dateRange?: DashboardDateRangeParams
 }) {
-  const callAnalysis = useDepartmentCallAnalysis(department, true, dateRange)
+  const [activityDay, setActivityDay] = useState('')
+  const activityDateRange = useMemo(
+    () => (activityDay ? { startDate: activityDay, endDate: activityDay } : dateRange),
+    [activityDay, dateRange],
+  )
+  const callAnalysis = useDepartmentCallAnalysis(department, true, activityDateRange)
   const summary = callAnalysis.data?.summary || ZERO_CALL_SUMMARY
   const employees = callAnalysis.data?.employee_productivity || []
   const coachingFlags = callAnalysis.data?.coaching_flags || []
+  const dailyVolume = callAnalysis.data?.daily_volume || []
   const panelTitle = title || `${callAnalysis.data?.department || department} Call Analysis`
   const comparison = callAnalysis.data?.trend_comparison
 
@@ -233,9 +276,32 @@ export default function DepartmentCallAnalysisPanel({
           <PhoneCall className="h-5 w-5 text-emerald-300" />
           <h3 className="font-semibold text-white light:text-gray-900">{panelTitle}</h3>
         </div>
-        <span className="text-xs text-gray-500 light:text-gray-600">
-          {callAnalysis.data?.source_status || 'loading'} | {formatDateRange(callAnalysis.data?.coverage?.start, callAnalysis.data?.coverage?.end)}
-        </span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <span className="text-xs text-gray-500 light:text-gray-600">
+            {callAnalysis.data?.source_status || 'loading'} | {formatDateRange(callAnalysis.data?.coverage?.start, callAnalysis.data?.coverage?.end)}
+          </span>
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-400 light:text-gray-600">
+            <CalendarDays className="h-4 w-4 text-sky-300" />
+            Activity Day
+            <input
+              type="date"
+              value={activityDay}
+              onChange={event => setActivityDay(event.currentTarget.value)}
+              className="h-9 rounded-lg border border-gray-700 bg-gray-950 px-2 text-xs text-white light:border-gray-300 light:bg-white light:text-gray-900"
+            />
+          </label>
+          {activityDay && (
+            <button
+              type="button"
+              onClick={() => setActivityDay('')}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-gray-700 px-2 text-xs text-gray-300 transition hover:border-gray-500 hover:text-white light:border-gray-300 light:text-gray-700 light:hover:border-gray-500"
+              aria-label="Clear activity day"
+              title="Clear activity day"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {callAnalysis.error && (
@@ -264,6 +330,14 @@ export default function DepartmentCallAnalysisPanel({
           <ComparisonBadge label="Follow-up vs previous period" value={comparison.follow_up_change_pct} />
         </div>
       )}
+
+      <div className="mb-6">
+        <div className="mb-3 flex items-center gap-2">
+          <CalendarDays className="h-5 w-5 text-sky-300" />
+          <h4 className="font-semibold text-white light:text-gray-900">Daily Activity</h4>
+        </div>
+        <DailyActivityTable rows={dailyVolume} />
+      </div>
 
       {showDepartmentRollups && (
         <div className="mb-6">

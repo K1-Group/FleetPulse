@@ -16,10 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -43,7 +43,7 @@ jobs:
             backend/tests/test_app_monitor_startup.py
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: npm
@@ -56,40 +56,9 @@ jobs:
           npm run build
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Configure Geotab read-only runtime settings
-        env:
-          GEOTAB_USERNAME: ${{ secrets.GEOTAB_USERNAME }}
-          GEOTAB_PASSWORD: ${{ secrets.GEOTAB_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${APP_NAME:-}" ]; then
-            echo "Missing AZURE_APP_NAME repository secret."
-            exit 1
-          fi
-          if [ -z "${GEOTAB_USERNAME:-}" ] || [ -z "${GEOTAB_PASSWORD:-}" ]; then
-            echo "Missing GEOTAB_USERNAME or GEOTAB_PASSWORD repository secret."
-            exit 1
-          fi
-
-          resource_group="${AZURE_RESOURCE_GROUP:-k1-fleetpulse-rg}"
-
-          az webapp config appsettings set \
-            --name "$APP_NAME" \
-            --resource-group "$resource_group" \
-            --settings \
-              GEOTAB_USERNAME="$GEOTAB_USERNAME" \
-              GEOTAB_PASSWORD="$GEOTAB_PASSWORD" \
-              GEOTAB_DATABASE=K1logistics \
-              GEOTAB_SERVER=my.geotab.com \
-              GEOTAB_ODATA_SERVER=https://odata-connector-2.geotab.com/odata/v4/svc/ \
-              FLEETPULSE_DASHBOARD_VALIDATION_LIVE_PROBE=false \
-            --only-show-errors \
-            >/dev/null
 
       - name: Log in to ACR via Azure CLI
         run: az acr login --name k1fleetpulseacr

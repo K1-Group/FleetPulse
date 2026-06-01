@@ -149,6 +149,210 @@ def test_hr_call_analysis_filters_department_totals_to_active_extensions(tmp_pat
     assert "Non HR Agent" not in json.dumps(dataset)
 
 
+def test_imported_state_feeds_dataset_and_first_call_sla(tmp_path) -> None:
+    state_path = tmp_path / "hr-call-analysis.json"
+    config = _config(str(state_path))
+    phone_hash = "candidate-phone-hash"
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "call_started_at": "2026-05-02T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 300,
+                        "external_party_hash": phone_hash,
+                    }
+                ],
+                "lead_rows": [
+                    {
+                        "source_email_id": "message-1",
+                        "phone_hash": phone_hash,
+                        "worklist": "DFW",
+                        "status": "Assigned",
+                        "first_assigned_at": "2026-05-02T08:00:00Z",
+                    }
+                ],
+            }
+        ),
+        filename="hr-call.json",
+        config=config,
+    )
+
+    assert result["status"] == "ok"
+    dataset = asyncio.run(
+        get_hr_call_analysis_dataset(
+            now=datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+            config=config,
+        )
+    )
+
+    assert dataset["source_status"] == "ok"
+    assert dataset["summary"]["total_call_legs"] == 1
+    assert dataset["summary"]["first_call_eligible_leads"] == 1
+    assert dataset["summary"]["first_call_within_24h"] == 1
+    assert dataset["employee_productivity"][0]["employee_name"] == "David Attar"
+    assert "(580)" not in json.dumps(dataset)
+
+
+def test_department_call_analysis_filters_selected_date_range_and_compares_previous(tmp_path) -> None:
+    state_path = tmp_path / "department-call-analysis.json"
+    config = _config(str(state_path))
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-10T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 120,
+                        "external_party_hash": "candidate-current",
+                    },
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-03T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 60,
+                        "external_party_hash": "candidate-previous",
+                    },
+                ],
+                "lead_rows": [
+                    {
+                        "department": "HR",
+                        "lead_key": "lead-current",
+                        "phone_hash": "candidate-current",
+                        "first_assigned_at": "2026-05-10T08:00:00Z",
+                    },
+                    {
+                        "department": "HR",
+                        "lead_key": "lead-previous",
+                        "phone_hash": "candidate-previous",
+                        "first_assigned_at": "2026-05-03T08:00:00Z",
+                    },
+                ],
+            }
+        ),
+        filename="department-calls.json",
+        config=config,
+    )
+    assert result["status"] == "ok"
+
+    dataset = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="HR",
+            now=datetime(2026, 5, 11, tzinfo=timezone.utc),
+            start_date="2026-05-10",
+            end_date="2026-05-10",
+        )
+    )
+
+    assert dataset["date_range"]["start"] == "2026-05-10"
+    assert dataset["summary"]["total_call_legs"] == 1
+    assert dataset["summary"]["answered_calls"] == 1
+    assert dataset["summary"]["follow_up_count"] == 1
+    assert dataset["trend_comparison"]["previous"]["call_volume"] == 0
+    assert dataset["daily_volume"] == [
+        {
+            "date": "2026-05-10",
+            "call_legs": 1,
+            "outbound_attempts": 1,
+            "connected_calls": 1,
+            "voicemails": 0,
+            "total_minutes": 2.0,
+        }
+    ]
+
+
+def test_department_call_analysis_filters_activity_by_single_day_through_may_31(tmp_path) -> None:
+    state_path = tmp_path / "department-call-analysis.json"
+    config = _config(str(state_path))
+    result = import_hr_call_analysis_snapshot(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-30T10:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "HR Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 60,
+                    },
+                    {
+                        "department": "HR",
+                        "call_started_at": "2026-05-31T11:00:00Z",
+                        "extension_id": "702",
+                        "employee_name": "HR Agent",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 180,
+                    },
+                    {
+                        "call_started_at": "2026-05-31T12:00:00Z",
+                        "extension_id": "1",
+                        "employee_name": "Customer Operations Manager",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 240,
+                    },
+                ]
+            }
+        ),
+        filename="Detail_05.31.2026.csv",
+        config=config,
+    )
+    assert result["status"] == "ok"
+
+    dataset = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="HR",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+        )
+    )
+
+    assert dataset["date_range"]["start"] == "2026-05-31"
+    assert dataset["date_range"]["end"] == "2026-05-31"
+    assert dataset["summary"]["total_call_legs"] == 1
+    assert dataset["summary"]["total_minutes"] == 3.0
+    assert dataset["daily_volume"] == [
+        {
+            "date": "2026-05-31",
+            "call_legs": 1,
+            "outbound_attempts": 1,
+            "connected_calls": 1,
+            "voicemails": 0,
+            "total_minutes": 3.0,
+        }
+    ]
+
+    operations = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="Operations",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+        )
+    )
+    assert operations["summary"]["total_call_legs"] == 1
+    assert operations["summary"]["total_minutes"] == 4.0
+
+
 def test_hr_total_calls_kpi_uses_date_scoped_detail_rows_not_monthly_activity(tmp_path) -> None:
     config = _config(str(tmp_path / "hr-call-analysis.json"))
     result = import_hr_call_analysis_snapshot(
@@ -271,119 +475,57 @@ def test_hr_total_calls_kpi_uses_date_scoped_detail_rows_not_monthly_activity(tm
     assert dataset["row_counts"]["call_rows"] == 6
 
 
-def test_imported_state_feeds_dataset_and_first_call_sla(tmp_path) -> None:
-    state_path = tmp_path / "hr-call-analysis.json"
-    config = _config(str(state_path))
-    phone_hash = "candidate-phone-hash"
-    result = import_hr_call_analysis_snapshot(
-        json.dumps(
-            {
-                "call_rows": [
-                    {
-                        "call_started_at": "2026-05-02T10:00:00Z",
-                        "extension_id": "702",
-                        "employee_name": "David Attar",
-                        "direction": "Out",
-                        "call_type": "Mobile Outbound Connected",
-                        "duration_seconds": 300,
-                        "external_party_hash": phone_hash,
-                    }
-                ],
-                "lead_rows": [
-                    {
-                        "source_email_id": "message-1",
-                        "phone_hash": phone_hash,
-                        "worklist": "DFW",
-                        "status": "Assigned",
-                        "first_assigned_at": "2026-05-02T08:00:00Z",
-                    }
-                ],
-            }
-        ),
-        filename="hr-call.json",
-        config=config,
-    )
-
-    assert result["status"] == "ok"
-    dataset = asyncio.run(
-        get_hr_call_analysis_dataset(
-            now=datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
-            config=config,
-        )
-    )
-
-    assert dataset["source_status"] == "ok"
-    assert dataset["summary"]["total_call_legs"] == 1
-    assert dataset["summary"]["first_call_eligible_leads"] == 1
-    assert dataset["summary"]["first_call_within_24h"] == 1
-    assert dataset["employee_productivity"][0]["employee_name"] == "David Attar"
-    assert "(580)" not in json.dumps(dataset)
-
-
-def test_department_call_analysis_filters_selected_date_range_and_compares_previous(tmp_path) -> None:
+def test_department_call_analysis_uses_activity_summary_for_department_call_counts(tmp_path) -> None:
     state_path = tmp_path / "department-call-analysis.json"
     config = _config(str(state_path))
+    activity_csv = """Report: Activity_05.31.2026
+Numbers and Extensions,Voice Mails / Calls / Ratio,Hangups / Calls / Ratio,Faxes / Calls / Ratio,Voice calls / Calls / Ratio
+May 2026
+Totals,357/6930/5%,508/6930/7%,2/6930/0%,6063/6930/87%
+Phone numbers
+(855) 558-1118,356/6896/5%,499/6896/7%,2/6896/0%,6039/6896/88%
+Extensions
+1 - Customer Operations Manager,130/1312/10%,23/1312/2%,0/1312/0%,1159/1312/88%
+4 - HR Manager ,21/84/25%,3/84/4%,0/84/0%,60/84/71%
+702 - David Attar,72/564/13%,1/564/0%,0/564/0%,491/564/87%
+722 - Hamzeh Alghanem,8/675/1%,0/675/0%,0/675/0%,667/675/99%
+725 - Yara Azzouqah,11/394/3%,0/394/0%,0/394/0%,383/394/97%
+728 - HR Team Member,1/73/1%,0/73/0%,0/73/0%,72/73/99%
+"""
+
     result = import_hr_call_analysis_snapshot(
-        json.dumps(
-            {
-                "call_rows": [
-                    {
-                        "department": "HR",
-                        "call_started_at": "2026-05-10T10:00:00Z",
-                        "extension_id": "702",
-                        "employee_name": "David Attar",
-                        "direction": "Out",
-                        "call_type": "Mobile Outbound Connected",
-                        "duration_seconds": 120,
-                        "external_party_hash": "candidate-current",
-                    },
-                    {
-                        "department": "HR",
-                        "call_started_at": "2026-05-03T10:00:00Z",
-                        "extension_id": "702",
-                        "employee_name": "David Attar",
-                        "direction": "Out",
-                        "call_type": "Mobile Outbound Connected",
-                        "duration_seconds": 60,
-                        "external_party_hash": "candidate-previous",
-                    },
-                ],
-                "lead_rows": [
-                    {
-                        "department": "HR",
-                        "lead_key": "lead-current",
-                        "phone_hash": "candidate-current",
-                        "first_assigned_at": "2026-05-10T08:00:00Z",
-                    },
-                    {
-                        "department": "HR",
-                        "lead_key": "lead-previous",
-                        "phone_hash": "candidate-previous",
-                        "first_assigned_at": "2026-05-03T08:00:00Z",
-                    },
-                ],
-            }
-        ),
-        filename="department-calls.json",
+        activity_csv,
+        filename="Activity_05.31.2026.csv",
         config=config,
     )
-    assert result["status"] == "ok"
 
-    dataset = asyncio.run(
+    assert result["status"] == "ok"
+    assert result["activity_rows"] == 6
+
+    hr = asyncio.run(
         get_department_call_analysis_dataset(
             config=config,
             department="HR",
-            now=datetime(2026, 5, 11, tzinfo=timezone.utc),
-            start_date="2026-05-10",
-            end_date="2026-05-10",
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        )
+    )
+    operations = asyncio.run(
+        get_department_call_analysis_dataset(
+            config=config,
+            department="Operations",
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
         )
     )
 
-    assert dataset["date_range"]["start"] == "2026-05-10"
-    assert dataset["summary"]["total_call_legs"] == 1
-    assert dataset["summary"]["answered_calls"] == 1
-    assert dataset["summary"]["follow_up_count"] == 1
-    assert dataset["trend_comparison"]["previous"]["call_volume"] == 0
+    assert hr["summary"]["activity_calls"] == 1706
+    assert hr["summary"]["activity_report_date"] == "2026-05-31"
+    assert hr["summary"]["activity_period"] == "May 2026"
+    assert hr["summary"]["total_call_legs"] == 0
+    assert operations["summary"]["activity_calls"] == 1312
 
 
 def test_sharepoint_analysis_report_parses_coaching_flag(tmp_path) -> None:

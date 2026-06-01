@@ -279,40 +279,6 @@ export interface EmployeeWorkforceEmployee {
   source: string
 }
 
-export interface EmployeeProjectionExclusionAudit {
-  employee_id: string
-  employee_name: string
-  email: string | null
-  reason: string
-  source: string
-  source_reference?: string
-  effective_date?: string
-  evidence_sources?: string[]
-  activity_rows?: number
-  sign_in_rows?: number
-  session_rows?: number
-  row_count?: number
-}
-
-export interface EmployeeProjectionExclusionStatus {
-  status: string
-  message: string
-  projection_mode: 'read_only'
-  source_authority: string
-  configured_count: number
-  sources: string[]
-  required_config: string[]
-  load_errors: string[]
-  excluded_employee_count: number
-  excluded_row_count?: number
-  excluded_activity_rows?: number
-  excluded_sign_in_rows?: number
-  excluded_session_rows?: number
-  source_row_count?: number
-  effective_row_count?: number
-  employees: EmployeeProjectionExclusionAudit[]
-}
-
 export interface EmployeeWorkforceResponse {
   generated_at: string
   projection_mode: 'read_only'
@@ -346,10 +312,6 @@ export interface EmployeeWorkforceResponse {
     payroll_review_required_count: number
     identity_only_sign_in_count: number
     missing_timesheet_count: number
-    excluded_employee_count?: number
-    excluded_activity_rows?: number
-    excluded_sign_in_rows?: number
-    excluded_session_rows?: number
   }
   employees: EmployeeWorkforceEmployee[]
   source_status: {
@@ -377,7 +339,6 @@ export interface EmployeeWorkforceResponse {
     row_count?: number
     active_session_count?: number
   }
-  employee_exclusions: EmployeeProjectionExclusionStatus
   payroll_policy: {
     approval_required: boolean
     source_authority: string
@@ -882,7 +843,7 @@ export interface ControlTowerSeatKpiItem {
   blocker: string | null
   required_config: string[]
   owner_action: string
-  metric_summary: Record<string, unknown>
+  metric_summary: Record<string, string | number | boolean | null>
 }
 
 export interface ControlTowerSeatKpiCoverageSummary {
