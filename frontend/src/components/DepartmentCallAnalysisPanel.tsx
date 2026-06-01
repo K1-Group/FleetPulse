@@ -1,6 +1,7 @@
-import { AlertTriangle, BarChart3, Clock, PhoneCall, ShieldCheck, TrendingUp, Users } from 'lucide-react'
+import { AlertTriangle, BarChart3, Clock, PhoneCall, ShieldCheck, TrendingUp } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDepartmentCallAnalysis } from '../hooks/useGeotab'
+import type { DashboardDateRangeParams } from '../hooks/useGeotab'
 import type { DepartmentCallAnalysisRollup, HrCallCoachingFlag, HrCallEmployeeProductivity, HrCallAnalysisSummary } from '../types/fleet'
 
 const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
@@ -12,6 +13,9 @@ const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   connect_rate_pct: null,
   voicemails: 0,
   hangups: 0,
+  answered_calls: 0,
+  missed_calls: 0,
+  follow_up_count: 0,
   active_employee_count: 0,
   analysis_reports: 0,
   coaching_flags: 0,
@@ -46,6 +50,12 @@ function formatPercentFromPct(value: number | null | undefined) {
 function formatPercentValue(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
   return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+function formatChange(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--'
+  const numeric = Number(value)
+  return `${numeric > 0 ? '+' : ''}${numeric.toFixed(1)}%`
 }
 
 function formatDateRange(start?: string | null, end?: string | null) {
@@ -179,20 +189,38 @@ function DepartmentRollups({ rows }: { rows: DepartmentCallAnalysisRollup[] }) {
   )
 }
 
+function ComparisonBadge({ label, value }: { label: string; value: number | null | undefined }) {
+  const numeric = Number(value || 0)
+  const tone = value === null || value === undefined
+    ? 'border-gray-700 text-gray-400 light:border-gray-300 light:text-gray-600'
+    : numeric >= 0
+    ? 'border-emerald-500/35 text-emerald-200 light:text-emerald-700'
+    : 'border-amber-500/35 text-amber-200 light:text-amber-700'
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium ${tone}`}>
+      {label}
+      <span className="font-mono tabular-nums">{formatChange(value)}</span>
+    </span>
+  )
+}
+
 export default function DepartmentCallAnalysisPanel({
   department,
   title,
   showDepartmentRollups = false,
+  dateRange,
 }: {
   department: string
   title?: string
   showDepartmentRollups?: boolean
+  dateRange?: DashboardDateRangeParams
 }) {
-  const callAnalysis = useDepartmentCallAnalysis(department)
+  const callAnalysis = useDepartmentCallAnalysis(department, true, dateRange)
   const summary = callAnalysis.data?.summary || ZERO_CALL_SUMMARY
   const employees = callAnalysis.data?.employee_productivity || []
   const coachingFlags = callAnalysis.data?.coaching_flags || []
   const panelTitle = title || `${callAnalysis.data?.department || department} Call Analysis`
+  const comparison = callAnalysis.data?.trend_comparison
 
   return (
     <section className="rounded-xl border border-gray-800/70 bg-gray-900/45 p-5 light:border-gray-200 light:bg-white">
@@ -213,12 +241,19 @@ export default function DepartmentCallAnalysisPanel({
       )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard icon={<PhoneCall className="h-5 w-5 text-emerald-200" />} label="Call Legs" value={formatCount(summary.total_call_legs)} detail={`${formatMinutes(summary.total_minutes)} total talk time`} tone="bg-emerald-500/15" />
-        <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Connect Rate" value={formatPercentFromPct(summary.connect_rate_pct)} detail={`${formatCount(summary.connected_calls)} connected of ${formatCount(summary.outbound_attempts)} outbound`} tone="bg-blue-500/15" />
-        <StatCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="First Call 24h" value={formatPercentValue(summary.first_call_24h_pct)} detail={`${formatCount(summary.first_call_within_24h)} of ${formatCount(summary.first_call_eligible_leads)} matched leads`} tone="bg-cyan-500/15" />
+        <StatCard icon={<PhoneCall className="h-5 w-5 text-emerald-200" />} label="Total Calls" value={formatCount(summary.total_call_legs)} detail={`${formatMinutes(summary.total_minutes)} total talk time`} tone="bg-emerald-500/15" />
+        <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Answered Calls" value={formatCount(summary.answered_calls ?? summary.connected_calls)} detail={`${formatPercentFromPct(summary.connect_rate_pct)} connect rate`} tone="bg-blue-500/15" />
+        <StatCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Missed Calls" value={formatCount(summary.missed_calls)} detail={`${formatCount(summary.voicemails)} voicemail | ${formatCount(summary.hangups)} hangups`} tone="bg-amber-500/15" />
+        <StatCard icon={<Clock className="h-5 w-5 text-cyan-200" />} label="Follow-Ups" value={formatCount(summary.follow_up_count ?? summary.first_call_eligible_leads)} detail={`${formatPercentValue(summary.first_call_24h_pct)} within 24h`} tone="bg-cyan-500/15" />
         <StatCard icon={<AlertTriangle className="h-5 w-5 text-amber-200" />} label="Coaching Flags" value={formatCount(summary.coaching_flags)} detail={`${formatCount(summary.urgent_flags)} urgent | ${formatCount(summary.unresolved_calls)} unresolved`} tone="bg-amber-500/15" />
-        <StatCard icon={<Users className="h-5 w-5 text-violet-200" />} label="Employees" value={formatCount(summary.active_employee_count)} detail={`${department} extensions scored`} tone="bg-violet-500/15" />
       </div>
+
+      {comparison && (
+        <div className="mb-6 flex flex-wrap gap-2">
+          <ComparisonBadge label="Call volume vs previous period" value={comparison.call_volume_change_pct} />
+          <ComparisonBadge label="Follow-up vs previous period" value={comparison.follow_up_change_pct} />
+        </div>
+      )}
 
       {showDepartmentRollups && (
         <div className="mb-6">

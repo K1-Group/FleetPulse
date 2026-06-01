@@ -26,10 +26,11 @@ class HrRecruitingImportRequest(BaseModel):
 
 @router.get("/worklist")
 async def hr_recruiting_worklist(
-    week_start: date | None = Query(default=None, description="Optional week start date in YYYY-MM-DD format."),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
 ) -> dict[str, Any]:
     """Return the HR worklist dashboard dataset without applicant PII."""
-    return await get_hr_recruiting_dataset(week_start=week_start)
+    return await get_hr_recruiting_dataset(start_date=start_date, end_date=end_date)
 
 
 @router.get("/status")
@@ -44,7 +45,7 @@ async def import_hr_recruiting_worklist(
     x_fleetpulse_hr_key: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Replace the scheduled HR recruiting snapshot as read-only evidence."""
+    """Replace the legacy HR recruiting snapshot fallback as read-only evidence."""
 
     try:
         validate_hr_recruiting_import_api_key(x_fleetpulse_hr_key or x_api_key)

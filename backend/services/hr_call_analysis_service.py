@@ -17,6 +17,7 @@ from typing import Any
 
 from configs.hr_call_analysis import DEFAULT_STATE_PATH, HrCallAnalysisConfig
 from integrations.sharepoint.graph_drive_client import SharePointDriveClient, SharePointDriveFile
+from utils.dashboard_date_range import DashboardDateRange, dashboard_date_range, pct_change
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,41 @@ def _row_department(row: dict[str, Any], default: str = "HR") -> str:
 def _department_matches(row: dict[str, Any], department: str) -> bool:
     normalized = _normalize_department(department, default="All")
     return normalized == "All" or _row_department(row) == normalized
+
+
+def _first_datetime(row: dict[str, Any], fields: tuple[str, ...]) -> datetime | None:
+    for field in fields:
+        parsed = _parse_datetime(_find_value(row, (field,)))
+        if parsed:
+            return parsed
+    return None
+
+
+def _filter_rows_for_date_range(
+    rows: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+    fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    if not selected_range:
+        return rows
+    return [
+        row
+        for row in rows
+        if selected_range.contains_datetime(_first_datetime(row, fields))
+    ]
+
+
+def _filter_call_rows_for_active_extensions(
+    rows: list[dict[str, Any]],
+    active_extensions: set[str],
+) -> list[dict[str, Any]]:
+    if not active_extensions:
+        return rows
+    return [
+        row
+        for row in rows
+        if _text(row.get("extension_id")) in active_extensions
+    ]
 
 
 def _active_extensions_for_department(config: HrCallAnalysisConfig, department: str) -> set[str]:
@@ -828,6 +864,62 @@ def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, A
     return rows
 
 
+def _call_period_metrics(
+    call_rows: list[dict[str, Any]],
+    follow_up_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    return {
+        "call_volume": len(call_rows),
+        "answered_calls": sum(int(row.get("is_connected") or 0) for row in call_rows),
+        "missed_calls": sum(
+            int(row.get("is_not_connected") or 0)
+            + int(row.get("is_voicemail") or 0)
+            + int(row.get("is_hangup") or 0)
+            for row in call_rows
+        ),
+        "follow_ups": len(follow_up_rows),
+    }
+
+
+def _call_trend_comparison(
+    *,
+    all_call_rows: list[dict[str, Any]],
+    all_lead_rows: list[dict[str, Any]],
+    selected_range: DashboardDateRange | None,
+) -> dict[str, Any] | None:
+    if not selected_range:
+        return None
+    previous_range = selected_range.previous()
+    current_calls = _filter_rows_for_date_range(
+        all_call_rows,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    current_leads = _filter_rows_for_date_range(
+        all_lead_rows,
+        selected_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
+    previous_calls = _filter_rows_for_date_range(
+        all_call_rows,
+        previous_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    previous_leads = _filter_rows_for_date_range(
+        all_lead_rows,
+        previous_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
+    current = _call_period_metrics(current_calls, _follow_up_rows(current_calls, current_leads))
+    previous = _call_period_metrics(previous_calls, _follow_up_rows(previous_calls, previous_leads))
+    return {
+        "current": current,
+        "previous": previous,
+        "call_volume_change_pct": pct_change(current["call_volume"], previous["call_volume"]),
+        "follow_up_change_pct": pct_change(current["follow_ups"], previous["follow_ups"]),
+    }
+
+
 def _coaching_flags(analysis_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
     for row in analysis_reports:
@@ -873,6 +965,8 @@ def build_hr_call_analysis_dataset(
     source_status: str = "ok",
     source_message: str | None = None,
     last_imported_at: str | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     """Build dashboard-safe call analytics for one department."""
 
@@ -886,12 +980,33 @@ def build_hr_call_analysis_dataset(
         call_rows = [row for row in call_rows if _department_matches(row, department)]
         analysis_reports = [row for row in analysis_reports if _department_matches(row, department)]
         lead_rows = [row for row in lead_rows if _department_matches(row, department)]
+    active_extensions = _active_extensions_for_department(config, department)
+    call_rows = _filter_call_rows_for_active_extensions(call_rows, active_extensions)
+    selected_range = dashboard_date_range(start_date, end_date)
+    unfiltered_call_rows = call_rows
+    unfiltered_lead_rows = lead_rows
+    call_rows = _filter_rows_for_date_range(
+        call_rows,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    analysis_reports = _filter_rows_for_date_range(
+        analysis_reports,
+        selected_range,
+        ("call_started_at", "call_date", "created_at", "updated_at"),
+    )
+    lead_rows = _filter_rows_for_date_range(
+        lead_rows,
+        selected_range,
+        ("first_assigned_at", "assigned_at", "completed_at", "created_at", "updated_at"),
+    )
 
     total_duration = sum(int(row.get("duration_seconds") or 0) for row in call_rows)
     outbound_attempts = sum(int(row.get("is_outbound_attempt") or 0) for row in call_rows)
     connected_calls = sum(int(row.get("is_connected") or 0) for row in call_rows)
     voicemails = sum(int(row.get("is_voicemail") or 0) for row in call_rows)
     hangups = sum(int(row.get("is_hangup") or 0) for row in call_rows)
+    missed_calls = sum(int(row.get("is_not_connected") or 0) for row in call_rows) + voicemails + hangups
     follow_up = _follow_up_rows(call_rows, lead_rows)
     first_call_eligible = len(follow_up)
     first_call_within_24h = sum(1 for row in follow_up if row["first_call_within_24h"])
@@ -917,6 +1032,7 @@ def build_hr_call_analysis_dataset(
         "source_status": source_status,
         "source_message": source_message,
         "last_imported_at": last_imported_at,
+        "date_range": selected_range.as_dict() if selected_range else None,
         "pii_suppressed": True,
         "phone_numbers_stored": False,
         "active_extensions": list(config.active_extensions),
@@ -930,6 +1046,8 @@ def build_hr_call_analysis_dataset(
             "total_minutes": round(total_duration / 60, 2),
             "avg_call_seconds": round(total_duration / len(call_rows), 2) if call_rows else 0,
             "outbound_attempts": outbound_attempts,
+            "answered_calls": connected_calls,
+            "missed_calls": missed_calls,
             "connected_calls": connected_calls,
             "connect_rate_pct": round(connected_calls / outbound_attempts * 100, 2) if outbound_attempts else None,
             "voicemails": voicemails,
@@ -944,7 +1062,13 @@ def build_hr_call_analysis_dataset(
             "first_call_within_24h": first_call_within_24h,
             "first_call_24h_pct": round(first_call_within_24h / first_call_eligible, 4) if first_call_eligible else None,
             "stale_no_call_48h": stale_no_call_48h,
+            "follow_up_count": len(follow_up),
         },
+        "trend_comparison": _call_trend_comparison(
+            all_call_rows=unfiltered_call_rows,
+            all_lead_rows=unfiltered_lead_rows,
+            selected_range=selected_range,
+        ),
         "employee_productivity": employee_productivity,
         "monthly_employee_productivity": _monthly_employee_summary(call_rows, config, department=department),
         "daily_volume": _daily_volume(call_rows),
@@ -952,6 +1076,7 @@ def build_hr_call_analysis_dataset(
         "coaching_flags": coaching_flags,
         "row_counts": {
             "call_rows": len(call_rows),
+            "unfiltered_call_rows": len(unfiltered_call_rows),
             "analysis_reports": len(analysis_reports),
             "lead_rows": len(lead_rows),
             "follow_up_rows": len(follow_up),
@@ -969,6 +1094,8 @@ async def get_hr_call_analysis_dataset(
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrCallAnalysisConfig.from_env()
     source = _read_state(Path(config.state_path))
@@ -981,6 +1108,8 @@ async def get_hr_call_analysis_dataset(
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -1006,6 +1135,8 @@ def _department_rollups(
     source_status: str,
     source_message: str | None,
     last_imported_at: str | None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> list[dict[str, Any]]:
     rollups: list[dict[str, Any]] = []
     for department in _configured_department_names(config, call_rows, analysis_reports, lead_rows):
@@ -1020,6 +1151,8 @@ def _department_rollups(
             source_status=source_status,
             source_message=source_message,
             last_imported_at=last_imported_at,
+            start_date=start_date,
+            end_date=end_date,
         )
         rollups.append(
             {
@@ -1041,6 +1174,8 @@ async def get_department_call_analysis_dataset(
     *,
     now: datetime | None = None,
     config: HrCallAnalysisConfig | None = None,
+    start_date: date | str | None = None,
+    end_date: date | str | None = None,
 ) -> dict[str, Any]:
     config = config or HrCallAnalysisConfig.from_env()
     now = now or _now_utc()
@@ -1057,6 +1192,8 @@ async def get_department_call_analysis_dataset(
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
     rollups = _department_rollups(
         source.call_rows,
@@ -1067,6 +1204,8 @@ async def get_department_call_analysis_dataset(
         source_status=source.status,
         source_message=source.message,
         last_imported_at=source.last_imported_at,
+        start_date=start_date,
+        end_date=end_date,
     )
     dataset["configured_departments"] = [rollup["department"] for rollup in rollups]
     dataset["department_rollups"] = rollups

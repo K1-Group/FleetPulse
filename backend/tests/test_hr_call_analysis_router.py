@@ -92,10 +92,10 @@ def _dataset() -> dict:
 
 
 def _client(monkeypatch) -> TestClient:
-    async def fake_dataset():
+    async def fake_dataset(**kwargs):
         return _dataset()
 
-    async def fake_department_dataset(department=None):
+    async def fake_department_dataset(department=None, **kwargs):
         payload = _dataset()
         payload["department"] = department or "All"
         payload["source_authority"] = "Grasshopper call logs + SharePoint department call-analysis reports"

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type {
   Alert,
   AddressBenchmarkResponse,
@@ -16,8 +16,8 @@ import type {
   DashboardValidationResponse,
   DeliveryCenterPerformanceSnapshot,
   DepartmentCallAnalysisDataset,
-  DriverComplianceResponse,
   DriverWorkforceResponse,
+  DriverComplianceResponse,
   EmployeeWorkforceResponse,
   DriverCoachingDetail,
   DriverCoachingProfile,
@@ -30,6 +30,7 @@ import type {
   HrRecruitingDataset,
   LaneStabilityPayload,
   OperatingSystemConfigurationResponse,
+  OperatingSystemDepartmentScorecardsResponse,
   LocationStats,
   OperatingSystemOrgChartResponse,
   OperatingSystemTaskKpiMatrixResponse,
@@ -52,16 +53,32 @@ function currentReturnTo() {
 type AddressBenchmarkParams = {
   pickup?: string
   delivery?: string
+  route?: string
   days?: number
+}
+
+export type DashboardDateRangeParams = {
+  startDate?: string
+  endDate?: string
 }
 
 function addressBenchmarkQuery(params: AddressBenchmarkParams) {
   const query = new URLSearchParams({ days: String(params.days ?? 180) })
   const pickup = params.pickup?.trim()
   const delivery = params.delivery?.trim()
+  const route = params.route?.trim()
   if (pickup) query.set('pickup', pickup)
   if (delivery) query.set('delivery', delivery)
+  if (route) query.set('route', route)
   return query.toString()
+}
+
+function dashboardDateRangeQuery(params?: DashboardDateRangeParams) {
+  const query = new URLSearchParams()
+  if (params?.startDate) query.set('start_date', params.startDate)
+  if (params?.endDate) query.set('end_date', params.endDate)
+  const text = query.toString()
+  return text ? `?${text}` : ''
 }
 
 // Fetch with timeout to prevent infinite loading
@@ -86,22 +103,33 @@ function useFetch<T>(url: string, interval = 30000, enabled = true, timeout = 10
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const requestSequence = useRef(0)
 
   const fetchData = useCallback(async () => {
     if (!enabled) {
       setLoading(false)
       return
     }
+    const requestId = requestSequence.current + 1
+    requestSequence.current = requestId
+    setLoading(true)
     try {
       const res = await fetchWithTimeout(url, timeout)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setData(await res.json())
-      setError(null)
+      const nextData = await res.json()
+      if (requestSequence.current === requestId) {
+        setData(nextData)
+        setError(null)
+      }
     } catch (e: any) {
-      setError(e.message)
-      setData(null)
+      if (requestSequence.current === requestId) {
+        setError(e.message)
+        setData(null)
+      }
     } finally {
-      setLoading(false)
+      if (requestSequence.current === requestId) {
+        setLoading(false)
+      }
     }
   }, [enabled, timeout, url])
 
@@ -193,18 +221,21 @@ export function useMonitorStatus(enabled = true) {
   return useFetch<any>(`${API}/monitor/status`, 15000, enabled)
 }
 
-export function useHrRecruitingWorklist(enabled = true, weekStart?: string) {
-  const query = weekStart ? `?week_start=${encodeURIComponent(weekStart)}` : ''
-  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist${query}`, 60000, enabled, 60000)
+export function useHrRecruitingWorklist(params?: DashboardDateRangeParams, enabled = true) {
+  return useFetch<HrRecruitingDataset>(`${API}/hr-recruiting/worklist${dashboardDateRangeQuery(params)}`, 60000, enabled, 60000)
 }
 
-export function useHrCallAnalysis(enabled = true) {
-  return useFetch<HrCallAnalysisDataset>(`${API}/hr-call-analysis/dashboard`, 60000, enabled, 60000)
+export function useHrCallAnalysis(params?: DashboardDateRangeParams, enabled = true) {
+  return useFetch<HrCallAnalysisDataset>(`${API}/hr-call-analysis/dashboard${dashboardDateRangeQuery(params)}`, 60000, enabled, 60000)
 }
 
-export function useDepartmentCallAnalysis(department?: string, enabled = true) {
-  const query = department ? `?department=${encodeURIComponent(department)}` : ''
-  return useFetch<DepartmentCallAnalysisDataset>(`${API}/department-call-analysis/dashboard${query}`, 60000, enabled, 60000)
+export function useDepartmentCallAnalysis(department?: string, enabled = true, params?: DashboardDateRangeParams) {
+  const query = new URLSearchParams()
+  if (department) query.set('department', department)
+  if (params?.startDate) query.set('start_date', params.startDate)
+  if (params?.endDate) query.set('end_date', params.endDate)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return useFetch<DepartmentCallAnalysisDataset>(`${API}/department-call-analysis/dashboard${suffix}`, 60000, enabled, 60000)
 }
 
 // Driver Coaching hooks
@@ -335,6 +366,10 @@ export function useOperatingSystemOrgChart() {
 
 export function useOperatingSystemTaskKpiMatrix(enabled = true) {
   return useFetch<OperatingSystemTaskKpiMatrixResponse>(`${API}/operating-system/task-kpi-matrix`, 60000, enabled)
+}
+
+export function useOperatingSystemDepartmentScorecards(enabled = true) {
+  return useFetch<OperatingSystemDepartmentScorecardsResponse>(`${API}/operating-system/department-scorecards`, 60000, enabled)
 }
 
 export function useOperatingSystemConfiguration() {

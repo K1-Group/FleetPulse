@@ -34,6 +34,24 @@ export interface FleetOverview {
   target_trip_duration_hours: number
   trips_meeting_target: number
   trips_under_target: number
+  stop_threshold_minutes: number
+  long_stops_today: Array<{
+    driver_key: string
+    driver_name: string | null
+    device_key: string
+    device_name: string | null
+    stopped_at: string
+    resumed_at: string | null
+    duration_minutes: number
+    latitude: number | null
+    longitude: number | null
+    address: string | null
+    geofence: string | null
+    location_label: string | null
+    location_source: string
+    source_authority: string
+    projection_mode: string
+  }>
   trip_definition: string
 }
 
@@ -245,7 +263,19 @@ export interface EmployeeWorkforceEmployee {
   days_reported: number
   active_today: boolean
   latest_activity_date: string | null
+  sign_in_count: number
+  successful_sign_ins: number
+  failed_sign_ins: number
+  interactive_sign_ins: number
+  last_sign_in_at: string | null
+  fleetpulse_session_hours: number
+  active_fleetpulse_session: boolean
+  hourly_role: string | null
+  payroll_review_required: boolean
+  payroll_review_hours: number
+  payroll_review_state: string
   top_projects: string[]
+  evidence_sources: string[]
   source: string
 }
 
@@ -259,15 +289,28 @@ export interface EmployeeWorkforceResponse {
     days: number
     timezone: string
   }
-  config: Record<string, number | string | boolean>
+  config: Record<string, number | string | boolean | string[]>
   summary: {
     employees: number
     active_today: number
     worked_hours: number
     idle_hours: number
+    fleetpulse_session_hours: number
     avg_productivity_pct: number | null
     activity_rows: number
     invalid_rows: number
+    sign_in_rows: number
+    invalid_sign_in_rows: number
+    sign_in_users: number
+    successful_sign_ins: number
+    failed_sign_ins: number
+    session_rows: number
+    invalid_session_rows: number
+    active_fleetpulse_sessions: number
+    hourly_employees: number
+    payroll_review_hours: number
+    payroll_review_required_count: number
+    identity_only_sign_in_count: number
     missing_timesheet_count: number
   }
   employees: EmployeeWorkforceEmployee[]
@@ -280,11 +323,35 @@ export interface EmployeeWorkforceResponse {
     company_id_configured?: boolean
     api_base_url_configured?: boolean
   }
+  sign_in_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    enabled?: boolean
+    graph_configured?: boolean
+    app_filter_count?: number
+  }
+  session_status: {
+    status: string
+    message: string
+    required_config: string[]
+    row_count?: number
+    active_session_count?: number
+  }
+  payroll_policy: {
+    approval_required: boolean
+    source_authority: string
+    auto_payroll_write_allowed: boolean
+    hourly_role_keywords: string[]
+  }
   validation: {
     status: DashboardValidationStatus
     state: string
     message: string
     row_count: number
+    sign_in_row_count?: number
+    session_row_count?: number
     required_config?: string[]
   }
 }
@@ -386,6 +453,7 @@ export interface AddressBenchmarkRecentOrder {
   route_date: string
   driver_id: string | null
   driver_name: string | null
+  route: string | null
   route_minutes: number | null
   duration_source: string | null
   stop_minutes: number | null
@@ -394,6 +462,7 @@ export interface AddressBenchmarkRecentOrder {
 
 export interface AddressBenchmarkPair {
   address_pair_key: string
+  routes: string[]
   pickup_address: string
   delivery_address: string
   orders: number
@@ -437,6 +506,7 @@ export interface AddressBenchmarkResponse {
   filters: {
     pickup: string | null
     delivery: string | null
+    route: string | null
   }
   summary: {
     address_pairs: number
@@ -751,6 +821,8 @@ export interface ControlTowerFinancialResponse {
   generated_at: string
   projection_mode: 'read_only'
   source_authority: string
+  finance_publishable?: boolean
+  financial_warnings?: Record<string, unknown>[]
   accounts_payable: ControlTowerFinancialSummary
   accounts_receivable: ControlTowerFinancialBucket[]
   cash_flow: Record<string, number | null>
@@ -1068,6 +1140,29 @@ export interface OperatingSystemManagerNode {
   functional_seats: OperatingSystemSeatContract[]
 }
 
+export interface OperatingSystemDepartmentScorecardSummary {
+  total: number
+  healthy: number
+  warning: number
+  awaiting_feed: number
+  unavailable: number
+  coverage_pct: number
+}
+
+export interface OperatingSystemDepartmentScorecard {
+  department_id: string
+  department_label: string
+  manager_seat_id: string
+  manager_label: string
+  entity_scope: string
+  source_authorities: string[]
+  scorecard_weights: Record<string, number>
+  managed_seats: OperatingSystemSeatContract[]
+  kpi_summary: OperatingSystemDepartmentScorecardSummary
+  kpis: ControlTowerSeatKpiItem[]
+  source_message: string
+}
+
 export interface OperatingSystemOrgChartResponse {
   generated_at: string
   projection_mode: 'read_only'
@@ -1088,6 +1183,14 @@ export interface OperatingSystemTaskKpiMatrixResponse {
   projection_mode: 'read_only'
   seats: OperatingSystemSeatContract[]
   scorecard_weights: Record<string, number>
+}
+
+export interface OperatingSystemDepartmentScorecardsResponse {
+  generated_at: string
+  projection_mode: 'read_only'
+  source_authority: string
+  scorecard_weights: Record<string, number>
+  departments: OperatingSystemDepartmentScorecard[]
 }
 
 export interface OperatingSystemConfigurationItem {
@@ -1127,6 +1230,31 @@ export interface HrRecruitingSummary {
   orientation_show_rate: number | null
 }
 
+export interface DashboardDateRange {
+  start: string
+  end: string
+  days: number
+  previous_start: string
+  previous_end: string
+}
+
+export interface WorkforcePeriodMetrics {
+  new_leads: number
+  new_applicants: number
+  interviews_scheduled: number
+  new_hires: number
+  follow_ups: number
+}
+
+export interface WorkforceTrendComparison {
+  current: Record<string, number>
+  previous: Record<string, number>
+  call_volume_change_pct?: number | null
+  lead_volume_change_pct?: number | null
+  hire_volume_change_pct?: number | null
+  follow_up_change_pct?: number | null
+}
+
 export type HrRecruitingHardTargetStatus = 'healthy' | 'warning' | 'awaiting_feed'
 
 export interface HrRecruitingHardTarget {
@@ -1139,6 +1267,22 @@ export interface HrRecruitingHardTarget {
   cadence: string
   display_target: string
   status: HrRecruitingHardTargetStatus
+}
+
+export interface HrRecruitingTeamMember {
+  name: string
+  configured: boolean
+  status: 'configured' | 'source_backed' | string
+  evidence_sources: string[]
+  lead_count: number
+  first_outreach_leads: number
+  real_discussion_leads: number
+  within_24h: number
+  recovered_24_48h: number
+  late_48_72h: number
+  failed_over_72h: number
+  total_outbound_attempts: number
+  within_24h_rate: number | null
 }
 
 export interface HrRecruitingWorklistRow {
@@ -1201,17 +1345,88 @@ export interface HrRecruitingWorkbookSourceQa {
   first_columns: string
 }
 
-export interface HrRecruitingPeriodFilter {
-  grain: 'all' | 'week' | string
-  week_start: string | null
-  week_end: string | null
-  timezone: string
-  date_field: string | null
+export interface HrRecruitingWorkbookException {
+  exception_id: string
+  lead_ref: string
+  masked_contact: string
+  category: string
+  reason: string
+  severity: 'critical' | 'warning' | string
+  source_sheet: string
+  source_system: string
+  source_authority: string
+  lead_created_date: string | null
+  status: string
+  first_outreach_bucket: string
+  real_discussion_bucket: string
+  age_hours: number | null
+  pii_suppressed: boolean
+  projection_mode: 'read_only'
+}
+
+export interface HrRecruitingConversionSummary {
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+  unfiltered_eligible_leads?: number
+}
+
+export interface HrRecruitingConversionTrendSummary {
+  current: HrRecruitingConversionSummary
+  previous: HrRecruitingConversionSummary
+  eligible_change_pct: number | null
+  converted_change_pct: number | null
+  conversion_rate_change_points: number | null
+}
+
+export interface HrRecruitingConversionGroup {
+  source_bucket?: string
+  sla_result?: string
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+}
+
+export interface HrRecruitingConversionTrendRow {
+  date: string
+  eligible_leads: number
+  converted_leads: number
+  not_converted_leads: number
+  conversion_rate: number | null
+  still_driving_count: number
+  still_driving_rate: number | null
+  phone_match_count: number
+}
+
+export interface HrRecruitingConversionFunnel {
+  workbook_name: string | null
+  source_status: string
+  source_message: string | null
+  source_system: string
+  source_authority: string
+  projection_mode: 'read_only'
+  pii_suppressed: boolean
+  conversion_rule: string
+  date_range: DashboardDateRange | null
+  tabs: Array<{ sheet: string; row_count: number; status: string }>
+  missing_tabs: string[]
+  summary: HrRecruitingConversionSummary
+  trend_summary: HrRecruitingConversionTrendSummary | null
+  by_source: HrRecruitingConversionGroup[]
+  by_sla: HrRecruitingConversionGroup[]
+  trend: HrRecruitingConversionTrendRow[]
 }
 
 export interface HrRecruitingWorkbookEvidence {
   workbook_name: string | null
-  period_filter?: HrRecruitingPeriodFilter
   tabs: Array<{ sheet: string; row_count: number; status: string }>
   missing_tabs: string[]
   kpi_summary: Record<string, number | null>
@@ -1220,6 +1435,9 @@ export interface HrRecruitingWorkbookEvidence {
   first_outreach_by_member: HrRecruitingWorkbookMemberKpi[]
   real_discussion_by_member: HrRecruitingWorkbookMemberKpi[]
   source_log_qa: HrRecruitingWorkbookSourceQa[]
+  exception_queue: HrRecruitingWorkbookException[]
+  exception_summary: Array<{ category: string; count: number }>
+  conversion_funnel?: HrRecruitingConversionFunnel | null
 }
 
 export interface HrRecruitingDataset {
@@ -1233,14 +1451,17 @@ export interface HrRecruitingDataset {
   table_id: string
   source_status: string
   source_message: string | null
-  period_filter: HrRecruitingPeriodFilter
   pii_suppressed: boolean
   sla_hours: number[]
   hard_targets: Record<string, HrRecruitingHardTarget>
   hard_target_status: HrRecruitingHardTargetStatus
   hard_target_misses: string[]
   hard_target_pending: string[]
+  date_range: DashboardDateRange | null
+  period_metrics: WorkforcePeriodMetrics
+  trend_comparison: WorkforceTrendComparison | null
   summary: HrRecruitingSummary
+  team_members: HrRecruitingTeamMember[]
   by_worklist: HrRecruitingWorklistRow[]
   daily: HrRecruitingDailyRow[]
   status_counts: HrRecruitingStatusCount[]
@@ -1260,6 +1481,9 @@ export interface HrCallAnalysisSummary {
   connect_rate_pct: number | null
   voicemails: number
   hangups: number
+  answered_calls?: number
+  missed_calls?: number
+  follow_up_count?: number
   active_employee_count: number
   analysis_reports: number
   coaching_flags: number
@@ -1326,12 +1550,14 @@ export interface HrCallAnalysisDataset {
   pii_suppressed: boolean
   phone_numbers_stored: boolean
   active_extensions: string[]
+  date_range?: DashboardDateRange | null
   coverage: {
     start: string | null
     end: string | null
     months: string[]
   }
   summary: HrCallAnalysisSummary
+  trend_comparison?: WorkforceTrendComparison | null
   employee_productivity: HrCallEmployeeProductivity[]
   monthly_employee_productivity: Array<HrCallEmployeeProductivity & { month: string }>
   daily_volume: HrCallDailyVolume[]

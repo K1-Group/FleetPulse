@@ -9,6 +9,7 @@ env:
   REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_NAME: fleetpulse
   APP_NAME: ${{ secrets.AZURE_APP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
 
 jobs:
   build-and-deploy:
@@ -74,6 +75,38 @@ jobs:
         with:
           app-name: ${{ env.APP_NAME }}
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Configure live HR SharePoint runtime settings
+        env:
+          AZURE_APP_NAME: ${{ env.APP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_KEY_VAULT_NAME: ${{ secrets.AZURE_KEY_VAULT_NAME }}
+          FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME }}
+          FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME }}
+          FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME: ${{ secrets.FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME }}
+          HR_CALL_ANALYSIS_SHAREPOINT_ENABLED: "true"
+          HR_CALL_ANALYSIS_SHAREPOINT_SITE_URL: https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures
+          HR_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATH: Grasshopper/Call Analysis Reports/HR
+          HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS: .txt,.csv
+          HR_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
+          DEPARTMENT_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
+          HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS: 4,702,722,725
+        run: |
+          set -euo pipefail
+
+          for required in \
+            AZURE_KEY_VAULT_NAME \
+            FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME \
+            FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME \
+            FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME
+          do
+            if [ -z "${!required:-}" ]; then
+              echo "Missing ${required} repository secret."
+              exit 1
+            fi
+          done
+
+          bash scripts/configure_fleetpulse_feed_appsettings.sh
 
       - name: Smoke test
         run: |
