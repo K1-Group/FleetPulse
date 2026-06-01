@@ -414,7 +414,7 @@ def _department_from_extension_label(label: str, config: HrCallAnalysisConfig) -
         return "Sales"
     if extension_id == "0" or "otherquestions" in normalized:
         return "Other Questions"
-    if extension_id.casefold() == "main":
+    if extension_id.casefold().startswith("main") or normalized.startswith("main"):
         return "Main / Unrouted"
     if extension_id == "8" or "directory" in normalized:
         return "Name Directory"
