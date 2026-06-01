@@ -386,6 +386,7 @@ export interface AddressBenchmarkRecentOrder {
   route_date: string
   driver_id: string | null
   driver_name: string | null
+  route: string | null
   route_minutes: number | null
   duration_source: string | null
   stop_minutes: number | null
@@ -394,6 +395,7 @@ export interface AddressBenchmarkRecentOrder {
 
 export interface AddressBenchmarkPair {
   address_pair_key: string
+  routes: string[]
   pickup_address: string
   delivery_address: string
   orders: number
@@ -437,6 +439,7 @@ export interface AddressBenchmarkResponse {
   filters: {
     pickup: string | null
     delivery: string | null
+    route: string | null
   }
   summary: {
     address_pairs: number

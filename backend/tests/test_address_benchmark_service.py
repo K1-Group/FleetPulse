@@ -106,6 +106,61 @@ def test_address_benchmark_counts_only_stops_strictly_over_threshold():
     assert [order["stop_over_threshold"] for order in pair["recent_orders"]] == [True, False]
 
 
+def test_address_benchmark_route_filter_builds_prefiltered_watchlist():
+    config = AddressBenchmarkConfig(
+        period_days=30,
+        stop_threshold_minutes=60,
+        minimum_history_samples=1,
+        cost_per_truck_hour=120.0,
+    )
+    rows = [
+        {
+            "OrderTrackingID": "161",
+            "DriverNo": "D1",
+            "RouteNo": "DFW001",
+            "pickup_address": "Dallas Pickup",
+            "delivery_address": "Fort Worth Delivery",
+            "pickup_departure": "2026-05-20T08:00:00Z",
+            "delivery_arrival": "2026-05-20T09:00:00Z",
+        },
+        {
+            "OrderTrackingID": "162",
+            "DriverNo": "D2",
+            "RouteNo": "DFW001",
+            "pickup_address": "Dallas Pickup",
+            "delivery_address": "Fort Worth Delivery",
+            "pickup_departure": "2026-05-21T08:00:00Z",
+            "delivery_arrival": "2026-05-21T10:00:00Z",
+        },
+        {
+            "OrderTrackingID": "163",
+            "DriverNo": "D3",
+            "RouteNo": "DFW002",
+            "pickup_address": "Arlington Pickup",
+            "delivery_address": "Dallas Delivery",
+            "pickup_departure": "2026-05-21T08:00:00Z",
+            "delivery_arrival": "2026-05-21T10:30:00Z",
+        },
+    ]
+
+    dataset = build_address_benchmark_dataset(
+        rows,
+        config=config,
+        route="DFW 001",
+        now=_now(),
+    )
+
+    assert dataset["filters"]["route"] == "DFW 001"
+    assert dataset["source_authority"].startswith("K1 Group LLC / Xcelerator")
+    assert dataset["summary"]["address_pairs"] == 1
+    pair = dataset["address_pairs"][0]
+    assert pair["routes"] == ["DFW001"]
+    assert pair["pickup_address"] == "Dallas Pickup"
+    assert pair["opportunity_minutes_vs_pair_average"] == 30.0
+    assert pair["recent_orders"][0]["route"] == "DFW001"
+    assert pair["source_authority"] == "K1 Group LLC / Xcelerator ReviewOrders rows"
+
+
 def test_address_benchmark_period_uses_configured_timezone():
     config = AddressBenchmarkConfig(
         period_days=1,
@@ -295,3 +350,93 @@ def test_address_benchmark_can_read_configured_fabric_warehouse(monkeypatch):
     assert dataset["source_meta"]["xcelerator"]["row_count"] == 1
     assert dataset["address_pairs"][0]["avg_route_minutes"] == 180.0
     assert any("xcelerator_review_orders" in query for query in queries)
+
+
+def test_address_benchmark_can_read_xcelerator_ceo_powerbi_watchlist(monkeypatch):
+    monkeypatch.setattr(
+        service.PowerBIExecuteQueriesConfig,
+        "from_env",
+        lambda prefix: SimpleNamespace(configured=True),
+    )
+    queries: list[str] = []
+
+    def fake_execute_dax_query(_config, query):
+        queries.append(query)
+        return [
+            {
+                "order_id": "BI-1",
+                "driver_id": "D1",
+                "driver_name": "D1",
+                "route": "DFW001",
+                "pickup_address": "Dallas Pickup",
+                "delivery_address": "Fort Worth Delivery",
+                "pickup_departure": "2026-05-20T08:00:00Z",
+                "delivery_arrival": "2026-05-20T09:00:00Z",
+                "date": "2026-05-20T08:00:00Z",
+                "revenue": 500,
+                "driver_pay": 200,
+            },
+            {
+                "order_id": "BI-2",
+                "driver_id": "D2",
+                "driver_name": "D2",
+                "route": "DFW001",
+                "pickup_address": "Dallas Pickup",
+                "delivery_address": "Fort Worth Delivery",
+                "pickup_departure": "2026-05-21T08:00:00Z",
+                "delivery_arrival": "2026-05-21T10:00:00Z",
+                "date": "2026-05-21T08:00:00Z",
+                "revenue": 700,
+                "driver_pay": 300,
+            },
+        ]
+
+    monkeypatch.setattr(service, "execute_dax_query", fake_execute_dax_query)
+
+    dataset = service.get_address_benchmark_dataset(
+        route="DFW 001",
+        days=30,
+        config=AddressBenchmarkConfig(
+            xcelerator_source="xcelerator_ceo_powerbi",
+            minimum_history_samples=1,
+        ),
+        now=_now(),
+    )
+
+    xcelerator = dataset["source_meta"]["xcelerator"]
+    assert xcelerator["effective_xcelerator_source"] == "xcelerator_ceo_powerbi"
+    assert xcelerator["source_authority"] == service.CEO_POWERBI_SOURCE_AUTHORITY
+    assert xcelerator["duration_basis"].startswith("pickup_target_from")
+    assert dataset["source_authority"] == service.CEO_POWERBI_SOURCE_AUTHORITY
+    assert dataset["summary"]["address_pairs"] == 1
+    pair = dataset["address_pairs"][0]
+    assert pair["routes"] == ["DFW001"]
+    assert pair["route_minutes_source"] == "Xcelerator CEO Dashboard BI pickup/delivery target window"
+    assert pair["opportunity_minutes_vs_pair_average"] == 30.0
+    assert pair["recent_orders"][0]["duration_source"] == "xcelerator_target_window"
+    assert "'xcelerator_review_orders'[route_no]" in queries[0]
+    assert "dfw001" in queries[0]
+
+
+def test_address_benchmark_reports_ceo_powerbi_config_gap_without_state_fallback(monkeypatch):
+    monkeypatch.setattr(
+        service.PowerBIExecuteQueriesConfig,
+        "from_env",
+        lambda prefix: SimpleNamespace(configured=False),
+    )
+
+    dataset = service.get_address_benchmark_dataset(
+        route="DFW 001",
+        days=30,
+        config=AddressBenchmarkConfig(
+            xcelerator_source="ceo_powerbi",
+            minimum_history_samples=1,
+        ),
+        now=_now(),
+    )
+
+    xcelerator = dataset["source_meta"]["xcelerator"]
+    assert xcelerator["status"] == "unavailable"
+    assert xcelerator["effective_xcelerator_source"] == "xcelerator_ceo_powerbi"
+    assert "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN or client credentials" in xcelerator["required_config"]
+    assert dataset["summary"]["address_pairs"] == 0
