@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Clock3, Mail, MapPin, Mic, Route, Search, Timer, Truck } from 'lucide-react'
 import { useAddressBenchmarks } from '../hooks/useGeotab'
 import type { AddressBenchmarkPair, AddressBenchmarkResponse } from '../types/fleet'
@@ -8,6 +8,7 @@ const DEFAULT_DAYS = 180
 type ScanParams = {
   pickup: string
   delivery: string
+  route: string
   days: number
 }
 
@@ -21,7 +22,23 @@ type AddressBenchmarkScanViewProps = {
   onDeliveryChange: (delivery: string) => void
   onPickupChange: (pickup: string) => void
   onRunScan: () => void
+  onRouteChange?: (route: string) => void
   pickup: string
+  route?: string
+}
+
+function hashScanParams(): ScanParams {
+  if (typeof window === 'undefined') return { pickup: '', delivery: '', route: '', days: DEFAULT_DAYS }
+  const hash = window.location.hash || ''
+  const queryStart = hash.indexOf('?')
+  const params = new URLSearchParams(queryStart >= 0 ? hash.slice(queryStart + 1) : '')
+  const days = Math.min(730, Math.max(1, Number(params.get('days')) || DEFAULT_DAYS))
+  return {
+    pickup: params.get('pickup') || '',
+    delivery: params.get('delivery') || '',
+    route: params.get('route') || '',
+    days,
+  }
 }
 
 function formatNumber(value: number | null | undefined, suffix = '', maximumFractionDigits = 1) {
@@ -100,6 +117,11 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
             <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200 light:text-amber-700">
               {pair.stop_events_over_threshold} stops &gt;{pair.stop_threshold_minutes}m
             </span>
+            {(pair.routes || []).slice(0, 3).map(route => (
+              <span key={`${pair.address_pair_key}-${route}`} className="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200 light:text-cyan-700">
+                {route}
+              </span>
+            ))}
             <span className={`rounded-md border px-2 py-1 ${statusTone(voice.status)}`}>
               {voice.match_count} voice
             </span>
@@ -146,6 +168,7 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
                 <span className="truncate">{order.driver_name || order.driver_id || 'Unassigned'}</span>
                 <span>{formatNumber(order.route_minutes, 'm')}</span>
               </div>
+              {order.route && <div className="mt-1 truncate text-[11px] text-gray-500">Route {order.route}</div>}
             </div>
           ))}
         </div>
@@ -155,24 +178,40 @@ function PairRow({ pair }: { pair: AddressBenchmarkPair }) {
 }
 
 export default function AddressBenchmarkScan() {
-  const [pickup, setPickup] = useState('')
-  const [delivery, setDelivery] = useState('')
-  const [days, setDays] = useState(DEFAULT_DAYS)
-  const [filters, setFilters] = useState<ScanParams>({ pickup: '', delivery: '', days: DEFAULT_DAYS })
+  const [pickup, setPickup] = useState(() => hashScanParams().pickup)
+  const [delivery, setDelivery] = useState(() => hashScanParams().delivery)
+  const [route, setRoute] = useState(() => hashScanParams().route)
+  const [days, setDays] = useState(() => hashScanParams().days)
+  const [filters, setFilters] = useState<ScanParams>(() => hashScanParams())
   const { data, loading, error, refresh } = useAddressBenchmarks(filters)
 
   const runScan = useCallback(() => {
-    const nextFilters = { pickup: pickup.trim(), delivery: delivery.trim(), days }
+    const nextFilters = { pickup: pickup.trim(), delivery: delivery.trim(), route: route.trim(), days }
     if (
       nextFilters.pickup === filters.pickup &&
       nextFilters.delivery === filters.delivery &&
+      nextFilters.route === filters.route &&
       nextFilters.days === filters.days
     ) {
       refresh()
       return
     }
     setFilters(nextFilters)
-  }, [days, delivery, filters.days, filters.delivery, filters.pickup, pickup, refresh])
+  }, [days, delivery, filters.days, filters.delivery, filters.pickup, filters.route, pickup, refresh, route])
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      if (!window.location.hash.startsWith('#address-benchmarks')) return
+      const nextFilters = hashScanParams()
+      setPickup(nextFilters.pickup)
+      setDelivery(nextFilters.delivery)
+      setRoute(nextFilters.route)
+      setDays(nextFilters.days)
+      setFilters(nextFilters)
+    }
+    window.addEventListener('hashchange', syncFromHash)
+    return () => window.removeEventListener('hashchange', syncFromHash)
+  }, [])
 
   return (
     <AddressBenchmarkScanView
@@ -185,7 +224,9 @@ export default function AddressBenchmarkScan() {
       onDeliveryChange={setDelivery}
       onPickupChange={setPickup}
       onRunScan={runScan}
+      onRouteChange={setRoute}
       pickup={pickup}
+      route={route}
     />
   )
 }
@@ -200,13 +241,18 @@ export function AddressBenchmarkScanView({
   onDeliveryChange,
   onPickupChange,
   onRunScan,
+  onRouteChange = () => undefined,
   pickup,
+  route = '',
 }: AddressBenchmarkScanViewProps) {
   const topPair = data?.address_pairs?.[0]
   const xcelerator = data?.source_meta?.xcelerator || {}
   const evidenceSources = data?.evidence_sources
   const summary = data?.summary
   const thresholds = data?.thresholds
+  const routeFilter = data?.filters?.route || route.trim()
+  const authorityLabel = xcelerator.source_authority || data?.source_authority
+  const durationBasis = xcelerator.duration_basis
 
   return (
     <section aria-busy={loading} className="relative overflow-hidden rounded-lg border border-white/10 bg-[linear-gradient(135deg,rgba(8,13,24,0.98),rgba(17,24,39,0.92)_54%,rgba(31,30,18,0.72))] p-5 shadow-[0_22px_60px_rgba(2,6,23,0.24)] light:border-gray-200 light:bg-white light:shadow-sm">
@@ -215,15 +261,53 @@ export function AddressBenchmarkScanView({
         <div className="min-w-0 max-w-3xl">
           <div className="flex flex-wrap items-center gap-3">
             <MapPin className="h-5 w-5 text-emerald-300 light:text-emerald-700" aria-hidden="true" />
-            <h2 className="text-lg font-semibold text-white light:text-gray-950">Pickup Delivery History</h2>
+            <h2 className="text-lg font-semibold text-white light:text-gray-950">
+              {routeFilter ? 'Pickup Delivery Gap Watchlist' : 'Pickup Delivery History'}
+            </h2>
             <span className="rounded-md border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[11px] font-semibold text-emerald-200 light:text-emerald-700">
               Read-only scan
             </span>
+            {routeFilter && (
+              <span className="rounded-md border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 text-[11px] font-semibold text-cyan-200 light:text-cyan-700">
+                Route {routeFilter}
+              </span>
+            )}
             <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${statusTone(xcelerator.status)}`}>
               Xcelerator {sourceStatusLabel(xcelerator.status)}
             </span>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <p className="mt-2 text-xs leading-5 text-gray-500 light:text-gray-600">
+            Xcelerator remains the authority for pickup, delivery, route, lifecycle timestamps, revenue, and driver pay; FleetPulse only renders this watchlist.
+          </p>
+          {(authorityLabel || durationBasis || xcelerator.message) && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400 light:text-gray-600">
+              {authorityLabel && (
+                <span className="rounded-md border border-white/10 bg-black/15 px-2 py-1 light:border-gray-200 light:bg-gray-50">
+                  {authorityLabel}
+                </span>
+              )}
+              {durationBasis && (
+                <span className="rounded-md border border-sky-400/20 bg-sky-400/10 px-2 py-1 text-sky-200 light:text-sky-700">
+                  {durationBasis}
+                </span>
+              )}
+              {xcelerator.message && (
+                <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-amber-200 light:text-amber-700">
+                  {xcelerator.message}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Route</span>
+              <input
+                value={route}
+                onChange={event => onRouteChange(event.target.value)}
+                className="h-10 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-white outline-none transition focus:border-sky-400 light:border-gray-200 light:bg-white light:text-gray-950"
+                placeholder="Any route"
+              />
+            </label>
             <label className="block">
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Pickup</span>
               <input
@@ -330,7 +414,9 @@ export function AddressBenchmarkScanView({
             </div>
           ) : (
             <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-dashed border-white/10 bg-white/[0.025] px-4 text-center text-sm text-gray-500 light:border-gray-200 light:bg-gray-50">
-              <span>No measured pickup/delivery pairs returned for this filter window.</span>
+              <span>
+                No measured Xcelerator pickup/delivery pairs returned for this filter window{routeFilter ? ` on route ${routeFilter}` : ''}.
+              </span>
             </div>
           )}
 

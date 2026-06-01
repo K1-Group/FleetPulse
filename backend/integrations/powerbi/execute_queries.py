@@ -19,7 +19,7 @@ from configs.xcelerator_source import xcelerator_refresh_seconds
 
 
 DEFAULT_XCELERATOR_CEO_WORKSPACE_ID = "b801f80d-5303-4121-abd1-1163639ef58b"
-DEFAULT_XCELERATOR_CEO_DATASET_ID = "891e7334-af84-4889-ba7f-ae89864777c0"
+DEFAULT_XCELERATOR_CEO_DATASET_ID = "478b78eb-663d-42ff-b92d-bc8f699e05ac"
 POWERBI_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 _QUERY_CACHE: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 

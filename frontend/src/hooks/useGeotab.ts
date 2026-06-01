@@ -52,6 +52,7 @@ function currentReturnTo() {
 type AddressBenchmarkParams = {
   pickup?: string
   delivery?: string
+  route?: string
   days?: number
 }
 
@@ -59,8 +60,10 @@ function addressBenchmarkQuery(params: AddressBenchmarkParams) {
   const query = new URLSearchParams({ days: String(params.days ?? 180) })
   const pickup = params.pickup?.trim()
   const delivery = params.delivery?.trim()
+  const route = params.route?.trim()
   if (pickup) query.set('pickup', pickup)
   if (delivery) query.set('delivery', delivery)
+  if (route) query.set('route', route)
   return query.toString()
 }
 

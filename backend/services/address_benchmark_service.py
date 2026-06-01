@@ -20,7 +20,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from configs.address_benchmark import AddressBenchmarkConfig
+from configs.xcelerator_source import xcelerator_ceo_powerbi_only
 from integrations.fabric_warehouse.sql_client import FabricWarehouseSqlConfig, execute_sql_query
+from integrations.powerbi.execute_queries import PowerBIExecuteQueriesConfig, execute_dax_query
 from services.xcelerator_review_orders_import_service import (
     XceleratorReviewOrdersStateStore,
     XceleratorReviewOrdersStateTooLarge,
@@ -34,14 +36,48 @@ PROJECTION_MODE = "read_only"
 VOICE_TYPES = {"voice", "voicerecording", "recording", "call", "phonecall", "voicemail"}
 EMAIL_TYPES = {"email", "outlook", "message", "mail"}
 ROUTE_SOURCE_AUTO = "auto"
+ROUTE_SOURCE_CEO_POWERBI = "xcelerator_ceo_powerbi"
 ROUTE_SOURCE_FABRIC_WAREHOUSE = "fabric_warehouse_sql"
 ROUTE_SOURCE_REVIEW_ORDERS_STATE = "review_orders_state"
+CEO_POWERBI_SOURCE_AUTHORITY = (
+    "K1 Group LLC / Xcelerator CEO Dashboard Power BI semantic model"
+)
+CEO_POWERBI_REQUIRED_CONFIG = [
+    "FLEETPULSE_ADDRESS_BENCHMARK_XCELERATOR_SOURCE=xcelerator_ceo_powerbi",
+    "FLEETPULSE_XCELERATOR_CEO_POWERBI_WORKSPACE_ID",
+    "FLEETPULSE_XCELERATOR_CEO_POWERBI_SEMANTIC_MODEL_ID",
+    "FLEETPULSE_XCELERATOR_CEO_POWERBI_ACCESS_TOKEN or client credentials",
+]
+CEO_POWERBI_REQUIRED_FIELDS = [
+    "xcelerator_review_orders[order_tracking_id]",
+    "xcelerator_review_orders[driver_no]",
+    "xcelerator_review_orders[route_no]",
+    "xcelerator_review_orders[pickup_city]",
+    "xcelerator_review_orders[delivery_city]",
+    "xcelerator_review_orders[pickup_target_from]",
+    "xcelerator_review_orders[delivery_target_to]",
+]
+ROUTE_ALIASES = (
+    "route",
+    "Route",
+    "route_no",
+    "RouteNo",
+    "Route No",
+    "route_number",
+    "Route Number",
+    "Route/LH",
+    "lane",
+    "Lane",
+    "lane_id",
+    "Lane ID",
+)
 
 
 def get_address_benchmark_dataset(
     *,
     pickup: str | None = None,
     delivery: str | None = None,
+    route: str | None = None,
     days: int | None = None,
     config: AddressBenchmarkConfig | None = None,
     store: XceleratorReviewOrdersStateStore | None = None,
@@ -64,6 +100,7 @@ def get_address_benchmark_dataset(
         config=effective_config,
         period_start=period_start,
         period_end=period_end,
+        route_filter=route,
         store=store,
     )
     evidence_rows, evidence_meta = _load_evidence_rows(effective_config)
@@ -74,6 +111,7 @@ def get_address_benchmark_dataset(
         config=effective_config,
         pickup=pickup,
         delivery=delivery,
+        route=route,
         now=now,
         source_meta={
             "xcelerator": route_meta,
@@ -89,6 +127,7 @@ def build_address_benchmark_dataset(
     config: AddressBenchmarkConfig | None = None,
     pickup: str | None = None,
     delivery: str | None = None,
+    route: str | None = None,
     now: datetime | None = None,
     source_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -114,6 +153,8 @@ def build_address_benchmark_dataset(
         if pickup and not _filter_match(instance["pickup_address"], pickup):
             continue
         if delivery and not _filter_match(instance["delivery_address"], delivery):
+            continue
+        if route and not _route_filter_match(instance.get("route"), route):
             continue
         route_instances.append(instance)
 
@@ -154,10 +195,12 @@ def build_address_benchmark_dataset(
         + int(pair["evidence"]["emails"]["match_count"])
         for pair in address_pairs
     )
+    xcelerator_meta = (source_meta or {}).get("xcelerator") or {}
+    source_authority = xcelerator_meta.get("source_authority") or SOURCE_AUTHORITY
     return {
         "generated_at": now.isoformat().replace("+00:00", "Z"),
         "projection_mode": PROJECTION_MODE,
-        "source_authority": SOURCE_AUTHORITY,
+        "source_authority": source_authority,
         "period": {
             "start": period_start.isoformat(),
             "end": period_end.isoformat(),
@@ -171,6 +214,7 @@ def build_address_benchmark_dataset(
         "filters": {
             "pickup": pickup,
             "delivery": delivery,
+            "route": route,
         },
         "summary": {
             "address_pairs": len(address_pairs),
@@ -198,10 +242,40 @@ def _load_xcelerator_route_rows(
     config: AddressBenchmarkConfig,
     period_start: date,
     period_end: date,
+    route_filter: str | None = None,
     store: XceleratorReviewOrdersStateStore | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     configured_source = _route_source(config)
     fallback_errors: list[str] = []
+    if configured_source in {ROUTE_SOURCE_AUTO, ROUTE_SOURCE_CEO_POWERBI}:
+        powerbi_config = PowerBIExecuteQueriesConfig.from_env("FLEETPULSE_XCELERATOR_CEO_POWERBI")
+        if powerbi_config.configured:
+            try:
+                rows, meta = _load_ceo_powerbi_route_rows(
+                    config=config,
+                    powerbi_config=powerbi_config,
+                    period_start=period_start,
+                    period_end=period_end,
+                    route_filter=route_filter,
+                )
+                meta["configured_xcelerator_source"] = configured_source
+                meta["effective_xcelerator_source"] = ROUTE_SOURCE_CEO_POWERBI
+                return rows, meta
+            except Exception as exc:
+                fallback_errors.append(f"xcelerator_ceo_powerbi:{type(exc).__name__}")
+                if configured_source == ROUTE_SOURCE_CEO_POWERBI:
+                    return [], _ceo_powerbi_unavailable_meta(
+                        configured_source,
+                        f"Xcelerator CEO Dashboard BI unavailable for benchmark rows: {type(exc).__name__}",
+                        fallback_errors=fallback_errors,
+                    )
+        elif configured_source == ROUTE_SOURCE_CEO_POWERBI:
+            return [], _ceo_powerbi_unavailable_meta(
+                configured_source,
+                "Xcelerator CEO Dashboard Power BI semantic model is not configured for benchmark reads.",
+                fallback_errors=fallback_errors,
+            )
+
     if configured_source in {ROUTE_SOURCE_AUTO, ROUTE_SOURCE_FABRIC_WAREHOUSE}:
         warehouse_config = FabricWarehouseSqlConfig.from_env("FLEETPULSE_XCELERATOR_WAREHOUSE_SQL")
         if warehouse_config.configured:
@@ -315,12 +389,68 @@ def _load_fabric_warehouse_route_rows(
     }
 
 
+def _load_ceo_powerbi_route_rows(
+    *,
+    config: AddressBenchmarkConfig,
+    powerbi_config: PowerBIExecuteQueriesConfig,
+    period_start: date,
+    period_end: date,
+    route_filter: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    query = _build_ceo_powerbi_address_history_dax(
+        period_start=period_start,
+        period_end=period_end,
+        max_rows=config.max_source_rows,
+        route_filter=route_filter,
+    )
+    rows = execute_dax_query(powerbi_config, query)
+    normalized_rows = []
+    for row in rows:
+        next_row = dict(row)
+        next_row.setdefault("duration_source", "xcelerator_target_window")
+        next_row.setdefault("source_authority", CEO_POWERBI_SOURCE_AUTHORITY)
+        normalized_rows.append(next_row)
+    return normalized_rows, {
+        "status": "healthy",
+        "source_authority": CEO_POWERBI_SOURCE_AUTHORITY,
+        "projection_mode": PROJECTION_MODE,
+        "table": "xcelerator_review_orders",
+        "row_count": len(normalized_rows),
+        "duration_basis": "pickup_target_from to delivery_target_to target window from the CEO Dashboard BI semantic model",
+        "required_fields": CEO_POWERBI_REQUIRED_FIELDS,
+    }
+
+
+def _ceo_powerbi_unavailable_meta(
+    configured_source: str,
+    message: str,
+    *,
+    fallback_errors: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "source_authority": CEO_POWERBI_SOURCE_AUTHORITY,
+        "projection_mode": PROJECTION_MODE,
+        "configured_xcelerator_source": configured_source,
+        "effective_xcelerator_source": ROUTE_SOURCE_CEO_POWERBI,
+        "message": message,
+        "duration_basis": "pickup_target_from to delivery_target_to target window from the CEO Dashboard BI semantic model",
+        "required_config": CEO_POWERBI_REQUIRED_CONFIG,
+        "required_fields": CEO_POWERBI_REQUIRED_FIELDS,
+        "fallback_errors": fallback_errors or [],
+    }
+
+
 def _route_source(config: AddressBenchmarkConfig) -> str:
     source = str(config.xcelerator_source or ROUTE_SOURCE_AUTO).strip().casefold()
+    if source in {"ceo", "ceo_dashboard", "ceo_powerbi", "powerbi", "xcelerator_ceo_powerbi"}:
+        return ROUTE_SOURCE_CEO_POWERBI
     if source in {"fabric", "fabric_warehouse", "fabric_warehouse_sql", "warehouse", "warehouse_sql"}:
         return ROUTE_SOURCE_FABRIC_WAREHOUSE
     if source in {"state", "review_orders", "review_orders_state", "local_state", "export"}:
         return ROUTE_SOURCE_REVIEW_ORDERS_STATE
+    if source == ROUTE_SOURCE_AUTO and xcelerator_ceo_powerbi_only():
+        return ROUTE_SOURCE_CEO_POWERBI
     return ROUTE_SOURCE_AUTO
 
 
@@ -330,6 +460,65 @@ def _quote_sql_identifier(value: str) -> str:
 
 def _quote_sql_literal(value: str) -> str:
     return f"'{value.replace(chr(39), chr(39) + chr(39))}'"
+
+
+def _dax_string(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _dax_route_filter(route_filter: str | None) -> str:
+    normalized = _normalize_key(route_filter)
+    if not normalized:
+        return ""
+    return (
+        "\n            && CONTAINSSTRING("
+        "LOWER(SUBSTITUTE('xcelerator_review_orders'[route_no], \" \", \"\")), "
+        f"{_dax_string(normalized)}"
+        ")"
+    )
+
+
+def _build_ceo_powerbi_address_history_dax(
+    *,
+    period_start: date,
+    period_end: date,
+    max_rows: int,
+    route_filter: str | None,
+) -> str:
+    route_clause = _dax_route_filter(route_filter)
+    return f"""
+EVALUATE
+VAR BaseRows =
+    FILTER(
+        'xcelerator_review_orders',
+        NOT ISBLANK('xcelerator_review_orders'[order_tracking_id])
+            && NOT ISBLANK('xcelerator_review_orders'[route_no])
+            && NOT ISBLANK('xcelerator_review_orders'[pickup_city])
+            && NOT ISBLANK('xcelerator_review_orders'[delivery_city])
+            && NOT ISBLANK('xcelerator_review_orders'[pickup_target_from])
+            && NOT ISBLANK('xcelerator_review_orders'[delivery_target_to])
+            && DATEVALUE('xcelerator_review_orders'[pickup_target_from]) >= DATE({period_start.year}, {period_start.month}, {period_start.day})
+            && DATEVALUE('xcelerator_review_orders'[pickup_target_from]) <= DATE({period_end.year}, {period_end.month}, {period_end.day}){route_clause}
+    )
+VAR ProjectedRows =
+    SELECTCOLUMNS(
+        BaseRows,
+        "order_id", 'xcelerator_review_orders'[order_tracking_id],
+        "driver_id", 'xcelerator_review_orders'[driver_no],
+        "driver_name", 'xcelerator_review_orders'[driver_no],
+        "route", 'xcelerator_review_orders'[route_no],
+        "pickup_address", 'xcelerator_review_orders'[pickup_city],
+        "delivery_address", 'xcelerator_review_orders'[delivery_city],
+        "pickup_departure", 'xcelerator_review_orders'[pickup_target_from],
+        "delivery_arrival", 'xcelerator_review_orders'[delivery_target_to],
+        "date", 'xcelerator_review_orders'[pickup_target_from],
+        "revenue", 'xcelerator_review_orders'[grand_total_amount],
+        "driver_pay", 'xcelerator_review_orders'[driver_pay_amount]
+    )
+RETURN
+TOPN({max_rows}, ProjectedRows, [date], DESC, [order_id], ASC)
+ORDER BY [date] DESC, [order_id]
+""".strip()
 
 
 def _warehouse_table_discovery_sql() -> str:
@@ -406,6 +595,7 @@ def _warehouse_column_resolution(columns: list[str]) -> dict[str, Any]:
         columns,
         ("delivery_address", "delivery_location", "delivery_city", "Delivery City", "destination", "Delivery"),
     )
+    route_column = _pick_column(columns, ROUTE_ALIASES)
     date_column = _pick_column(
         columns,
         ("pickup_target_from", "[P]From Date", "PFrom Date", "From Date", "[P]From", "PFrom", "Order Date", "date"),
@@ -466,6 +656,7 @@ def _warehouse_column_resolution(columns: list[str]) -> dict[str, Any]:
         "driver_id_column": driver_id_column,
         "pickup_column": pickup_column,
         "delivery_column": delivery_column,
+        "route_column": route_column,
         "date_column": date_column,
         "start_columns": start_columns,
         "finish_columns": finish_columns,
@@ -535,6 +726,7 @@ SELECT TOP ({max_rows})
     {_string_sql(selected["driver_id_column"], 128)} AS driver_name,
     {_string_sql(selected["pickup_column"], 512)} AS pickup_address,
     {_string_sql(selected["delivery_column"], 512)} AS delivery_address,
+    {_string_sql(selected["route_column"], 128)} AS route,
     CONVERT(varchar(33), {start_expr}, 126) AS pickup_departure,
     CONVERT(varchar(33), {finish_expr}, 126) AS delivery_arrival,
     {_number_sql(selected["route_minutes_column"])} AS route_minutes,
@@ -625,6 +817,7 @@ def _normalize_route_instance(
     )
     if not pickup_address or not delivery_address:
         return None
+    route = _first_text(row, ROUTE_ALIASES)
 
     explicit_minutes = _positive_number(
         _find_value(
@@ -676,7 +869,7 @@ def _normalize_route_instance(
     duration_source = "explicit_route_minutes" if explicit_minutes is not None else None
     if route_minutes is None and start_at and finish_at and finish_at > start_at:
         route_minutes = round((finish_at - start_at).total_seconds() / 60, 1)
-        duration_source = "actual_xcelerator_timestamps"
+        duration_source = _duration_source_from_row(row) or "actual_xcelerator_timestamps"
 
     route_date = (
         _first_date(
@@ -744,6 +937,7 @@ def _normalize_route_instance(
         "order_id": order_id or _stable_id("order", pickup_address, delivery_address, route_date.isoformat(), driver_id),
         "driver_id": driver_id,
         "driver_name": driver_name or driver_id or "Unassigned",
+        "route": route,
         "pickup_address": pickup_address,
         "delivery_address": delivery_address,
         "address_pair_key": address_pair_key,
@@ -762,7 +956,8 @@ def _normalize_route_instance(
             _find_value(row, ("Driver Pay", "driver_pay", "DriverPay"))
         )
         or 0.0,
-        "source_authority": "K1 Group LLC / Xcelerator ReviewOrders row",
+        "source_authority": _first_text(row, ("source_authority", "sourceAuthority"))
+        or "K1 Group LLC / Xcelerator ReviewOrders row",
         "projection_mode": PROJECTION_MODE,
     }
 
@@ -841,6 +1036,7 @@ def _build_pair_benchmark(
     pair_evidence = _match_evidence(rows, evidence_rows)
     return {
         "address_pair_key": rows[0]["address_pair_key"],
+        "routes": _unique_routes(rows),
         "pickup_address": rows[0]["pickup_address"],
         "delivery_address": rows[0]["delivery_address"],
         "orders": len(rows),
@@ -850,7 +1046,7 @@ def _build_pair_benchmark(
         "median_route_minutes": median_minutes,
         "best_route_minutes": best_minutes,
         "worst_route_minutes": worst_minutes,
-        "route_minutes_source": "actual Xcelerator timestamps or explicit actual route minutes",
+        "route_minutes_source": _pair_route_minutes_source(measured),
         "stop_threshold_minutes": config.stop_threshold_minutes,
         "stop_events_over_threshold": sum(1 for row in rows if row.get("stop_over_threshold")),
         "opportunity_minutes_vs_pair_average": opportunity_minutes,
@@ -863,7 +1059,7 @@ def _build_pair_benchmark(
         "driver_benchmarks": driver_benchmarks,
         "recent_orders": _recent_order_summaries(rows, config.max_recent_orders_per_pair),
         "evidence": pair_evidence,
-        "source_authority": "K1 Group LLC / Xcelerator ReviewOrders rows",
+        "source_authority": _pair_source_authority(rows),
         "projection_mode": PROJECTION_MODE,
     }
 
@@ -915,6 +1111,7 @@ def _recent_order_summaries(rows: list[dict[str, Any]], limit: int) -> list[dict
                 "route_date": row["route_date"].isoformat(),
                 "driver_id": row.get("driver_id"),
                 "driver_name": row.get("driver_name"),
+                "route": row.get("route"),
                 "route_minutes": row.get("route_minutes"),
                 "duration_source": row.get("duration_source"),
                 "stop_minutes": row.get("stop_minutes"),
@@ -1031,6 +1228,49 @@ def _driver_direction(variance: float | None) -> str:
     if variance >= 5:
         return "Slightly above pair average; monitor with more samples."
     return "Near pair average."
+
+
+def _duration_source_from_row(row: dict[str, Any]) -> str | None:
+    raw_value = _first_text(
+        row,
+        (
+            "duration_source",
+            "durationSource",
+            "duration_basis",
+            "durationBasis",
+            "route_minutes_source",
+        ),
+    )
+    normalized = _normalize_key(raw_value)
+    if not normalized:
+        return None
+    if "target" in normalized or "planned" in normalized:
+        return "xcelerator_target_window"
+    if "actual" in normalized:
+        return "actual_xcelerator_timestamps"
+    return raw_value
+
+
+def _pair_route_minutes_source(rows: list[dict[str, Any]]) -> str:
+    sources = {_normalize_key(row.get("duration_source")) for row in rows if row.get("duration_source")}
+    sources.discard("")
+    if not sources:
+        return "actual Xcelerator timestamps or explicit actual route minutes"
+    if sources == {"xceleratortargetwindow"}:
+        return "Xcelerator CEO Dashboard BI pickup/delivery target window"
+    if sources == {"explicitrouteminutes"}:
+        return "explicit actual route minutes"
+    if sources == {"actualxceleratortimestamps"}:
+        return "actual Xcelerator timestamps"
+    return "mixed Xcelerator timing evidence"
+
+
+def _pair_source_authority(rows: list[dict[str, Any]]) -> str:
+    for row in rows:
+        source_authority = str(row.get("source_authority") or "").strip()
+        if source_authority and source_authority != "K1 Group LLC / Xcelerator ReviewOrders row":
+            return source_authority
+    return "K1 Group LLC / Xcelerator ReviewOrders rows"
 
 
 def _load_rows_from_text(content: str, *, filename: str = "") -> list[dict[str, Any]]:
@@ -1200,6 +1440,23 @@ def _normalize_place(value: str) -> str:
 
 def _filter_match(value: str, needle: str) -> bool:
     return _normalize_place(needle) in _normalize_place(value)
+
+
+def _route_filter_match(value: str | None, needle: str) -> bool:
+    normalized_value = _normalize_key(value)
+    normalized_needle = _normalize_key(needle)
+    if not normalized_value or not normalized_needle:
+        return False
+    return normalized_needle in normalized_value or normalized_value in normalized_needle
+
+
+def _unique_routes(rows: list[dict[str, Any]]) -> list[str]:
+    seen = []
+    for row in rows:
+        route = str(row.get("route") or "").strip()
+        if route and route not in seen:
+            seen.append(route)
+    return sorted(seen)
 
 
 def _stable_id(namespace: str, *parts: Any) -> str:

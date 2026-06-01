@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { MessageCircle, Zap, BarChart3, Wrench, GraduationCap, Route, FileText, MapPin, Fuel, Shield, Database, Activity, Users, LineChart, DollarSign, Truck, Timer, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import Dashboard from './components/Dashboard'
@@ -84,7 +84,7 @@ const navigationItems: NavItem[] = [
 ]
 
 function getInitialTab(): AppTab {
-  const hash = window.location.hash.replace('#', '') as AppTab
+  const hash = window.location.hash.replace('#', '').split('?')[0] as AppTab
   return appTabs.includes(hash) ? hash : 'dashboard'
 }
 
@@ -190,6 +190,15 @@ export default function App() {
   const selectTab = useCallback((tab: AppTab) => {
     setActiveTab(tab)
     window.history.replaceState(null, '', `#${tab}`)
+  }, [])
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setActiveTab(getInitialTab())
+    }
+
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
   const pageVariants = {
