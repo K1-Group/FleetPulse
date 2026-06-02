@@ -582,6 +582,7 @@ def _normalize_call_row(
         "is_not_connected": int("not_connected" in type_key),
         "is_voicemail": int("voice_mail" in type_key or "voicemail" in type_key),
         "is_hangup": int("hangup" in type_key),
+        "is_inbound_call": int(direction.casefold() == "in"),
         "is_outbound_attempt": int(direction.casefold() == "out"),
         "source_file": Path(str(_find_value(row, ("source_file",)) or "")).name,
         "source_row_number": source_row_number,
@@ -672,19 +673,51 @@ def _normalize_lead_row(
     *,
     default_department: str = "HR",
 ) -> dict[str, Any] | None:
-    assigned_at = _parse_datetime(_find_value(row, ("first_assigned_at", "assigned_at", "receivedDateTime", "date")))
+    assigned_at = _parse_datetime(
+        _find_value(
+            row,
+            (
+                "first_assigned_at",
+                "assigned_at",
+                "receivedDateTime",
+                "receivedAtUtc",
+                "ReceivedAtUTC",
+                "teams_received_at",
+                "Teams Received At",
+                "date",
+            ),
+        )
+    )
     if not assigned_at:
         return None
     phone_hash = _text(_find_value(row, ("phone_hash", "candidate_phone_hash", "external_party_hash")))
     if not phone_hash:
-        phone_hash = _hash_text(_find_value(row, ("phone", "Phone", "mobile", "Mobile", "caller_id")), config)
+        phone_hash = _hash_text(
+            _find_value(row, ("phone", "Phone", "LeadPhone", "lead_phone", "mobile", "Mobile", "caller_id")),
+            config,
+        )
     if not phone_hash:
         return None
-    status = _text(_find_value(row, ("status", "application_status", "lead_status")), "Active")
-    completed_at = _parse_datetime(_find_value(row, ("completed_at", "hired_at", "closed_at")))
-    lead_key = _text(_find_value(row, ("lead_key", "source_email_id", "message_id", "applicant_id"))) or _hash_key(
-        (phone_hash, assigned_at.isoformat())
+    status = _text(
+        _find_value(row, ("status", "application_status", "lead_status", "TenstreetStatus", "tenstreet_status")),
+        "Active",
     )
+    completed_at = _parse_datetime(_find_value(row, ("completed_at", "hired_at", "closed_at")))
+    lead_key = _text(
+        _find_value(
+            row,
+            (
+                "lead_key",
+                "LeadKeyValue",
+                "source_email_id",
+                "message_id",
+                "TeamsMessageId",
+                "teams_message_id",
+                "ApplicationID",
+                "applicant_id",
+            ),
+        )
+    ) or _hash_key((phone_hash, assigned_at.isoformat()))
     department = _normalize_department(
         _find_value(row, ("department", "Department", "source_department", "team", "Team")),
         default=default_department,
@@ -694,7 +727,10 @@ def _normalize_lead_row(
         "department": department,
         "department_key": _department_key(department),
         "phone_hash": phone_hash,
-        "worklist": _text(_find_value(row, ("worklist", "queue", "Current Worklist")), "Unassigned"),
+        "worklist": _text(
+            _find_value(row, ("worklist", "WorklistName", "worklist_name", "queue", "Current Worklist")),
+            "Unassigned",
+        ),
         "status": status,
         "first_assigned_at": _iso(assigned_at),
         "completed_at": _iso(completed_at),
@@ -934,11 +970,14 @@ def _employee_summary(
         key = (_text(row.get("extension_id"), "unknown"), _text(row.get("employee_name"), "Unknown"))
         if active and key[0] not in active:
             continue
+        inbound = int(row.get("is_inbound_call") or 0)
+        outbound = int(row.get("is_outbound_attempt") or 0)
         counter = counters[key]
-        counter["call_legs"] += 1
+        counter["call_legs"] += inbound + outbound
         counter["duration_seconds"] += int(row.get("duration_seconds") or 0)
         counter["voice_call_legs"] += int(row.get("is_voice_call") or 0)
-        counter["outbound_legs"] += int(row.get("is_outbound_attempt") or 0)
+        counter["inbound_legs"] += inbound
+        counter["outbound_legs"] += outbound
         counter["connected_legs"] += int(row.get("is_connected") or 0)
         counter["not_connected_legs"] += int(row.get("is_not_connected") or 0)
         counter["voicemails"] += int(row.get("is_voicemail") or 0)
@@ -974,6 +1013,7 @@ def _employee_summary(
                 "voice_call_legs": counter["voice_call_legs"],
                 "distinct_external_parties": len(parties[key]),
                 "total_minutes": total_minutes,
+                "inbound_legs": counter["inbound_legs"],
                 "outbound_legs": counter["outbound_legs"],
                 "connected_legs": counter["connected_legs"],
                 "not_connected_legs": counter["not_connected_legs"],
@@ -1007,9 +1047,12 @@ def _daily_volume(call_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         day = _text(row.get("call_date"))
         if not day:
             continue
+        inbound = int(row.get("is_inbound_call") or 0)
+        outbound = int(row.get("is_outbound_attempt") or 0)
         counter = counters[day]
-        counter["call_legs"] += 1
-        counter["outbound_attempts"] += int(row.get("is_outbound_attempt") or 0)
+        counter["call_legs"] += inbound + outbound
+        counter["inbound_calls"] += inbound
+        counter["outbound_attempts"] += outbound
         counter["connected_calls"] += int(row.get("is_connected") or 0)
         counter["voicemails"] += int(row.get("is_voicemail") or 0)
         counter["duration_seconds"] += int(row.get("duration_seconds") or 0)
@@ -1017,6 +1060,7 @@ def _daily_volume(call_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {
             "date": day,
             "call_legs": counter["call_legs"],
+            "inbound_calls": counter["inbound_calls"],
             "outbound_attempts": counter["outbound_attempts"],
             "connected_calls": counter["connected_calls"],
             "voicemails": counter["voicemails"],
@@ -1062,10 +1106,12 @@ def _activity_summary(activity_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    outbound_by_party: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    calls_by_party: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in call_rows:
-        if row.get("is_outbound_attempt") and row.get("external_party_hash"):
-            outbound_by_party[str(row["external_party_hash"])].append(row)
+        if row.get("external_party_hash") and (
+            row.get("is_inbound_call") or row.get("is_outbound_attempt")
+        ):
+            calls_by_party[str(row["external_party_hash"])].append(row)
     rows: list[dict[str, Any]] = []
     for lead in lead_rows:
         assigned_at = _parse_datetime(lead.get("first_assigned_at"))
@@ -1073,7 +1119,7 @@ def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, A
             continue
         calls = [
             call
-            for call in outbound_by_party.get(str(lead.get("phone_hash")), [])
+            for call in calls_by_party.get(str(lead.get("phone_hash")), [])
             if (_parse_datetime(call.get("call_started_at")) or assigned_at) >= assigned_at
         ]
         calls.sort(key=lambda call: call.get("call_started_at") or "")
@@ -1092,7 +1138,9 @@ def _follow_up_rows(call_rows: list[dict[str, Any]], lead_rows: list[dict[str, A
                 "first_call_at": _iso(first_call_at),
                 "first_call_hours": first_call_hours,
                 "first_call_within_24h": bool(first_call_hours is not None and first_call_hours <= 24),
-                "outbound_attempts": len(calls),
+                "total_call_legs": len(calls),
+                "inbound_calls": sum(int(call.get("is_inbound_call") or 0) for call in calls),
+                "outbound_attempts": sum(int(call.get("is_outbound_attempt") or 0) for call in calls),
                 "connected_calls": sum(int(call.get("is_connected") or 0) for call in calls),
                 "voicemails": sum(int(call.get("is_voicemail") or 0) for call in calls),
                 "last_call_at": calls[-1].get("call_started_at") if calls else None,
@@ -1105,8 +1153,12 @@ def _call_period_metrics(
     call_rows: list[dict[str, Any]],
     follow_up_rows: list[dict[str, Any]],
 ) -> dict[str, int]:
+    inbound_calls = sum(int(row.get("is_inbound_call") or 0) for row in call_rows)
+    outbound_calls = sum(int(row.get("is_outbound_attempt") or 0) for row in call_rows)
     return {
-        "call_volume": len(call_rows),
+        "call_volume": inbound_calls + outbound_calls,
+        "inbound_calls": inbound_calls,
+        "outbound_calls": outbound_calls,
         "answered_calls": sum(int(row.get("is_connected") or 0) for row in call_rows),
         "missed_calls": sum(
             int(row.get("is_not_connected") or 0)
@@ -1246,7 +1298,9 @@ def build_hr_call_analysis_dataset(
     activity_summary = _activity_summary(activity_rows)
 
     total_duration = sum(int(row.get("duration_seconds") or 0) for row in call_rows)
+    inbound_calls = sum(int(row.get("is_inbound_call") or 0) for row in call_rows)
     outbound_attempts = sum(int(row.get("is_outbound_attempt") or 0) for row in call_rows)
+    total_call_legs = inbound_calls + outbound_attempts
     connected_calls = sum(int(row.get("is_connected") or 0) for row in call_rows)
     voicemails = sum(int(row.get("is_voicemail") or 0) for row in call_rows)
     hangups = sum(int(row.get("is_hangup") or 0) for row in call_rows)
@@ -1286,10 +1340,11 @@ def build_hr_call_analysis_dataset(
             "months": sorted({row.get("month") for row in call_rows if row.get("month")}),
         },
         "summary": {
-            "total_call_legs": len(call_rows),
+            "total_call_legs": total_call_legs,
             **activity_summary,
             "total_minutes": round(total_duration / 60, 2),
             "avg_call_seconds": round(total_duration / len(call_rows), 2) if call_rows else 0,
+            "inbound_calls": inbound_calls,
             "outbound_attempts": outbound_attempts,
             "answered_calls": connected_calls,
             "missed_calls": missed_calls,

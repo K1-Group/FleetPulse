@@ -1483,6 +1483,7 @@ export interface HrCallAnalysisSummary {
   activity_period?: string | null
   total_minutes: number
   avg_call_seconds: number
+  inbound_calls?: number
   outbound_attempts: number
   connected_calls: number
   connect_rate_pct: number | null
@@ -1512,6 +1513,7 @@ export interface HrCallEmployeeProductivity {
   voice_call_legs: number
   distinct_external_parties: number
   total_minutes: number
+  inbound_legs?: number
   outbound_legs: number
   connected_legs: number
   not_connected_legs: number
@@ -1525,6 +1527,7 @@ export interface HrCallEmployeeProductivity {
 export interface HrCallDailyVolume {
   date: string
   call_legs: number
+  inbound_calls?: number
   outbound_attempts: number
   connected_calls: number
   voicemails: number

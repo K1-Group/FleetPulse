@@ -161,6 +161,13 @@ HR total-calls KPI uses date-scoped Detail rows (`total_call_legs`) for inbound
 plus outbound call legs; Activity report counts are monthly Grasshopper
 reference totals and must not replace the date-scoped total.
 
+Teams/SharePoint driver-lead rows from the approved `Onboarding Drivers` lane
+can be included as `lead_rows`. FleetPulse hashes `LeadPhone`/`phone` values
+with the same salt used for Grasshopper Caller ID and Connecting # values, then
+matches the two lists by phone hash only. The API reports aggregate first-call
+and follow-up coverage without returning raw applicant phone, email, or name
+values.
+
 ### HR Call Analysis Snapshot
 
 - Trigger: Power Automate recurrence every 15 minutes.
@@ -200,6 +207,18 @@ Minimum useful call row fields:
   "call_type": "Mobile Outbound Connected",
   "duration_seconds": 306,
   "external_party_hash": "sha256-phone-key"
+}
+```
+
+Minimum useful Teams/SharePoint lead row fields:
+
+```json
+{
+  "LeadKeyValue": "sharepoint-idempotency-key",
+  "LeadPhone": "(214) 555-0100",
+  "WorklistName": "Onboarding Drivers",
+  "TenstreetStatus": "New",
+  "ReceivedAtUTC": "2026-05-29T10:00:00Z"
 }
 ```
 

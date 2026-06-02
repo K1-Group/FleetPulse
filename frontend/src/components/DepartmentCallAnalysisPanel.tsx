@@ -9,6 +9,7 @@ const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   total_call_legs: 0,
   total_minutes: 0,
   avg_call_seconds: 0,
+  inbound_calls: 0,
   outbound_attempts: 0,
   connected_calls: 0,
   connect_rate_pct: null,
@@ -67,7 +68,7 @@ function formatDateRange(start?: string | null, end?: string | null) {
 }
 
 function callLegSourceDetail(summary: HrCallAnalysisSummary) {
-  return `Inbound + outbound Detail rows for HR extensions | ${formatMinutes(summary.total_minutes)} total talk time`
+  return `${formatCount(summary.inbound_calls)} inbound + ${formatCount(summary.outbound_attempts)} outbound Detail rows | ${formatMinutes(summary.total_minutes)} total talk time`
 }
 
 function StatCard({
@@ -118,6 +119,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
             <th className="px-4 py-3 font-medium">Employee</th>
             <th className="px-4 py-3 font-medium">Score</th>
             <th className="px-4 py-3 font-medium">Call Legs</th>
+            <th className="px-4 py-3 font-medium">Inbound</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Minutes</th>
@@ -130,6 +132,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
               <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.employee_name}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{Number(row.productivity_score_0_100).toFixed(1)}%</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.inbound_legs)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_legs)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.connected_rate_pct)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
@@ -155,6 +158,7 @@ function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
             <th className="px-4 py-3 font-medium">Date</th>
             <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Inbound</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Voicemail</th>
@@ -166,6 +170,7 @@ function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
             <tr key={row.date} className="bg-gray-900/35 light:bg-white">
               <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.date}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.inbound_calls)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_attempts)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.connected_calls)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.voicemails)}</td>
