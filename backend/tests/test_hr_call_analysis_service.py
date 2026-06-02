@@ -107,6 +107,69 @@ def test_call_analysis_dataset_suppresses_phone_and_scores_employee(tmp_path) ->
     assert "(580) 748-2358" not in serialized
 
 
+def test_legacy_call_state_infers_direction_flags(tmp_path) -> None:
+    state_path = tmp_path / "hr-call-analysis.json"
+    config = _config(str(state_path))
+    state_path.write_text(
+        json.dumps(
+            {
+                "call_rows": [
+                    {
+                        "call_id": "legacy-inbound",
+                        "department": "HR",
+                        "department_key": "hr",
+                        "call_started_at": "2026-05-31T09:00:00Z",
+                        "call_date": "2026-05-31",
+                        "month": "2026-05",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "In",
+                        "call_type": "Inbound leg of forwarded call",
+                        "duration_seconds": 120,
+                        "is_outbound_attempt": 1,
+                    },
+                    {
+                        "call_id": "legacy-outbound",
+                        "department": "HR",
+                        "department_key": "hr",
+                        "call_started_at": "2026-05-31T09:05:00Z",
+                        "call_date": "2026-05-31",
+                        "month": "2026-05",
+                        "extension_id": "702",
+                        "employee_name": "David Attar",
+                        "direction": "Out",
+                        "call_type": "Mobile Outbound Connected",
+                        "duration_seconds": 180,
+                        "is_outbound_attempt": 1,
+                    },
+                ],
+                "analysis_reports": [],
+                "lead_rows": [],
+                "activity_rows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dataset = asyncio.run(
+        get_department_call_analysis_dataset(
+            department="HR",
+            config=config,
+            start_date="2026-05-31",
+            end_date="2026-05-31",
+        )
+    )
+
+    assert dataset["summary"]["total_call_legs"] == 2
+    assert dataset["summary"]["inbound_calls"] == 1
+    assert dataset["summary"]["outbound_attempts"] == 1
+    assert dataset["daily_volume"][0]["call_legs"] == 2
+    assert dataset["daily_volume"][0]["inbound_calls"] == 1
+    assert dataset["daily_volume"][0]["outbound_attempts"] == 1
+    assert dataset["employee_productivity"][0]["inbound_legs"] == 1
+    assert dataset["employee_productivity"][0]["outbound_legs"] == 1
+
+
 def test_hr_call_analysis_filters_department_totals_to_active_extensions(tmp_path) -> None:
     config = _config(str(tmp_path / "hr-call-analysis.json"))
     result = import_hr_call_analysis_snapshot(
