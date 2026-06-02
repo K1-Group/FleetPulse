@@ -91,6 +91,7 @@ jobs:
           HR_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
           DEPARTMENT_CALL_ANALYSIS_STATE_PATH: /home/data/fleetpulse_hr_call_analysis.json
           HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS: 4,702,722,725,728
+          HR_CALL_ANALYSIS_IMPORT_API_KEY: ${{ secrets.HR_CALL_ANALYSIS_IMPORT_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -98,7 +99,8 @@ jobs:
             AZURE_KEY_VAULT_NAME \
             FLEETPULSE_GRAPH_TENANT_ID_SECRET_NAME \
             FLEETPULSE_GRAPH_CLIENT_ID_SECRET_NAME \
-            FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME
+            FLEETPULSE_GRAPH_CLIENT_SECRET_SECRET_NAME \
+            HR_CALL_ANALYSIS_IMPORT_API_KEY
           do
             if [ -z "${!required:-}" ]; then
               echo "Missing ${required} repository secret."

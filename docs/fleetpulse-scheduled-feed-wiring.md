@@ -180,8 +180,10 @@ configured:
 - Recommended cadence: every 15 minutes.
 - GitHub Actions fallback: `.github/workflows/hr-call-analysis-sharepoint-sync.yml`
   calls this endpoint every 15 minutes using the
-  `HR_CALL_ANALYSIS_IMPORT_API_KEY` repository secret. Logs only print sync
-  counts, not call content or transcript text.
+  `HR_CALL_ANALYSIS_IMPORT_API_KEY` repository secret. Azure deployment also
+  seeds the app's Key Vault-backed HR call-analysis import/sync settings from
+  the same repository secret so the scheduled workflow and runtime endpoint
+  stay aligned. Logs only print sync counts, not call content or transcript text.
 
 Minimum useful call row fields:
 
