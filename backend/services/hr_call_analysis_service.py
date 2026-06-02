@@ -589,6 +589,33 @@ def _normalize_call_row(
     }
 
 
+def _direction_call_flags(row: dict[str, Any]) -> tuple[int, int] | None:
+    direction = _text(_find_value(row, ("direction", "Direction"))).casefold()
+    if direction in {"in", "inbound", "incoming"}:
+        return 1, 0
+    if direction in {"out", "outbound", "outgoing"}:
+        return 0, 1
+    return None
+
+
+def _hydrate_legacy_call_row(row: Any) -> dict[str, Any] | None:
+    if not isinstance(row, dict):
+        return None
+
+    normalized = dict(row)
+    missing_inbound_flag = normalized.get("is_inbound_call") in {None, ""}
+    missing_outbound_flag = normalized.get("is_outbound_attempt") in {None, ""}
+    flags = _direction_call_flags(normalized)
+    if flags and missing_inbound_flag:
+        # Older persisted state did not store inbound flags; recompute both
+        # direction flags so inbound legs are not rendered as outbound-only.
+        normalized["is_inbound_call"], normalized["is_outbound_attempt"] = flags
+    elif flags and missing_outbound_flag:
+        normalized["is_outbound_attempt"] = flags[1]
+
+    return normalized
+
+
 def _regex_line(text: str, label: str) -> str:
     match = re.search(rf"^-\s*{re.escape(label)}:\s*(.+?)\s*$", text, flags=re.MULTILINE)
     return match.group(1).strip() if match else ""
@@ -816,9 +843,14 @@ def _read_state(path: Path) -> SourceLoadResult:
             status="source_error",
             message=f"HR call analysis state load failed: {type(exc).__name__}.",
         )
-    has_evidence = bool(payload.get("call_rows") or payload.get("analysis_reports") or payload.get("activity_rows"))
+    call_rows = [
+        hydrated
+        for row in list(payload.get("call_rows") or [])
+        if (hydrated := _hydrate_legacy_call_row(row)) is not None
+    ]
+    has_evidence = bool(call_rows or payload.get("analysis_reports") or payload.get("activity_rows"))
     return SourceLoadResult(
-        call_rows=list(payload.get("call_rows") or []),
+        call_rows=call_rows,
         analysis_reports=list(payload.get("analysis_reports") or []),
         lead_rows=list(payload.get("lead_rows") or []),
         activity_rows=list(payload.get("activity_rows") or []),
