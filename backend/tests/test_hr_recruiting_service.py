@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -604,7 +605,8 @@ def test_hr_recruiting_workbook_source_projects_only_aggregate_evidence(tmp_path
     assert all(row["projection_mode"] == "read_only" for row in exception_queue)
     assert all(row["pii_suppressed"] is True for row in exception_queue)
     assert all(row["masked_contact"] == "PII suppressed" for row in exception_queue)
-    assert all(row["lead_ref"].startswith("lead-") for row in exception_queue)
+    assert all(row["lead_ref"].startswith("lead-ref-") for row in exception_queue)
+    assert not re.search(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", str(exception_queue))
 
     serialized = json.dumps(dataset)
     assert "Private Applicant" not in serialized

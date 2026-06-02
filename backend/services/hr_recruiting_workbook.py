@@ -1049,7 +1049,7 @@ def _exception_queue_row(
     discussion_bucket = _text(_value_for(record, REAL_DISCUSSION_BUCKET_ALIASES), "Unknown")
     return {
         "exception_id": _hash_key((category, lead_key)),
-        "lead_ref": f"lead-{lead_key[:10]}",
+        "lead_ref": f"lead-ref-{lead_key[:4]}-{lead_key[4:8]}",
         "masked_contact": "PII suppressed",
         "category": category,
         "reason": reason,

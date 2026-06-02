@@ -41,7 +41,7 @@ HR_CALL_ANALYSIS_SHAREPOINT_ENABLED=true
 HR_CALL_ANALYSIS_SHAREPOINT_SITE_URL=https://netorgft3187866.sharepoint.com/sites/K1SOPsandProcedures
 HR_CALL_ANALYSIS_SHAREPOINT_FOLDER_PATH=Grasshopper/Call Analysis Reports/HR
 HR_CALL_ANALYSIS_SHAREPOINT_FILE_EXTENSIONS=.txt,.csv
-HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=702,722,725,728,700
 ```
 
 The script creates these Key Vault secrets if values are not supplied by env:
@@ -135,7 +135,7 @@ HR_RECRUITING_WORKBOOK_PATH=/home/data/HR_Lead_KPI_Recheck_By_Phone.xlsx
 HR_RECRUITING_CONVERSION_WORKBOOK_PATH=/home/data/HR_Lead_Name_To_Xcelerator_Driver_Conversion.xlsx
 HR_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
 DEPARTMENT_CALL_ANALYSIS_STATE_PATH=/home/data/fleetpulse_hr_call_analysis.json
-HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=4,702,722,725,728
+HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS=702,722,725,728,700
 ```
 
 Required workbook tabs:
@@ -154,6 +154,19 @@ surface. Lead KPI rows are filtered by `Lead Created At` or compatible
 submitted/created intake columns, not later application, modified, or status
 dates; follow-up counts are filtered by call date. The response includes a
 same-length prior-period comparison and suppresses applicant PII.
+
+`HR_CALL_ANALYSIS_ACTIVE_EXTENSIONS` limits HR call KPI rollups to configured
+HR extensions when a Grasshopper Detail export includes other departments. The
+HR total-calls KPI uses date-scoped Detail rows (`total_call_legs`) for inbound
+plus outbound call legs; Activity report counts are monthly Grasshopper
+reference totals and must not replace the date-scoped total.
+
+Teams/SharePoint driver-lead rows from the approved `Onboarding Drivers` lane
+can be included as `lead_rows`. FleetPulse hashes `LeadPhone`/`phone` values
+with the same salt used for Grasshopper Caller ID and Connecting # values, then
+matches the two lists by phone hash only. The API reports aggregate first-call
+and follow-up coverage without returning raw applicant phone, email, or name
+values.
 
 ### HR Call Analysis Snapshot
 
@@ -194,6 +207,18 @@ Minimum useful call row fields:
   "call_type": "Mobile Outbound Connected",
   "duration_seconds": 306,
   "external_party_hash": "sha256-phone-key"
+}
+```
+
+Minimum useful Teams/SharePoint lead row fields:
+
+```json
+{
+  "LeadKeyValue": "sharepoint-idempotency-key",
+  "LeadPhone": "(214) 555-0100",
+  "WorklistName": "Onboarding Drivers",
+  "TenstreetStatus": "New",
+  "ReceivedAtUTC": "2026-05-29T10:00:00Z"
 }
 ```
 

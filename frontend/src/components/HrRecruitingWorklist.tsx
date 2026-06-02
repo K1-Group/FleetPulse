@@ -59,8 +59,6 @@ const DATE_PRESETS: Array<{ key: DatePreset; label: string }> = [
   { key: 'custom', label: 'Custom Range' },
 ]
 
-const DEPARTMENT_FILTERS = ['HR', 'Recruiting', 'Safety', 'Operations', 'Fleet Compliance', 'Sales']
-
 const numberFormatter = new Intl.NumberFormat('en-US')
 
 function formatCount(value: number | null | undefined) {
@@ -301,8 +299,6 @@ function DateRangeFilter({
   endDate,
   onStartDateChange,
   onEndDateChange,
-  department,
-  onDepartmentChange,
 }: {
   preset: DatePreset
   onPresetChange: (value: DatePreset) => void
@@ -310,8 +306,6 @@ function DateRangeFilter({
   endDate: string
   onStartDateChange: (value: string) => void
   onEndDateChange: (value: string) => void
-  department: string
-  onDepartmentChange: (value: string) => void
 }) {
   const handleStartDateInput = (event: ChangeEvent<HTMLInputElement>) => {
     onStartDateChange(event.currentTarget.value)
@@ -333,7 +327,7 @@ function DateRangeFilter({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_repeat(2,minmax(145px,170px))_minmax(170px,220px)]">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_repeat(2,minmax(145px,170px))]">
           <label className="text-xs font-medium text-gray-400 light:text-gray-600">
             Preset
             <select
@@ -365,18 +359,6 @@ function DateRangeFilter({
               onInput={handleEndDateInput}
               className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
             />
-          </label>
-          <label className="text-xs font-medium text-gray-400 light:text-gray-600">
-            Department
-            <select
-              value={department}
-              onChange={event => onDepartmentChange(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white light:border-gray-300 light:bg-white light:text-gray-900"
-            >
-              {DEPARTMENT_FILTERS.map(item => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
           </label>
         </div>
       </div>
@@ -732,10 +714,10 @@ function TeamMembersPanel({ members }: { members: HrRecruitingTeamMember[] }) {
 function WorkbookEvidencePanel({ evidence }: { evidence: HrRecruitingWorkbookEvidence | undefined }) {
   if (!evidence) return null
   const cards = [
-    { label: 'Lead Forms', value: workbookMetric(evidence, 'unique_lead_forms') },
-    { label: 'Call Attempts', value: workbookMetric(evidence, 'total_outbound_attempts') },
-    { label: 'No Outbound', value: workbookMetric(evidence, 'no_outbound_found') },
-    { label: 'No Real Discussion', value: workbookMetric(evidence, 'no_real_discussion_found') },
+    { label: 'Leads Received', value: workbookMetric(evidence, 'unique_lead_forms') },
+    { label: 'Outbound Attempts', value: workbookMetric(evidence, 'total_outbound_attempts') },
+    { label: 'No Call Found', value: workbookMetric(evidence, 'no_outbound_found') },
+    { label: 'No Follow-Up', value: workbookMetric(evidence, 'no_real_discussion_found') },
   ]
 
   return (
@@ -948,7 +930,7 @@ function WorkbookExceptionQueue({ evidence }: { evidence: HrRecruitingWorkbookEv
           <div className="min-w-0">
             <h3 className="font-semibold text-white light:text-gray-900">Workbook Exception Queue</h3>
             <p className="mt-1 text-xs text-gray-500 light:text-gray-600">
-              {evidence.workbook_name || 'pending workbook'} · masked lead refs · contact data suppressed
+              {evidence.workbook_name || 'pending workbook'} · short lead refs · contact data suppressed
             </p>
           </div>
         </div>
@@ -1017,7 +999,6 @@ export default function HrRecruitingWorklist() {
   const [datePreset, setDatePreset] = useState<DatePreset>('last30')
   const [customStartDate, setCustomStartDate] = useState(initialRange.startDate || '')
   const [customEndDate, setCustomEndDate] = useState(initialRange.endDate || '')
-  const [selectedDepartment, setSelectedDepartment] = useState('HR')
   const dateRange = useMemo(
     () => presetRange(datePreset, customStartDate, customEndDate),
     [customEndDate, customStartDate, datePreset],
@@ -1087,8 +1068,6 @@ export default function HrRecruitingWorklist() {
           setDatePreset('custom')
           setCustomEndDate(value)
         }}
-        department={selectedDepartment}
-        onDepartmentChange={setSelectedDepartment}
       />
 
       <TrendComparisonStrip data={data} />
@@ -1133,9 +1112,8 @@ export default function HrRecruitingWorklist() {
       {workbookSource && <WorkbookExceptionQueue evidence={data?.workbook_evidence} />}
 
       <DepartmentCallAnalysisPanel
-        department={selectedDepartment}
-        title={`${selectedDepartment} Call Analysis`}
-        showDepartmentRollups
+        department="HR"
+        title="HR Call Analysis"
         dateRange={dateRange}
       />
 

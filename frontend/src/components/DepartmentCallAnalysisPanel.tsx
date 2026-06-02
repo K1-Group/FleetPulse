@@ -9,6 +9,7 @@ const ZERO_CALL_SUMMARY: HrCallAnalysisSummary = {
   total_call_legs: 0,
   total_minutes: 0,
   avg_call_seconds: 0,
+  inbound_calls: 0,
   outbound_attempts: 0,
   connected_calls: 0,
   connect_rate_pct: null,
@@ -66,12 +67,8 @@ function formatDateRange(start?: string | null, end?: string | null) {
   return `${startText} - ${endText}`
 }
 
-function activitySourceDetail(summary: HrCallAnalysisSummary) {
-  if (summary.activity_calls === undefined || summary.activity_calls === null) {
-    return `${formatMinutes(summary.total_minutes)} total talk time`
-  }
-  const reportDate = summary.activity_report_date ? `through ${summary.activity_report_date}` : 'Activity report'
-  return `${reportDate} | ${formatCount(summary.total_call_legs)} detail legs`
+function callLegSourceDetail(summary: HrCallAnalysisSummary) {
+  return `${formatCount(summary.inbound_calls)} inbound + ${formatCount(summary.outbound_attempts)} outbound Detail rows | ${formatMinutes(summary.total_minutes)} total talk time`
 }
 
 function StatCard({
@@ -122,6 +119,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
             <th className="px-4 py-3 font-medium">Employee</th>
             <th className="px-4 py-3 font-medium">Score</th>
             <th className="px-4 py-3 font-medium">Call Legs</th>
+            <th className="px-4 py-3 font-medium">Inbound</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Minutes</th>
@@ -134,6 +132,7 @@ function ProductivityTable({ rows }: { rows: HrCallEmployeeProductivity[] }) {
               <td className="px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.employee_name}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{Number(row.productivity_score_0_100).toFixed(1)}%</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.inbound_legs)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_legs)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatPercentFromPct(row.connected_rate_pct)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatMinutes(row.total_minutes)}</td>
@@ -159,6 +158,7 @@ function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
           <tr className="text-left text-xs uppercase tracking-wide text-gray-500 light:text-gray-600">
             <th className="px-4 py-3 font-medium">Date</th>
             <th className="px-4 py-3 font-medium">Calls</th>
+            <th className="px-4 py-3 font-medium">Inbound</th>
             <th className="px-4 py-3 font-medium">Outbound</th>
             <th className="px-4 py-3 font-medium">Connected</th>
             <th className="px-4 py-3 font-medium">Voicemail</th>
@@ -170,6 +170,7 @@ function DailyActivityTable({ rows }: { rows: HrCallDailyVolume[] }) {
             <tr key={row.date} className="bg-gray-900/35 light:bg-white">
               <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-100 light:text-gray-900">{row.date}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.call_legs)}</td>
+              <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.inbound_calls)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.outbound_attempts)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.connected_calls)}</td>
               <td className="px-4 py-3 text-gray-300 light:text-gray-700">{formatCount(row.voicemails)}</td>
@@ -224,7 +225,7 @@ function DepartmentRollups({ rows }: { rows: DepartmentCallAnalysisRollup[] }) {
             </span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400 light:text-gray-600">
-            <span>{formatCount(row.summary.activity_calls ?? row.summary.total_call_legs)} calls</span>
+            <span>{formatCount(row.summary.total_call_legs)} calls</span>
             <span>{formatPercentFromPct(row.summary.connect_rate_pct)} connect</span>
             <span>{formatCount(row.summary.coaching_flags)} flags</span>
           </div>
@@ -317,9 +318,9 @@ export default function DepartmentCallAnalysisPanel({
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           icon={<PhoneCall className="h-5 w-5 text-emerald-200" />}
-          label={summary.activity_calls === undefined || summary.activity_calls === null ? 'Call Legs' : 'Activity Calls'}
-          value={formatCount(summary.activity_calls ?? summary.total_call_legs)}
-          detail={activitySourceDetail(summary)}
+          label="Total HR Calls"
+          value={formatCount(summary.total_call_legs)}
+          detail={callLegSourceDetail(summary)}
           tone="bg-emerald-500/15"
         />
         <StatCard icon={<TrendingUp className="h-5 w-5 text-blue-200" />} label="Answered Calls" value={formatCount(summary.answered_calls ?? summary.connected_calls)} detail={`${formatPercentFromPct(summary.connect_rate_pct)} connect rate`} tone="bg-blue-500/15" />
